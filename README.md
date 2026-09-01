@@ -12,9 +12,10 @@ This is a **ground-up rebuild** of an earlier Flask prototype. The extraction en
 - Supabase JWT verification + email allowlist + local-user upsert — `backend/app/auth`, `backend/app/api/deps.py`
 - Documents + bookmarks API with an **owner predicate on every query** and audit events — `backend/app/api/v1/documents.py`
 - Async Alembic environment wired to the models — `backend/migrations/env.py`
-- Tests: auth (401/403) and the **IDOR matrix** (cross-user access → 404) — `backend/tests/`
+- **Direct-upload ingestion** (§11.1): `POST /uploads` grant → browser PUT → `POST /uploads/{id}/complete` finalize (server-observed size/SHA-256/magic bytes, **no PDF parsing in the web tier**) → source/user document + queued extraction job. Storage is an interface with a Supabase impl and an in-memory impl for tests — `backend/app/storage/`, `backend/app/api/v1/uploads.py`
+- Tests: auth (401/403), the **IDOR matrix** (cross-user access → 404), and the upload lifecycle (grant, finalize, one-time use, non-PDF rejection) — `backend/tests/`
 
-Still to come in Phase 1: upload-grant + object storage (§11.1), fetch-by-identifier (§11.2), the version-1 importer (§11.3), full deletion workflow (§9.4), and the Documents view. Then Phase 2 (async workers) and Phase 3 (extraction core).
+Still to come in Phase 1: fetch-by-identifier (§11.2), the version-1 importer (§11.3), full deletion workflow (§9.4), and the Documents view. Then Phase 2 (async workers) and Phase 3 (extraction core).
 
 ## Stack (DESIGN.md §25)
 

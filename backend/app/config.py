@@ -25,7 +25,13 @@ class Settings(BaseSettings):
     supabase_project_url: str = ""
 
     # Object storage (Supabase Storage or external S3-compatible; §23 #1 open).
+    storage_backend: str = "supabase"  # "supabase" | "memory" (tests)
     storage_bucket: str = "xray-sources"
+    supabase_service_key: str = Field(default="", description="Supabase service-role key")
+
+    # Ingestion safety bounds (§11.1, §17.6)
+    max_upload_bytes: int = 100 * 1024 * 1024  # 100 MiB
+    upload_grant_ttl_seconds: int = 3600
 
     # Access control: allowlist of permitted user emails (§3.1, single-tenant).
     allowed_emails: list[str] = Field(default_factory=list)

@@ -27,9 +27,10 @@ JWT_SECRET = "test-secret"
 @pytest_asyncio.fixture
 async def client() -> AsyncClient:
     import app.db  # noqa: F401  register models on Base.metadata
-    from app.api.deps import get_db
+    from app.api.deps import get_db, get_object_store
     from app.db.base import Base
     from app.main import app
+    from app.storage.memory import MemoryObjectStore
 
     engine = create_async_engine(
         "sqlite+aiosqlite://",
@@ -44,9 +45,12 @@ async def client() -> AsyncClient:
         async with test_sessionmaker() as session:
             yield session
 
+    store = MemoryObjectStore()
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_object_store] = lambda: store
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
+        c.object_store = store  # tests reach the store to simulate the browser PUT
         yield c
     app.dependency_overrides.clear()
     await engine.dispose()

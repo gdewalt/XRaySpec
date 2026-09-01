@@ -7,6 +7,7 @@ predicate before results are revealed (see ``app.api.v1.documents``).
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Annotated, AsyncIterator
 
 from fastapi import Depends, Header, HTTPException, status
@@ -18,6 +19,7 @@ from ..auth import AuthenticatedUser, verify_bearer_token
 from ..config import get_settings
 from ..db.base import get_sessionmaker
 from ..db.models import User
+from ..storage.base import ObjectStore
 
 
 async def get_db() -> AsyncIterator[AsyncSession]:
@@ -66,5 +68,25 @@ async def current_user(
     return await _get_or_create_user(session, auth)
 
 
+@lru_cache
+def get_object_store() -> ObjectStore:
+    """Return the configured object store (DESIGN.md §11.1).
+
+    ``memory`` is for tests; production uses Supabase Storage. Cached so the
+    HTTP-client-backed store is reused across requests.
+    """
+    settings = get_settings()
+    if settings.storage_backend == "memory":
+        from ..storage.memory import MemoryObjectStore
+
+        return MemoryObjectStore()
+    from ..storage.supabase import SupabaseObjectStore
+
+    return SupabaseObjectStore(
+        settings.supabase_project_url, settings.supabase_service_key, settings.storage_bucket
+    )
+
+
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 CurrentUser = Annotated[User, Depends(current_user)]
+Storage = Annotated[ObjectStore, Depends(get_object_store)]

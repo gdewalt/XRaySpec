@@ -98,6 +98,28 @@ class UserDocument(Base):
     created_at: Mapped[datetime] = _ts()
 
 
+class Upload(Base):
+    """A single-purpose, expiring direct-upload grant (DESIGN.md §11.1).
+
+    ``status`` enforces one-time use: a grant is ``pending`` until finalized, then
+    ``completed``. ``sha256``/``byte_size`` are the server-observed values recorded
+    at finalize."""
+
+    __tablename__ = "uploads"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("upl"))
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    object_key: Mapped[str] = mapped_column(String)
+    max_bytes: Mapped[int] = mapped_column()
+    content_type: Mapped[str | None] = mapped_column(String, default=None)
+    original_filename: Mapped[str | None] = mapped_column(String, default=None)
+    status: Mapped[str] = mapped_column(String, default="pending", index=True)  # pending|completed
+    sha256: Mapped[str | None] = mapped_column(String, default=None)
+    byte_size: Mapped[int | None] = mapped_column(default=None)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = _ts()
+
+
 class ExtractionJob(Base):
     """Rows in this table are the queue (claimed via ``SELECT ... FOR UPDATE SKIP
     LOCKED``, DESIGN.md §10.3). Lease/fencing columns arrive with the Phase 2
