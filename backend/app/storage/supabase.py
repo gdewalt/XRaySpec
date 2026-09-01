@@ -11,7 +11,7 @@ tests via the in-memory store.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -46,7 +46,7 @@ class SupabaseObjectStore:
             method="PUT",
             headers={"Content-Type": content_type or "application/pdf"},
             max_bytes=max_bytes,
-            expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
+            expires_at=datetime.now(UTC) + timedelta(seconds=expires_in),
         )
 
     async def read(self, object_key: str, *, limit: int) -> bytes:

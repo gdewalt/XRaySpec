@@ -14,7 +14,7 @@ dependency (§25.3.1). The API/wire representation lives separately in
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Union
+from typing import Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,5 +46,5 @@ class ApplicationLocator:
         return f"[{self.paragraph}]"
 
 
-Locator = Union[GrantLocator, ApplicationLocator]
+Locator = GrantLocator | ApplicationLocator
 """Discriminated union; branch on ``.kind`` (``"grant"`` | ``"application"``)."""

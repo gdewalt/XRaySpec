@@ -9,19 +9,23 @@ from __future__ import annotations
 
 import os
 
-os.environ.setdefault("XRAY_SUPABASE_JWT_SECRET", "test-secret")
+os.environ.setdefault("XRAY_SUPABASE_JWT_SECRET", "test-secret-0123456789-abcdefghij-XYZ")
 os.environ.setdefault("XRAY_ALLOWED_EMAILS", "[]")
 
-from datetime import datetime, timedelta, timezone  # noqa: E402
+from datetime import UTC, datetime, timedelta  # noqa: E402
 
 import jwt  # noqa: E402
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine  # noqa: E402
+from sqlalchemy.ext.asyncio import (  # noqa: E402
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
-JWT_SECRET = "test-secret"
+JWT_SECRET = "test-secret-0123456789-abcdefghij-XYZ"
 
 
 @pytest_asyncio.fixture
@@ -62,7 +66,7 @@ def make_token():
         payload = {
             "sub": sub,
             "aud": "authenticated",
-            "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+            "exp": datetime.now(UTC) + timedelta(hours=1),
         }
         if email is not None:
             payload["email"] = email

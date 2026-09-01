@@ -26,7 +26,10 @@ async def test_not_allowlisted_is_403(client, make_token, auth, monkeypatch):
     monkeypatch.setattr(
         deps,
         "get_settings",
-        lambda: Settings(supabase_jwt_secret="test-secret", allowed_emails=["allowed@example.com"]),
+        lambda: Settings(
+            supabase_jwt_secret="test-secret-0123456789-abcdefghij-XYZ",
+            allowed_emails=["allowed@example.com"],
+        ),
     )
     r = await client.get("/api/v1/documents", headers=auth(make_token("s", "denied@example.com")))
     assert r.status_code == 403

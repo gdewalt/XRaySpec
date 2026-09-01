@@ -6,7 +6,7 @@ extraction tests seeded from the labeled corpus arrive with Phase 2/3.
 
 from __future__ import annotations
 
-from app.extraction import ApplicationLocator, DEFAULT_CONFIG, ExtractionConfig, GrantLocator
+from app.extraction import DEFAULT_CONFIG, ApplicationLocator, ExtractionConfig, GrantLocator
 
 
 def test_grant_locator_renders_col_line() -> None:

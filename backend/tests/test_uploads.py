@@ -44,7 +44,9 @@ async def test_complete_rejects_non_pdf(client, make_token, auth):
     grant = await _grant(client, auth, tok)
     await client.object_store.put(grant["object_key"], b"this is not a pdf")
 
-    r = await client.post(f"/api/v1/uploads/{grant['upload_id']}/complete", headers=auth(tok), json={})
+    r = await client.post(
+        f"/api/v1/uploads/{grant['upload_id']}/complete", headers=auth(tok), json={}
+    )
     assert r.status_code == 400
     assert "INVALID_PDF" in r.text
 
@@ -52,7 +54,9 @@ async def test_complete_rejects_non_pdf(client, make_token, auth):
 async def test_complete_without_uploaded_object_is_400(client, make_token, auth):
     tok = make_token("owner", "o@example.com")
     grant = await _grant(client, auth, tok)  # never PUT anything
-    r = await client.post(f"/api/v1/uploads/{grant['upload_id']}/complete", headers=auth(tok), json={})
+    r = await client.post(
+        f"/api/v1/uploads/{grant['upload_id']}/complete", headers=auth(tok), json={}
+    )
     assert r.status_code == 400
 
 

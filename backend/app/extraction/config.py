@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass
-from typing import Literal, Tuple
+from typing import Literal
 
 OcrPolicy = Literal["auto", "force", "disabled"]
 
@@ -27,7 +27,7 @@ class ExtractionConfig:
     # OCR
     ocr_policy: OcrPolicy = "auto"
     ocr_dpi: int = 300
-    ocr_languages: Tuple[str, ...] = ("eng",)
+    ocr_languages: tuple[str, ...] = ("eng",)
 
     # Grant line-reference reconstruction (§12.5)
     line_y_tolerance: float = 3.0

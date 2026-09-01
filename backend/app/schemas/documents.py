@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -15,8 +15,8 @@ class DocumentCreate(BaseModel):
 
     title: str = Field(min_length=1, max_length=500)
     source_type: Literal["upload", "fetch"] = "upload"
-    patent_identifier: Optional[str] = Field(default=None, max_length=64)
-    filename: Optional[str] = Field(default=None, max_length=500)
+    patent_identifier: str | None = Field(default=None, max_length=64)
+    filename: str | None = Field(default=None, max_length=500)
 
 
 class DocumentRead(BaseModel):
@@ -25,9 +25,9 @@ class DocumentRead(BaseModel):
     id: str
     title: str
     state: str
-    active_artifact_id: Optional[str] = None
-    last_opened_at: Optional[datetime] = None
-    expires_at: Optional[datetime] = None
+    active_artifact_id: str | None = None
+    last_opened_at: datetime | None = None
+    expires_at: datetime | None = None
     created_at: datetime
 
 

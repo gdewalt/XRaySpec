@@ -6,7 +6,7 @@ finalize flow can be exercised end-to-end without a live bucket.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from .base import ObjectStat, UploadGrant
 
@@ -29,7 +29,7 @@ class MemoryObjectStore:
             method="PUT",
             headers={},
             max_bytes=max_bytes,
-            expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
+            expires_at=datetime.now(UTC) + timedelta(seconds=expires_in),
         )
 
     async def read(self, object_key: str, *, limit: int) -> bytes:
@@ -42,7 +42,9 @@ class MemoryObjectStore:
 
     async def stat(self, object_key: str) -> ObjectStat | None:
         data = self._objects.get(object_key)
-        return ObjectStat(size=len(data), content_type="application/pdf") if data is not None else None
+        if data is None:
+            return None
+        return ObjectStat(size=len(data), content_type="application/pdf")
 
     async def delete(self, object_key: str) -> None:
         self._objects.pop(object_key, None)

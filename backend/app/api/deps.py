@@ -7,8 +7,9 @@ predicate before results are revealed (see ``app.api.v1.documents``).
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from functools import lru_cache
-from typing import Annotated, AsyncIterator
+from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy import select
@@ -46,8 +47,8 @@ async def _get_or_create_user(session: AsyncSession, auth: AuthenticatedUser) ->
 
 
 async def current_user(
+    session: Annotated[AsyncSession, Depends(get_db)],
     authorization: Annotated[str | None, Header()] = None,
-    session: AsyncSession = Depends(get_db),
 ) -> User:
     """Resolve the current user from a verified Supabase JWT.
 

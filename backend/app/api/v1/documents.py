@@ -11,15 +11,15 @@ ingestion pipeline (§11) and full deletion workflow (§9.4) land in later slice
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from ...db.models import Bookmark, SourceDocument, UserDocument
-from ...services.audit import record_audit
 from ...schemas.bookmarks import BookmarkCreate, BookmarkRead
 from ...schemas.documents import DocumentCreate, DocumentList, DocumentRead
+from ...services.audit import record_audit
 from ..deps import CurrentUser, DbSession
 
 router = APIRouter(tags=["documents"])
@@ -40,7 +40,9 @@ async def _owned_document(session, user, document_id: str) -> UserDocument:
 
 
 @router.post("/documents", response_model=DocumentRead, status_code=status.HTTP_201_CREATED)
-async def create_document(body: DocumentCreate, user: CurrentUser, session: DbSession) -> DocumentRead:
+async def create_document(
+    body: DocumentCreate, user: CurrentUser, session: DbSession
+) -> DocumentRead:
     source = SourceDocument(
         owner_id=user.id,
         source_type=body.source_type,
@@ -80,7 +82,7 @@ async def list_documents(user: CurrentUser, session: DbSession) -> DocumentList:
 @router.get("/documents/{document_id}", response_model=DocumentRead)
 async def get_document(document_id: str, user: CurrentUser, session: DbSession) -> DocumentRead:
     doc = await _owned_document(session, user, document_id)
-    doc.last_opened_at = datetime.now(timezone.utc)
+    doc.last_opened_at = datetime.now(UTC)
     await session.commit()
     await session.refresh(doc)
     return DocumentRead.model_validate(doc)
@@ -103,7 +105,9 @@ async def delete_document(document_id: str, user: CurrentUser, session: DbSessio
 
 
 @router.get("/documents/{document_id}/bookmarks", response_model=list[BookmarkRead])
-async def list_bookmarks(document_id: str, user: CurrentUser, session: DbSession) -> list[BookmarkRead]:
+async def list_bookmarks(
+    document_id: str, user: CurrentUser, session: DbSession
+) -> list[BookmarkRead]:
     await _owned_document(session, user, document_id)
     rows = await session.scalars(
         select(Bookmark)

@@ -14,7 +14,7 @@ in the isolated worker.
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
@@ -43,7 +43,7 @@ async def create_upload(
     settings = get_settings()
     object_key = f"sources/{user.id}/{new_id('obj')}.pdf"
     ttl = settings.upload_grant_ttl_seconds
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl)
+    expires_at = datetime.now(UTC) + timedelta(seconds=ttl)
 
     upload = Upload(
         owner_id=user.id,
@@ -101,9 +101,13 @@ async def complete_upload(
     try:
         data = await store.read(upload.object_key, limit=upload.max_bytes)
     except FileNotFoundError:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No object was uploaded for this grant")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "No object was uploaded for this grant"
+        ) from None
     except ValueError:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "SOURCE_LIMIT_EXCEEDED")
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "SOURCE_LIMIT_EXCEEDED"
+        ) from None
 
     if PDF_MAGIC not in data[:1024]:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "INVALID_PDF")

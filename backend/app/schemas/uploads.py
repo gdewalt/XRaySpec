@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -11,8 +10,8 @@ from .documents import DocumentRead
 
 
 class UploadCreate(BaseModel):
-    filename: Optional[str] = Field(default=None, max_length=500)
-    content_type: Optional[str] = Field(default=None, max_length=128)
+    filename: str | None = Field(default=None, max_length=500)
+    content_type: str | None = Field(default=None, max_length=128)
 
 
 class UploadGrantResponse(BaseModel):
@@ -28,7 +27,7 @@ class UploadGrantResponse(BaseModel):
 
 
 class UploadComplete(BaseModel):
-    title: Optional[str] = Field(default=None, max_length=500)
+    title: str | None = Field(default=None, max_length=500)
 
 
 class UploadCompleteResponse(BaseModel):

@@ -52,9 +52,11 @@ async def test_list_is_scoped_to_owner(client, make_token, auth):
 async def test_delete_revokes_access(client, make_token, auth):
     tok = make_token("owner", "o@example.com")
     doc_id = await _create_doc(client, auth, tok)
-    assert (await client.delete(f"/api/v1/documents/{doc_id}", headers=auth(tok))).status_code == 204
+    deleted = await client.delete(f"/api/v1/documents/{doc_id}", headers=auth(tok))
+    assert deleted.status_code == 204
     # Now invisible to its former owner too.
-    assert (await client.get(f"/api/v1/documents/{doc_id}", headers=auth(tok))).status_code == 404
+    gone = await client.get(f"/api/v1/documents/{doc_id}", headers=auth(tok))
+    assert gone.status_code == 404
 
 
 async def test_bookmark_authorization(client, make_token, auth):
