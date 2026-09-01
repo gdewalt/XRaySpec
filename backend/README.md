@@ -45,10 +45,21 @@ applications, figures, callouts).
 
 ## Migrations
 
-Alembic is configured in `alembic.ini` pointing at `migrations/`. Initialize the
-async env and create the first revision once the Phase 1 models exist:
+Alembic is configured (`alembic.ini` + async `migrations/env.py` targeting
+`Base.metadata`). Autogenerate the first revision against your database:
 
 ```bash
 alembic revision --autogenerate -m "initial schema"
 alembic upgrade head
 ```
+
+## Tests
+
+```bash
+pytest            # auth gate + per-user IDOR matrix
+```
+
+Tests use in-memory SQLite (no live DB / asyncpg needed) and mint their own
+HS256 JWTs, so they run offline. Requires Python 3.11+ with `pip install -e
+".[dev]"` (the default interpreter may be newer than some wheels support — use a
+3.11/3.12 venv if `pip install` fails to find wheels).

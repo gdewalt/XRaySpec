@@ -1,0 +1,90 @@
+"""Per-user authorization (IDOR) matrix (DESIGN.md §22 — zero cross-user access).
+
+Unauthorized access to another user's resource returns 404, not 403 (§14.2).
+"""
+
+from __future__ import annotations
+
+
+async def _create_doc(client, auth, token, title="Doc") -> str:
+    r = await client.post("/api/v1/documents", headers=auth(token), json={"title": title})
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+async def test_owner_can_read_own_document(client, make_token, auth):
+    tok = make_token("owner", "o@example.com")
+    doc_id = await _create_doc(client, auth, tok)
+    r = await client.get(f"/api/v1/documents/{doc_id}", headers=auth(tok))
+    assert r.status_code == 200
+    assert r.json()["id"] == doc_id
+
+
+async def test_other_user_cannot_read_document(client, make_token, auth):
+    doc_id = await _create_doc(client, auth, make_token("owner", "o@example.com"))
+    r = await client.get(
+        f"/api/v1/documents/{doc_id}", headers=auth(make_token("intruder", "x@example.com"))
+    )
+    assert r.status_code == 404
+
+
+async def test_other_user_cannot_delete_document(client, make_token, auth):
+    doc_id = await _create_doc(client, auth, make_token("owner", "o@example.com"))
+    r = await client.delete(
+        f"/api/v1/documents/{doc_id}", headers=auth(make_token("intruder", "x@example.com"))
+    )
+    assert r.status_code == 404
+
+
+async def test_list_is_scoped_to_owner(client, make_token, auth):
+    owner = make_token("owner", "o@example.com")
+    other = make_token("other", "y@example.com")
+    await _create_doc(client, auth, owner, "A")
+    await _create_doc(client, auth, owner, "B")
+    await _create_doc(client, auth, other, "C")
+
+    r_owner = await client.get("/api/v1/documents", headers=auth(owner))
+    r_other = await client.get("/api/v1/documents", headers=auth(other))
+    assert len(r_owner.json()["items"]) == 2
+    assert len(r_other.json()["items"]) == 1
+
+
+async def test_delete_revokes_access(client, make_token, auth):
+    tok = make_token("owner", "o@example.com")
+    doc_id = await _create_doc(client, auth, tok)
+    assert (await client.delete(f"/api/v1/documents/{doc_id}", headers=auth(tok))).status_code == 204
+    # Now invisible to its former owner too.
+    assert (await client.get(f"/api/v1/documents/{doc_id}", headers=auth(tok))).status_code == 404
+
+
+async def test_bookmark_authorization(client, make_token, auth):
+    owner = make_token("owner", "o@example.com")
+    intruder = make_token("intruder", "x@example.com")
+    doc_id = await _create_doc(client, auth, owner)
+
+    created = await client.post(
+        f"/api/v1/documents/{doc_id}/bookmarks",
+        headers=auth(owner),
+        json={"entry_id": "line_0000123", "label": "claim 1"},
+    )
+    assert created.status_code == 201
+    bookmark_id = created.json()["id"]
+
+    # Intruder cannot create on, list, or delete against the owner's document/bookmark.
+    assert (
+        await client.post(
+            f"/api/v1/documents/{doc_id}/bookmarks",
+            headers=auth(intruder),
+            json={"entry_id": "line_1", "label": "x"},
+        )
+    ).status_code == 404
+    assert (
+        await client.get(f"/api/v1/documents/{doc_id}/bookmarks", headers=auth(intruder))
+    ).status_code == 404
+    assert (
+        await client.delete(f"/api/v1/bookmarks/{bookmark_id}", headers=auth(intruder))
+    ).status_code == 404
+
+    # Owner sees exactly their one bookmark.
+    listed = await client.get(f"/api/v1/documents/{doc_id}/bookmarks", headers=auth(owner))
+    assert [b["id"] for b in listed.json()] == [bookmark_id]

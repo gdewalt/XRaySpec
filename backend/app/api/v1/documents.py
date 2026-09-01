@@ -1,0 +1,146 @@
+"""Documents + bookmarks API (DESIGN.md §14.1, §16.6).
+
+Every query applies an **owner predicate**: a resource that does not belong to
+the caller is indistinguishable from one that does not exist (404), per §14.2.
+This is the release gate in §22 ("every document endpoint proves resource
+ownership").
+
+This slice records documents in ``preparing`` state; the upload-grant / fetch
+ingestion pipeline (§11) and full deletion workflow (§9.4) land in later slices.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, HTTPException, status
+from sqlalchemy import select
+
+from ...db.models import Bookmark, SourceDocument, UserDocument
+from ...services.audit import record_audit
+from ...schemas.bookmarks import BookmarkCreate, BookmarkRead
+from ...schemas.documents import DocumentCreate, DocumentList, DocumentRead
+from ..deps import CurrentUser, DbSession
+
+router = APIRouter(tags=["documents"])
+
+
+async def _owned_document(session, user, document_id: str) -> UserDocument:
+    """Fetch a document owned by ``user`` or raise 404 (never 403 — §14.2)."""
+    doc = await session.scalar(
+        select(UserDocument).where(
+            UserDocument.id == document_id,
+            UserDocument.owner_id == user.id,
+            UserDocument.state != "deleted",
+        )
+    )
+    if doc is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
+    return doc
+
+
+@router.post("/documents", response_model=DocumentRead, status_code=status.HTTP_201_CREATED)
+async def create_document(body: DocumentCreate, user: CurrentUser, session: DbSession) -> DocumentRead:
+    source = SourceDocument(
+        owner_id=user.id,
+        source_type=body.source_type,
+        patent_canonical=body.patent_identifier,
+        original_filename=body.filename,
+        state="preparing",
+    )
+    session.add(source)
+    await session.flush()  # assign source.id
+
+    doc = UserDocument(owner_id=user.id, source_id=source.id, title=body.title, state="preparing")
+    session.add(doc)
+    await session.flush()
+
+    record_audit(
+        session,
+        actor_user_id=user.id,
+        action="document.create",
+        resource_class="user_document",
+        resource_id=doc.id,
+    )
+    await session.commit()
+    await session.refresh(doc)
+    return DocumentRead.model_validate(doc)
+
+
+@router.get("/documents", response_model=DocumentList)
+async def list_documents(user: CurrentUser, session: DbSession) -> DocumentList:
+    rows = await session.scalars(
+        select(UserDocument)
+        .where(UserDocument.owner_id == user.id, UserDocument.state != "deleted")
+        .order_by(UserDocument.created_at.desc())
+    )
+    return DocumentList(items=[DocumentRead.model_validate(d) for d in rows])
+
+
+@router.get("/documents/{document_id}", response_model=DocumentRead)
+async def get_document(document_id: str, user: CurrentUser, session: DbSession) -> DocumentRead:
+    doc = await _owned_document(session, user, document_id)
+    doc.last_opened_at = datetime.now(timezone.utc)
+    await session.commit()
+    await session.refresh(doc)
+    return DocumentRead.model_validate(doc)
+
+
+@router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_document(document_id: str, user: CurrentUser, session: DbSession) -> None:
+    doc = await _owned_document(session, user, document_id)
+    # Soft delete: access revoked immediately (§9.4); the blob/derived-data
+    # deletion workflow runs asynchronously in a later slice.
+    doc.state = "deleted"
+    record_audit(
+        session,
+        actor_user_id=user.id,
+        action="document.delete",
+        resource_class="user_document",
+        resource_id=doc.id,
+    )
+    await session.commit()
+
+
+@router.get("/documents/{document_id}/bookmarks", response_model=list[BookmarkRead])
+async def list_bookmarks(document_id: str, user: CurrentUser, session: DbSession) -> list[BookmarkRead]:
+    await _owned_document(session, user, document_id)
+    rows = await session.scalars(
+        select(Bookmark)
+        .where(Bookmark.document_id == document_id, Bookmark.owner_id == user.id)
+        .order_by(Bookmark.created_at.desc())
+    )
+    return [BookmarkRead.model_validate(b) for b in rows]
+
+
+@router.post(
+    "/documents/{document_id}/bookmarks",
+    response_model=BookmarkRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_bookmark(
+    document_id: str, body: BookmarkCreate, user: CurrentUser, session: DbSession
+) -> BookmarkRead:
+    await _owned_document(session, user, document_id)
+    bookmark = Bookmark(
+        owner_id=user.id,
+        document_id=document_id,
+        entry_id=body.entry_id,
+        label=body.label,
+        color=body.color,
+    )
+    session.add(bookmark)
+    await session.commit()
+    await session.refresh(bookmark)
+    return BookmarkRead.model_validate(bookmark)
+
+
+@router.delete("/bookmarks/{bookmark_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_bookmark(bookmark_id: str, user: CurrentUser, session: DbSession) -> None:
+    bookmark = await session.scalar(
+        select(Bookmark).where(Bookmark.id == bookmark_id, Bookmark.owner_id == user.id)
+    )
+    if bookmark is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Bookmark not found")
+    await session.delete(bookmark)
+    await session.commit()

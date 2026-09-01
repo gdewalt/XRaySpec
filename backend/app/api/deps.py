@@ -1,39 +1,70 @@
 """Shared API dependencies: DB session and authenticated user (DESIGN.md §14.2, §17.1).
 
 Identity comes from the authenticated session (a verified Supabase JWT), never
-from a request body. Every resource query must additionally apply an owner
-predicate before results are revealed.
+from a request body. Every resource query additionally applies an owner
+predicate before results are revealed (see ``app.api.v1.documents``).
 """
 
 from __future__ import annotations
 
-from typing import AsyncIterator
+from typing import Annotated, AsyncIterator
 
 from fastapi import Depends, Header, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import AuthenticatedUser, verify_bearer_token
-from ..db.base import async_session
+from ..config import get_settings
+from ..db.base import get_sessionmaker
+from ..db.models import User
 
 
-async def get_db() -> AsyncIterator[object]:
-    """Yield an async SQLAlchemy session."""
-    async with async_session() as session:
+async def get_db() -> AsyncIterator[AsyncSession]:
+    """Yield one async SQLAlchemy session per request."""
+    async with get_sessionmaker()() as session:
         yield session
 
 
+async def _get_or_create_user(session: AsyncSession, auth: AuthenticatedUser) -> User:
+    existing = await session.scalar(select(User).where(User.subject == auth.subject))
+    if existing is not None:
+        return existing
+    user = User(subject=auth.subject, email=auth.email)
+    session.add(user)
+    try:
+        await session.commit()
+    except IntegrityError:  # concurrent first-login race
+        await session.rollback()
+        user = await session.scalar(select(User).where(User.subject == auth.subject))
+        if user is None:  # pragma: no cover - should not happen
+            raise
+    await session.refresh(user)
+    return user
+
+
 async def current_user(
-    authorization: str | None = Header(default=None),
-) -> AuthenticatedUser:
+    authorization: Annotated[str | None, Header()] = None,
+    session: AsyncSession = Depends(get_db),
+) -> User:
     """Resolve the current user from a verified Supabase JWT.
 
-    Raises 401 if absent/invalid. Membership/allowlist checks (DESIGN.md §3.1)
-    happen here once wired.
+    401 if the token is missing/invalid; 403 if the caller's email is not on the
+    instance allowlist (DESIGN.md §3.1).
     """
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing bearer token")
-    token = authorization.split(" ", 1)[1]
-    return verify_bearer_token(token)
+
+    settings = get_settings()
+    auth = verify_bearer_token(authorization.split(" ", 1)[1], settings.supabase_jwt_secret)
+
+    if settings.allowed_emails:
+        allowed = {e.lower() for e in settings.allowed_emails}
+        if (auth.email or "").lower() not in allowed:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Not authorized for this instance")
+
+    return await _get_or_create_user(session, auth)
 
 
-CurrentUser = Depends(current_user)
-DbSession = Depends(get_db)
+DbSession = Annotated[AsyncSession, Depends(get_db)]
+CurrentUser = Annotated[User, Depends(current_user)]

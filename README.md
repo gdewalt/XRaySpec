@@ -6,7 +6,15 @@ This is a **ground-up rebuild** of an earlier Flask prototype. The extraction en
 
 ## Status
 
-**Scaffold (Phase −1).** Foundational contracts and structure are in place; feature implementation follows the phase plan in DESIGN.md §21. Load-bearing contracts are real (`extraction/locator.py`, `extraction/config.py`, `extraction/core.py` interface); most feature code is a stubbed seam with a TODO.
+**Phase 1 — authorization spine (in progress).** On top of the Phase −1 scaffold:
+
+- §7 ORM models (User, SourceDocument, UserDocument, ExtractionArtifact, Bookmark, Annotation, AuditEvent) — `backend/app/db/models.py`
+- Supabase JWT verification + email allowlist + local-user upsert — `backend/app/auth`, `backend/app/api/deps.py`
+- Documents + bookmarks API with an **owner predicate on every query** and audit events — `backend/app/api/v1/documents.py`
+- Async Alembic environment wired to the models — `backend/migrations/env.py`
+- Tests: auth (401/403) and the **IDOR matrix** (cross-user access → 404) — `backend/tests/`
+
+Still to come in Phase 1: upload-grant + object storage (§11.1), fetch-by-identifier (§11.2), the version-1 importer (§11.3), full deletion workflow (§9.4), and the Documents view. Then Phase 2 (async workers) and Phase 3 (extraction core).
 
 ## Stack (DESIGN.md §25)
 

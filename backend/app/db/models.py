@@ -1,15 +1,15 @@
 """ORM models — the durable domain (DESIGN.md §7).
 
-Single-tenant: there is no ``Tenant``/``Membership``. Every resource is owned by
-a ``User`` and authorization is an owner predicate.
+Single-tenant: there is no ``Tenant``/``Membership``. Every resource is owned by a
+``User`` and authorization is an owner predicate applied on every query.
 
-Only ``User`` and ``ExtractionJob`` are sketched here to establish the pattern
-(and because the job table *is* the queue, §10.3). The remaining entities from
-§7 are added in Phase 1:
+IDs are opaque, prefixed, full-entropy strings (DESIGN.md §14.2). Storage shape
+lives here; the API (wire) shape lives in ``app.schemas``, kept separate.
 
-  SourceDocument, UserDocument, JobAttempt, StageCheckpoint, ExtractionArtifact,
-  EnrichmentSnapshot, Bookmark, Annotation, ReferenceLinkOverride,
-  CitationProfile, ExportSnapshot, AuditEvent.
+Modeled in this slice: User, SourceDocument, UserDocument, ExtractionArtifact
+(minimal), Bookmark, Annotation, AuditEvent, ExtractionJob. Remaining §7 entities
+(JobAttempt, StageCheckpoint, EnrichmentSnapshot, ReferenceLinkOverride,
+CitationProfile, ExportSnapshot) arrive with their phases.
 """
 
 from __future__ import annotations
@@ -17,33 +17,141 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import JSON, DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
 
 
-def _uuid() -> str:
-    return uuid.uuid4().hex
+def new_id(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex}"
+
+
+def _ts() -> Mapped[datetime]:
+    return mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class User(Base):
     __tablename__ = "users"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    subject: Mapped[str] = mapped_column(String, unique=True, index=True)  # Supabase sub
-    email: Mapped[str | None] = mapped_column(String, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("usr"))
+    subject: Mapped[str] = mapped_column(String, unique=True, index=True)  # Supabase auth sub
+    email: Mapped[str | None] = mapped_column(String, index=True, default=None)
+    created_at: Mapped[datetime] = _ts()
+
+
+class SourceDocument(Base):
+    """Owned source PDF + its provenance (DESIGN.md §7). ``pdf_object_key`` is null
+    until the upload finalizer attaches a verified blob (state ``preparing``)."""
+
+    __tablename__ = "source_documents"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("src"))
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    source_type: Mapped[str] = mapped_column(String)  # "upload" | "fetch"
+    doc_type: Mapped[str | None] = mapped_column(String, default=None)  # "grant"|"application"
+    pdf_object_key: Mapped[str | None] = mapped_column(String, default=None)
+    sha256: Mapped[str | None] = mapped_column(String, default=None)
+    byte_size: Mapped[int | None] = mapped_column(default=None)
+    page_count: Mapped[int | None] = mapped_column(default=None)
+    patent_canonical: Mapped[str | None] = mapped_column(String, default=None)
+    original_filename: Mapped[str | None] = mapped_column(String, default=None)
+    state: Mapped[str] = mapped_column(String, default="preparing")  # preparing|ready|failed
+    created_at: Mapped[datetime] = _ts()
+
+
+class ExtractionArtifact(Base):
+    """Immutable extraction result (minimal here; expanded in Phase 3, §8).
+
+    ``is_active`` marks the current version; ``is_rollback`` the retained prior
+    one (DESIGN.md §9.2). No fuzzy multi-version history."""
+
+    __tablename__ = "extraction_artifacts"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("art"))
+    source_id: Mapped[str] = mapped_column(ForeignKey("source_documents.id"), index=True)
+    schema_version: Mapped[int] = mapped_column(default=2)
+    disposition: Mapped[str | None] = mapped_column(String, default=None)
+    manifest_object_key: Mapped[str | None] = mapped_column(String, default=None)
+    is_active: Mapped[bool] = mapped_column(default=False)
+    is_rollback: Mapped[bool] = mapped_column(default=False)
+    ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    created_at: Mapped[datetime] = _ts()
+
+
+class UserDocument(Base):
+    """The user-facing document (DESIGN.md §7). Points at one source and its
+    currently active artifact."""
+
+    __tablename__ = "user_documents"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("doc"))
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey("source_documents.id"), index=True)
+    title: Mapped[str] = mapped_column(String)
+    active_artifact_id: Mapped[str | None] = mapped_column(
+        ForeignKey("extraction_artifacts.id"), default=None
+    )
+    state: Mapped[str] = mapped_column(String, default="preparing", index=True)
+    last_opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    created_at: Mapped[datetime] = _ts()
 
 
 class ExtractionJob(Base):
-    """Rows in this table are the queue (claimed via SELECT ... FOR UPDATE SKIP LOCKED)."""
+    """Rows in this table are the queue (claimed via ``SELECT ... FOR UPDATE SKIP
+    LOCKED``, DESIGN.md §10.3). Lease/fencing columns arrive with the Phase 2
+    worker."""
 
     __tablename__ = "extraction_jobs"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    owner_id: Mapped[str] = mapped_column(String, index=True)
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("job"))
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    document_id: Mapped[str | None] = mapped_column(ForeignKey("user_documents.id"), default=None)
     status: Mapped[str] = mapped_column(String, default="queued", index=True)
     stage: Mapped[str | None] = mapped_column(String, default=None)
-    # Lease/fencing fields (§10.4) — added with the worker in Phase 2.
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = _ts()
+
+
+class Bookmark(Base):
+    """User bookmark targeting a stable artifact ``entry_id`` (DESIGN.md §7, §16.6)."""
+
+    __tablename__ = "bookmarks"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("bmk"))
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    document_id: Mapped[str] = mapped_column(ForeignKey("user_documents.id"), index=True)
+    entry_id: Mapped[str] = mapped_column(String)
+    label: Mapped[str | None] = mapped_column(String, default=None)
+    color: Mapped[str | None] = mapped_column(String, default=None)
+    created_at: Mapped[datetime] = _ts()
+
+
+class Annotation(Base):
+    """User annotation targeting a stable artifact ``entry_id`` (DESIGN.md §7)."""
+
+    __tablename__ = "annotations"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("ann"))
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    document_id: Mapped[str] = mapped_column(ForeignKey("user_documents.id"), index=True)
+    target_entry_id: Mapped[str] = mapped_column(String)
+    note: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = _ts()
+
+
+class AuditEvent(Base):
+    """Content-free audit record (DESIGN.md §7, §18.3). ``details`` must never
+    contain document text or other sensitive content."""
+
+    __tablename__ = "audit_events"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("aud"))
+    actor_user_id: Mapped[str | None] = mapped_column(String, index=True, default=None)
+    action: Mapped[str] = mapped_column(String)
+    resource_class: Mapped[str] = mapped_column(String)
+    resource_id: Mapped[str | None] = mapped_column(String, default=None)
+    outcome: Mapped[str] = mapped_column(String, default="success")
+    correlation_id: Mapped[str | None] = mapped_column(String, default=None)
+    details: Mapped[dict | None] = mapped_column(JSON, default=None)
+    created_at: Mapped[datetime] = _ts()
