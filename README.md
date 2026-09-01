@@ -1,0 +1,78 @@
+# X-Ray Spec
+
+A hosted, single-tenant, per-user patent **specification viewer**: upload or fetch a US patent (grant or application), extract and read the specification beside a synchronized source PDF, and cite it with printed `column:line` (grants) or paragraph (`[0042]`, applications) references. Textual `FIG. 12A` references and component reference numerals (`housing 104`) link to evidence-backed regions and exact callout boxes in the drawings.
+
+This is a **ground-up rebuild** of an earlier Flask prototype. The extraction engine is re-implemented clean-room in a deterministic, geometry-anchored paradigm — no prototype code is reused. The full design is in **[DESIGN.md](DESIGN.md)**; this README is the map from that document to the code.
+
+## Status
+
+**Scaffold (Phase −1).** Foundational contracts and structure are in place; feature implementation follows the phase plan in DESIGN.md §21. Load-bearing contracts are real (`extraction/locator.py`, `extraction/config.py`, `extraction/core.py` interface); most feature code is a stubbed seam with a TODO.
+
+## Stack (DESIGN.md §25)
+
+| Layer | Choice |
+|---|---|
+| Language | Python |
+| Backend | FastAPI (async, Pydantic validation, OpenAPI) |
+| Frontend | React + TypeScript SPA (Vite); types generated from the backend OpenAPI schema |
+| Data access | SQLAlchemy 2.0 (async) + Alembic |
+| Auth + managed services | Supabase — Auth (JWT), managed Postgres (PITR), object storage |
+| PDF rendering | PDF.js (client) |
+| OCR | Tesseract (pending corpus measurement; DESIGN.md §23 #2) |
+
+**Supabase integration rule:** the FastAPI service is the *only* database client — verify Supabase JWTs, connect to Postgres by connection string. Do **not** use Supabase's client-direct / RLS / PostgREST pattern; every query carries a server-side owner predicate (DESIGN.md §17.1).
+
+## Repository layout
+
+```
+x-ray-spec/
+├── DESIGN.md              # the authoritative design
+├── backend/               # FastAPI app + extraction engine + workers
+│   ├── app/
+│   │   ├── main.py        # FastAPI entrypoint (/live, /ready)
+│   │   ├── config.py      # app settings (env)
+│   │   ├── api/           # HTTP routers (DESIGN.md §14)
+│   │   ├── db/            # SQLAlchemy models (DESIGN.md §7) — the store shape
+│   │   ├── schemas/       # Pydantic wire types — the API shape (kept separate)
+│   │   ├── auth/          # Supabase JWT verification + current-user
+│   │   ├── extraction/    # CLEAN-ROOM extraction core (DESIGN.md §8, §12, §25.1)
+│   │   │   ├── locator.py # typed grant/application locator (DESIGN.md §8.2)
+│   │   │   ├── config.py  # versioned ExtractionConfig (cache key; §25.3)
+│   │   │   ├── artifact.py# immutable artifact / entry domain model (§8)
+│   │   │   └── core.py    # extract(pdf_bytes, config) -> Artifact  (pure; §25.3.1)
+│   │   └── worker/        # queue claim (SKIP LOCKED) + worker runner (DESIGN.md §10)
+│   └── tests/             # pytest (goldens seeded from the labeled corpus; §25.3)
+├── frontend/              # React + TS SPA (Vite)
+└── .github/workflows/     # CI gate (ruff + pytest + tsc/build)
+```
+
+## Foundational contracts still to define (DESIGN.md §25.3)
+
+1. **Extraction-core interface** — `extract(pdf_bytes, config) -> Artifact`, pure, no IO/global state. *(stub in place)*
+2. **Versioned config object** — every threshold/DPI in one place; it is the cache key. *(in place)*
+3. **Golden harness** — seeded from the hand-labeled corpus, not prior output.
+4. **Module seams + typed contracts** between core / schema / api / worker / viewer.
+5. **Overlay coordinate contract** — normalized-box ↔ PDF.js viewport (scale + rotation), with a test.
+6. **Test framework + CI gate** — pytest + Vitest/Playwright. *(CI stub in place)*
+
+## Local development
+
+Backend:
+
+```bash
+cd backend
+python -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+uvicorn app.main:app --reload
+pytest
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Copy `backend/.env.example` to `backend/.env` and fill in Supabase credentials before running against a database.
