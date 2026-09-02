@@ -6,7 +6,7 @@ This is a **ground-up rebuild** of an earlier Flask prototype. The extraction en
 
 ## Status
 
-**Phase 1 — authorization spine (in progress).** On top of the Phase −1 scaffold:
+**Phase 1 complete (backend + Documents view); Phase 2 (async workers) in progress.** On top of the Phase −1 scaffold:
 
 - §7 ORM models (User, SourceDocument, UserDocument, ExtractionArtifact, Bookmark, Annotation, AuditEvent) — `backend/app/db/models.py`
 - Supabase JWT verification + email allowlist + local-user upsert — `backend/app/auth`, `backend/app/api/deps.py`
@@ -16,9 +16,11 @@ This is a **ground-up rebuild** of an earlier Flask prototype. The extraction en
 - **Fetch by identifier** (§11.2, §7.2): a deterministic structured patent parser (grants `B1`/`B2`/`A` **and** applications `A1`/`A2`, with ambiguous/unsupported input rejected as a validation choice) wired into `POST /documents` (fetch), which creates the source and queues a `fetching_source` job for the egress worker — `backend/app/patents/`
 - **Portable import** (§11.3): a bounded, untrusted-input validator/migrator (`app/imports/`) — byte/depth/entry/bookmark/string limits, typed-locator + normalized-box validation, **v1→v2 migration**, and regeneration of all file IDs/keys — behind `POST /imports` (analyze in quarantine) → `POST /imports/{id}/commit` (explicit migration confirmation → `imported_unverified`, text-only document + immutable artifact + bookmarks). Server-side `write` added to the storage interface.
 - **Deletion workflow** (§9.4): DELETE revokes access synchronously, then an **idempotent purge** (`app/services/deletion.py`) removes bookmarks, annotations, jobs, immutable artifacts (+ their blobs), and the source PDF + row (when unshared), leaving a content-free audit tombstone. Safe to retry to completion.
-- Tests: auth (401/403), the **IDOR matrix** (cross-user access → 404), upload/fetch/import/delete lifecycles, and the patent + portable-save validators — `backend/tests/` (**65 passing**, `ruff` clean; frontend `tsc`/`vite build` verified)
+- **Documents view** (frontend, §16.1): React + TS SPA — sign-in, documents list with state badges + delete, and ingestion tabs (fetch / upload / import). Verified live end-to-end against the API — `frontend/src/`
+- **Job execution engine** (Phase 2, §10): the durable async spine — a portable Postgres-queue claim (`SKIP LOCKED` on Postgres, serial-safe on SQLite), lease + fencing tokens + heartbeats, cooperative cancellation, a `process_one` runner with a stub processor, and the job control API (`GET /jobs/{id}` snapshot, cancel, retry) — `backend/app/worker/`, `backend/app/api/v1/jobs.py`
+- Tests: auth (401/403), the **IDOR matrix** (cross-user access → 404), upload/fetch/import/delete lifecycles, the patent + portable-save validators, and the worker engine (claim, lease reclaim, fencing, cancellation) + job API — `backend/tests/` (**75 passing**, `ruff` clean; frontend `tsc`/`vite build` verified)
 
-Phase 1 backend is complete. Still to come before Phase 2: the **Documents view** (frontend). The actual restricted-egress fetch download lands with the Phase 2 worker. Then Phase 2 (async workers) and Phase 3 (extraction core).
+Phase 2 continuing: SSE progress streaming + resume/checkpoints, the real clean-room extraction processor (grant col:line, native + OCR), and the restricted-egress fetch processor that downloads the PDF for fetch jobs. Then Phase 3.
 
 ## Stack (DESIGN.md §25)
 

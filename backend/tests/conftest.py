@@ -55,6 +55,7 @@ async def client() -> AsyncClient:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         c.object_store = store  # tests reach the store to simulate the browser PUT
+        c.sessionmaker = test_sessionmaker  # tests set up / inspect rows directly
         yield c
     app.dependency_overrides.clear()
     await engine.dispose()

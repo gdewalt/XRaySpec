@@ -157,6 +157,27 @@ class ExtractionJob(Base):
     document_id: Mapped[str | None] = mapped_column(ForeignKey("user_documents.id"), default=None)
     status: Mapped[str] = mapped_column(String, default="queued", index=True)
     stage: Mapped[str | None] = mapped_column(String, default=None)
+    stage_label: Mapped[str | None] = mapped_column(String, default=None)
+
+    # Lease + fencing (§10.4): a worker claims the job, renews a short lease with
+    # heartbeats, and stamps every write with its fencing token so a stale worker
+    # cannot publish or mutate current state.
+    attempt: Mapped[int] = mapped_column(default=0)
+    worker_id: Mapped[str | None] = mapped_column(String, default=None)
+    fencing_token: Mapped[str | None] = mapped_column(String, default=None)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+    # Cancellation (§10.5) and durable progress snapshot (§10.2).
+    cancel_requested: Mapped[bool] = mapped_column(default=False)
+    completed_units: Mapped[int] = mapped_column(default=0)
+    total_units: Mapped[int | None] = mapped_column(default=None)
+    unit: Mapped[str | None] = mapped_column(String, default=None)
+    overall_fraction: Mapped[float | None] = mapped_column(default=None)
+    indeterminate: Mapped[bool] = mapped_column(default=True)
+
+    failure_code: Mapped[str | None] = mapped_column(String, default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     created_at: Mapped[datetime] = _ts()
 
 
