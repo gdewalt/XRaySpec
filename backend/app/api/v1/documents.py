@@ -21,7 +21,8 @@ from ...patents import PatentParseError, parse_patent_identifier
 from ...schemas.bookmarks import BookmarkCreate, BookmarkRead
 from ...schemas.documents import DocumentCreate, DocumentList, DocumentRead
 from ...services.audit import record_audit
-from ..deps import CurrentUser, DbSession
+from ...services.deletion import purge_document
+from ..deps import CurrentUser, DbSession, Storage
 
 router = APIRouter(tags=["documents"])
 
@@ -151,17 +152,33 @@ async def get_document(document_id: str, user: CurrentUser, session: DbSession) 
 
 
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_document(document_id: str, user: CurrentUser, session: DbSession) -> None:
-    doc = await _owned_document(session, user, document_id)
-    # Soft delete: access revoked immediately (§9.4); the blob/derived-data
-    # deletion workflow runs asynchronously in a later slice.
-    doc.state = "deleted"
+async def delete_document(
+    document_id: str, user: CurrentUser, session: DbSession, store: Storage
+) -> None:
+    # Fetch regardless of state so a partially-purged document can be retried.
+    doc = await session.scalar(
+        select(UserDocument).where(
+            UserDocument.id == document_id, UserDocument.owner_id == user.id
+        )
+    )
+    if doc is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
+
+    # 1. Revoke access immediately and durably (§9.4 step 1).
+    if doc.state != "deleted":
+        doc.state = "deleted"
+        await session.commit()
+
+    # 2. Idempotently purge derived data + blobs, then the row (retry-until-complete).
+    await purge_document(session, store, doc)
+
+    # 3. Content-free completion record (§9.4 step 4).
     record_audit(
         session,
         actor_user_id=user.id,
         action="document.delete",
         resource_class="user_document",
-        resource_id=doc.id,
+        resource_id=document_id,
     )
     await session.commit()
 

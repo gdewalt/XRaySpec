@@ -15,9 +15,10 @@ This is a **ground-up rebuild** of an earlier Flask prototype. The extraction en
 - **Direct-upload ingestion** (§11.1): `POST /uploads` grant → browser PUT → `POST /uploads/{id}/complete` finalize (server-observed size/SHA-256/magic bytes, **no PDF parsing in the web tier**) → source/user document + queued extraction job. Storage is an interface with a Supabase impl and an in-memory impl for tests — `backend/app/storage/`, `backend/app/api/v1/uploads.py`
 - **Fetch by identifier** (§11.2, §7.2): a deterministic structured patent parser (grants `B1`/`B2`/`A` **and** applications `A1`/`A2`, with ambiguous/unsupported input rejected as a validation choice) wired into `POST /documents` (fetch), which creates the source and queues a `fetching_source` job for the egress worker — `backend/app/patents/`
 - **Portable import** (§11.3): a bounded, untrusted-input validator/migrator (`app/imports/`) — byte/depth/entry/bookmark/string limits, typed-locator + normalized-box validation, **v1→v2 migration**, and regeneration of all file IDs/keys — behind `POST /imports` (analyze in quarantine) → `POST /imports/{id}/commit` (explicit migration confirmation → `imported_unverified`, text-only document + immutable artifact + bookmarks). Server-side `write` added to the storage interface.
-- Tests: auth (401/403), the **IDOR matrix** (cross-user access → 404), upload/fetch/import lifecycles, and the patent + portable-save validators — `backend/tests/` (**60 passing**, `ruff` clean; frontend `tsc`/`vite build` verified)
+- **Deletion workflow** (§9.4): DELETE revokes access synchronously, then an **idempotent purge** (`app/services/deletion.py`) removes bookmarks, annotations, jobs, immutable artifacts (+ their blobs), and the source PDF + row (when unshared), leaving a content-free audit tombstone. Safe to retry to completion.
+- Tests: auth (401/403), the **IDOR matrix** (cross-user access → 404), upload/fetch/import/delete lifecycles, and the patent + portable-save validators — `backend/tests/` (**65 passing**, `ruff` clean; frontend `tsc`/`vite build` verified)
 
-Still to come in Phase 1: the full deletion workflow (§9.4) and the Documents view (frontend). The actual restricted-egress fetch download lands with the Phase 2 worker. Then Phase 2 (async workers) and Phase 3 (extraction core).
+Phase 1 backend is complete. Still to come before Phase 2: the **Documents view** (frontend). The actual restricted-egress fetch download lands with the Phase 2 worker. Then Phase 2 (async workers) and Phase 3 (extraction core).
 
 ## Stack (DESIGN.md §25)
 
