@@ -34,3 +34,6 @@ Thumbs.db
 /data/
 *.pdf
 !tests/**/fixtures/**/*.pdf
+*.db
+*.db-wal
+*.db-shm
