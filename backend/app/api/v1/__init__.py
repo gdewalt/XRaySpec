@@ -3,10 +3,9 @@
 Feature routers are added per phase. Every mutation is authenticated,
 per-user authorized (owner predicate), and idempotent where relevant.
 
-Wired: uploads (direct-upload ingestion), documents (upload + fetch-by-identifier)
-+ bookmarks (Phase 1).
+Wired: uploads (direct upload), imports (portable-save analyze/commit),
+documents (upload + fetch-by-identifier) + bookmarks (Phase 1).
 TODO by phase:
-  - ingestion: version-1 importer (§11.3)
   - jobs: status snapshot, SSE events, cancel/retry/resume (§14.1, Phase 2)
   - artifacts: manifest, entries, figures, callouts (§14.1, Phase 3)
   - citations: profiles, preview (§14.1, Phase 4)
@@ -16,10 +15,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from . import documents, uploads
+from . import documents, imports, uploads
 
 api_router = APIRouter()
 api_router.include_router(uploads.router)
+api_router.include_router(imports.router)
 api_router.include_router(documents.router)
 
 

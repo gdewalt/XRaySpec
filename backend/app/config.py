@@ -29,9 +29,10 @@ class Settings(BaseSettings):
     storage_bucket: str = "xray-sources"
     supabase_service_key: str = Field(default="", description="Supabase service-role key")
 
-    # Ingestion safety bounds (§11.1, §17.6)
+    # Ingestion safety bounds (§11.1, §11.3, §17.6)
     max_upload_bytes: int = 100 * 1024 * 1024  # 100 MiB
     upload_grant_ttl_seconds: int = 3600
+    max_import_bytes: int = 10 * 1024 * 1024  # 10 MiB portable-save cap
 
     # Access control: allowlist of permitted user emails (§3.1, single-tenant).
     allowed_emails: list[str] = Field(default_factory=list)

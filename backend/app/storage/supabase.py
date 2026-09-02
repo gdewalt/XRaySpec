@@ -49,6 +49,19 @@ class SupabaseObjectStore:
             expires_at=datetime.now(UTC) + timedelta(seconds=expires_in),
         )
 
+    async def write(
+        self, object_key: str, data: bytes, *, content_type: str = "application/octet-stream"
+    ) -> None:
+        # POST /object/{bucket}/{path} with x-upsert to create-or-replace.
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                f"{self._base}/object/{self._bucket}/{object_key}",
+                headers={**self._auth, "Content-Type": content_type, "x-upsert": "true"},
+                content=data,
+            )
+            if resp.status_code not in (200, 201):
+                resp.raise_for_status()
+
     async def read(self, object_key: str, *, limit: int) -> bytes:
         async with httpx.AsyncClient(timeout=60) as client:
             async with client.stream(

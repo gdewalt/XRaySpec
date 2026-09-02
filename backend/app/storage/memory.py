@@ -32,6 +32,11 @@ class MemoryObjectStore:
             expires_at=datetime.now(UTC) + timedelta(seconds=expires_in),
         )
 
+    async def write(
+        self, object_key: str, data: bytes, *, content_type: str = "application/octet-stream"
+    ) -> None:
+        self._objects[object_key] = data
+
     async def read(self, object_key: str, *, limit: int) -> bytes:
         data = self._objects.get(object_key)
         if data is None:

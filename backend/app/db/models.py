@@ -120,6 +120,31 @@ class Upload(Base):
     created_at: Mapped[datetime] = _ts()
 
 
+class Import(Base):
+    """A quarantined portable import awaiting an explicit commit (DESIGN.md §11.3).
+
+    The normalized, validated payload is written to object storage; this row holds
+    only the summary needed to analyze and commit. No IDs, keys, or trust claims
+    from the file are ever persisted."""
+
+    __tablename__ = "imports"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("imp"))
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    object_key: Mapped[str] = mapped_column(String)  # normalized payload in object storage
+    schema_version: Mapped[int] = mapped_column()
+    needs_migration: Mapped[bool] = mapped_column(default=False)
+    doc_type: Mapped[str | None] = mapped_column(String, default=None)
+    title: Mapped[str | None] = mapped_column(String, default=None)
+    entry_count: Mapped[int] = mapped_column(default=0)
+    bookmark_count: Mapped[int] = mapped_column(default=0)
+    status: Mapped[str] = mapped_column(  # analyzed | committed
+        String, default="analyzed", index=True
+    )
+    warnings: Mapped[list | None] = mapped_column(JSON, default=None)
+    created_at: Mapped[datetime] = _ts()
+
+
 class ExtractionJob(Base):
     """Rows in this table are the queue (claimed via ``SELECT ... FOR UPDATE SKIP
     LOCKED``, DESIGN.md §10.3). Lease/fencing columns arrive with the Phase 2

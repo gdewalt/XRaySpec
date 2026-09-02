@@ -44,6 +44,12 @@ class ObjectStore(Protocol):
         expires_in: int,
     ) -> UploadGrant: ...
 
+    async def write(
+        self, object_key: str, data: bytes, *, content_type: str = "application/octet-stream"
+    ) -> None:
+        """Server-side write (artifacts, exports, quarantined imports)."""
+        ...
+
     async def read(self, object_key: str, *, limit: int) -> bytes:
         """Return the object's bytes, raising if it exceeds ``limit`` or is absent."""
         ...
