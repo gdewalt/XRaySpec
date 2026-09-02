@@ -1,29 +1,27 @@
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
+
+import { getToken, setToken, subscribe } from "./auth/session";
+import { DocumentsView } from "./components/DocumentsView";
+import { Login } from "./components/Login";
 
 /**
- * Scaffold shell. The real app is a Documents view + a viewer (resizable panes,
- * PDF.js overlay, SSE progress) built against the FastAPI JSON API. See
- * DESIGN.md §16. API types are generated from the backend OpenAPI schema
- * (`npm run gen:api`, DESIGN.md §25.2).
+ * App shell (DESIGN.md §16.1). Gates on a bearer-token session; renders the
+ * Documents view (list + ingestion) when signed in, otherwise the sign-in panel.
  */
 export function App() {
-  const [status, setStatus] = useState<string>("checking…");
-
-  useEffect(() => {
-    fetch("/ready")
-      .then((r) => r.json())
-      .then((d) => setStatus(String(d.status)))
-      .catch(() => setStatus("unreachable"));
-  }, []);
+  const token = useSyncExternalStore(subscribe, getToken);
 
   return (
-    <main style={{ fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: 640 }}>
-      <h1>X-Ray Spec</h1>
-      <p>Hosted patent specification viewer — scaffold.</p>
-      <p>
-        Backend status: <strong>{status}</strong>
-      </p>
-      <p style={{ color: "#666" }}>See DESIGN.md for the build plan.</p>
-    </main>
+    <div className="app">
+      <header className="app-header">
+        <h1>X-Ray Spec</h1>
+        {token && (
+          <button type="button" className="secondary" onClick={() => setToken(null)}>
+            Sign out
+          </button>
+        )}
+      </header>
+      <main className="container">{token ? <DocumentsView /> : <Login />}</main>
+    </div>
   );
 }
