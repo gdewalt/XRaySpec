@@ -13,9 +13,10 @@ This is a **ground-up rebuild** of an earlier Flask prototype. The extraction en
 - Documents + bookmarks API with an **owner predicate on every query** and audit events — `backend/app/api/v1/documents.py`
 - Async Alembic environment wired to the models — `backend/migrations/env.py`
 - **Direct-upload ingestion** (§11.1): `POST /uploads` grant → browser PUT → `POST /uploads/{id}/complete` finalize (server-observed size/SHA-256/magic bytes, **no PDF parsing in the web tier**) → source/user document + queued extraction job. Storage is an interface with a Supabase impl and an in-memory impl for tests — `backend/app/storage/`, `backend/app/api/v1/uploads.py`
-- Tests: auth (401/403), the **IDOR matrix** (cross-user access → 404), and the upload lifecycle (grant, finalize, one-time use, non-PDF rejection) — `backend/tests/`
+- **Fetch by identifier** (§11.2, §7.2): a deterministic structured patent parser (grants `B1`/`B2`/`A` **and** applications `A1`/`A2`, with ambiguous/unsupported input rejected as a validation choice) wired into `POST /documents` (fetch), which creates the source and queues a `fetching_source` job for the egress worker — `backend/app/patents/`
+- Tests: auth (401/403), the **IDOR matrix** (cross-user access → 404), the upload lifecycle, and the patent parser + fetch endpoint — `backend/tests/` (**39 passing**, `ruff` clean; frontend `tsc`/`vite build` verified)
 
-Still to come in Phase 1: fetch-by-identifier (§11.2), the version-1 importer (§11.3), full deletion workflow (§9.4), and the Documents view. Then Phase 2 (async workers) and Phase 3 (extraction core).
+Still to come in Phase 1: the actual restricted-egress fetch download (Phase 2 worker), the version-1 importer (§11.3), full deletion workflow (§9.4), and the Documents view. Then Phase 2 (async workers) and Phase 3 (extraction core).
 
 ## Stack (DESIGN.md §25)
 

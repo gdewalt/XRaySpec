@@ -16,7 +16,8 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from ...db.models import Bookmark, SourceDocument, UserDocument
+from ...db.models import Bookmark, ExtractionJob, SourceDocument, UserDocument
+from ...patents import PatentParseError, parse_patent_identifier
 from ...schemas.bookmarks import BookmarkCreate, BookmarkRead
 from ...schemas.documents import DocumentCreate, DocumentList, DocumentRead
 from ...services.audit import record_audit
@@ -43,17 +44,78 @@ async def _owned_document(session, user, document_id: str) -> UserDocument:
 async def create_document(
     body: DocumentCreate, user: CurrentUser, session: DbSession
 ) -> DocumentRead:
+    """Create a document from a canonical patent identifier (fetch) or as a
+    placeholder. Direct PDF uploads go through ``POST /uploads`` instead."""
+    if body.source_type == "fetch":
+        return await _create_fetch_document(body, user, session)
+    return await _create_placeholder_document(body, user, session)
+
+
+async def _create_fetch_document(
+    body: DocumentCreate, user: CurrentUser, session: DbSession
+) -> DocumentRead:
+    if not body.patent_identifier:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "patent_identifier is required for a fetch source"
+        )
+    try:
+        identity = parse_patent_identifier(body.patent_identifier)
+    except PatentParseError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"{exc.reason}: {exc.message}") from None
+
+    source = SourceDocument(
+        owner_id=user.id,
+        source_type="fetch",
+        doc_type=identity.doc_type,
+        patent_canonical=identity.canonical,
+        state="pending_fetch",
+    )
+    session.add(source)
+    await session.flush()
+
+    doc = UserDocument(
+        owner_id=user.id,
+        source_id=source.id,
+        title=body.title or identity.display,
+        state="processing",
+    )
+    session.add(doc)
+    await session.flush()
+
+    # The restricted-egress fetch worker (Phase 2) performs the actual download.
+    job = ExtractionJob(
+        owner_id=user.id, document_id=doc.id, status="queued", stage="fetching_source"
+    )
+    session.add(job)
+    await session.flush()
+
+    record_audit(
+        session, actor_user_id=user.id, action="document.create",
+        resource_class="user_document", resource_id=doc.id,
+    )
+    record_audit(
+        session, actor_user_id=user.id, action="job.create",
+        resource_class="extraction_job", resource_id=job.id,
+    )
+    await session.commit()
+    await session.refresh(doc)
+    return DocumentRead.model_validate(doc)
+
+
+async def _create_placeholder_document(
+    body: DocumentCreate, user: CurrentUser, session: DbSession
+) -> DocumentRead:
     source = SourceDocument(
         owner_id=user.id,
         source_type=body.source_type,
-        patent_canonical=body.patent_identifier,
         original_filename=body.filename,
         state="preparing",
     )
     session.add(source)
-    await session.flush()  # assign source.id
+    await session.flush()
 
-    doc = UserDocument(owner_id=user.id, source_id=source.id, title=body.title, state="preparing")
+    title = body.title or body.filename or "Untitled document"
+    doc = UserDocument(owner_id=user.id, source_id=source.id, title=title, state="preparing")
     session.add(doc)
     await session.flush()
 

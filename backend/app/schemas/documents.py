@@ -13,7 +13,7 @@ class DocumentCreate(BaseModel):
     finalizer / fetch pipeline (§11); this slice records the document in
     ``preparing`` state."""
 
-    title: str = Field(min_length=1, max_length=500)
+    title: str | None = Field(default=None, min_length=1, max_length=500)
     source_type: Literal["upload", "fetch"] = "upload"
     patent_identifier: str | None = Field(default=None, max_length=64)
     filename: str | None = Field(default=None, max_length=500)

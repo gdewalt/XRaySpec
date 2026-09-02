@@ -21,6 +21,7 @@ dist/
 dist-ssr/
 *.local
 frontend/.vite/
+*.tsbuildinfo
 
 # Editors / OS
 .vs/

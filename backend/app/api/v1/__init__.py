@@ -3,9 +3,10 @@
 Feature routers are added per phase. Every mutation is authenticated,
 per-user authorized (owner predicate), and idempotent where relevant.
 
-Wired: uploads (direct-upload ingestion), documents + bookmarks (Phase 1).
+Wired: uploads (direct-upload ingestion), documents (upload + fetch-by-identifier)
++ bookmarks (Phase 1).
 TODO by phase:
-  - ingestion: fetch-by-identifier (§11.2), version-1 importer (§11.3)
+  - ingestion: version-1 importer (§11.3)
   - jobs: status snapshot, SSE events, cancel/retry/resume (§14.1, Phase 2)
   - artifacts: manifest, entries, figures, callouts (§14.1, Phase 3)
   - citations: profiles, preview (§14.1, Phase 4)
