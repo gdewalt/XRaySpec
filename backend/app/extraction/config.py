@@ -35,6 +35,8 @@ class ExtractionConfig:
     line_y_tolerance: float = 3.0
     gutter_max_spread: float = 5.0
     lines_per_column: int = 65
+    content_top_margin: float = 0.06  # drop the running header band
+    content_bottom_margin: float = 0.95  # drop the page-number/footer band
 
     # Safety bounds re-enforced in the worker (§11.1, §17.6)
     max_pages: int = 2000

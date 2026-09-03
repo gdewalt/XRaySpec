@@ -76,6 +76,32 @@ def test_reference_numeral_is_not_a_line_number():
     assert third.source_text.startswith("104")
 
 
+def test_center_gutter_two_column():
+    # Real-patent shape: two dense columns with line numbers in the CENTER gutter.
+    words: list[Word] = []
+    for i in range(30):
+        cy = 0.10 + 0.02 * i
+        y0, y1 = cy - 0.006, cy + 0.006
+        words.append(Word("left", 0.10, y0, 0.30, y1))
+        words.append(Word("text", 0.32, y0, 0.45, y1))
+        words.append(Word("right", 0.55, y0, 0.75, y1))
+        words.append(Word("side", 0.77, y0, 0.90, y1))
+        if (i + 1) % 5 == 0:  # a center line-number every 5th row
+            words.append(Word(str(i + 1), 0.49, y0, 0.51, y1))
+
+    art = extract_from_pages([Page(0, words)], DEFAULT_CONFIG, source_sha256="x")
+
+    assert {e.locator.column for e in art.entries} == {1, 2}  # columns not merged
+    left = [e for e in art.entries if e.locator.column == 1]
+    right = [e for e in art.entries if e.locator.column == 2]
+    assert all("right" not in e.source_text and "left" in e.source_text for e in left)
+    assert all("left" not in e.source_text and "right" in e.source_text for e in right)
+    # Center numbers are excluded from body text (every line starts with a word).
+    assert all(e.source_text[0].isalpha() for e in art.entries)
+    # The center gutter numbers anchored the fit.
+    assert any(e.provenance.reference_method == "detected" for e in art.entries)
+
+
 def test_two_column_split():
     words: list[Word] = []
     for i in range(4):

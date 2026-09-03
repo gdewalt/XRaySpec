@@ -44,20 +44,25 @@ def test_words_from_tsv_respects_min_confidence():
 
 
 def test_ocr_method_recorded_in_provenance():
+    # Two gutter-numbered lines so an anchor fit forms and the numbers are excluded.
     words = [
-        Word("1", 0.03, 0.09, 0.06, 0.11, confidence=88.0),  # gutter number
+        Word("1", 0.04, 0.09, 0.07, 0.11, confidence=99.0),
         Word("The", 0.12, 0.09, 0.20, 0.11, confidence=91.0),
         Word("housing", 0.21, 0.09, 0.35, 0.11, confidence=80.0),
+        Word("2", 0.04, 0.19, 0.07, 0.21, confidence=99.0),
+        Word("receives", 0.12, 0.19, 0.28, 0.21, confidence=88.0),
     ]
     art = extract_from_pages(
         [Page(0, words)], DEFAULT_CONFIG, source_sha256="x", page_methods=["ocr"]
     )
     assert art.mode == "ocr"
-    entry = art.entries[0]
-    assert entry.provenance.extraction_method == "ocr"
-    assert entry.text_confidence == "medium"
-    # Average of body-word confidences (The, housing); the gutter '1' is excluded.
-    assert abs(entry.provenance.ocr_confidence - 85.5) < 1e-6
+    first = art.entries[0]
+    assert first.provenance.extraction_method == "ocr"
+    assert first.text_confidence == "medium"
+    assert first.source_text == "The housing"  # gutter '1' excluded from body
+    # Average of body-word confidences (The 91, housing 80); the excluded '1' (99) is not counted.
+    assert abs(first.provenance.ocr_confidence - 85.5) < 1e-6
+    assert [e.locator.printed_line for e in art.entries] == [1, 2]
 
 
 def test_hybrid_mode_when_pages_mixed():

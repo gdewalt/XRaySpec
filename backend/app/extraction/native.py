@@ -1,14 +1,29 @@
-"""Native grant line-reference reconstruction (DESIGN.md §12.5).
+"""Grant line-reference reconstruction (DESIGN.md §12.5).
 
-Deterministic, geometry-anchored. Groups words into lines by an adaptive
-baseline, detects the printed gutter line-numbers, fits a robust ``y -> line``
-model, and interpolates line numbers for the rest with monotonic clamping. Grant
-``col:line`` only for this first cut; OCR fallback, applications (paragraphs),
-figures, and callouts are later slices.
+Deterministic, geometry-anchored, and shared by native and OCR words (the OCR
+path just carries confidence). Real two-column patents number **each column
+independently at its own left edge** (column 1 far-left, column 2 at the left
+edge of the right column), so:
 
-Pure over the abstract ``Page``/``Word`` model so it is unit-testable on
-synthetic pages. Real-patent accuracy is measured against the labeled corpus
-(§19), not asserted here.
+  1. columns are detected by a coverage valley (robust to the sparse number
+     tokens that defeat a naive x-gap search);
+  2. words are split into columns and grouped into lines *within* a column so
+     side-by-side rows never merge;
+  3. within each column, the left-edge gutter integers are fit to a ``y -> line``
+     model and excluded from body text;
+  4. a top/bottom margin drops the running header and page-number footer.
+
+Grant ``col:line`` only for this cut. Pure over the abstract ``Page``/``Word``
+model so it is unit-testable; real-patent accuracy is a corpus (§19) concern.
+
+KNOWN LIMITATION (measured on a real scanned grant): column separation is solid,
+but printed-line-number *precision* is not yet. Many two-column grants print the
+line numbers in the *center gutter*, only every ~5th line, with each column
+numbered over its own range — which "leftmost token per column" cannot capture,
+so those pages fall back to sequential per-column numbering (readable, correctly
+ordered text with approximate ``line`` values). Robust center-gutter number
+association is deliberately deferred to corpus-guided calibration (§19) rather
+than over-fit to a single example.
 """
 
 from __future__ import annotations
@@ -30,10 +45,6 @@ class _Line:
     x0: float
     x1: float
 
-    @property
-    def cx(self) -> float:
-        return (self.x0 + self.x1) / 2
-
 
 def _median(values: list[float]) -> float:
     if not values:
@@ -41,6 +52,11 @@ def _median(values: list[float]) -> float:
     s = sorted(values)
     mid = len(s) // 2
     return s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) / 2
+
+
+def _is_int_token(text: str) -> bool:
+    t = text.strip()
+    return t.isdigit() and 1 <= int(t) <= _ANCHOR_MAX
 
 
 def group_lines(words: list[Word], *, tol_ratio: float = 0.6) -> list[_Line]:
@@ -92,8 +108,8 @@ def _fit(anchors: list[tuple[float, int]]) -> tuple[float, float] | None:
     return a, b
 
 
-def column_boundary(words: list[Word]) -> float | None:
-    """Detect a two-column split as the widest x-gap near the page centre."""
+def _gap_boundary(words: list[Word]) -> float | None:
+    """Two-column split as the widest x-gap near the centre (sparse pages)."""
     centers = sorted(w.cx for w in words)
     best_gap, best_mid = 0.0, None
     for lo, hi in zip(centers, centers[1:], strict=False):
@@ -101,6 +117,34 @@ def column_boundary(words: list[Word]) -> float | None:
         if 0.35 <= mid <= 0.65 and (hi - lo) > best_gap:
             best_gap, best_mid = hi - lo, mid
     return best_mid if best_gap >= 0.08 else None
+
+
+def column_boundary(words: list[Word], *, bins: int = 60) -> float | None:
+    """Detect a two-column split.
+
+    Dense pages use a coverage valley (a low-density central band even when a few
+    left-of-column-2 number tokens sit in it); sparse pages fall back to the widest
+    central x-gap.
+    """
+    if len(words) < 20:
+        return _gap_boundary(words)
+
+    counts = [0] * bins
+    for w in words:
+        lo = max(0, min(bins - 1, int(w.x0 * bins)))
+        hi = max(0, min(bins - 1, int(w.x1 * bins)))
+        for b in range(lo, hi + 1):
+            counts[b] += 1
+
+    left = _median(counts[int(0.10 * bins) : int(0.45 * bins)])
+    right = _median(counts[int(0.55 * bins) : int(0.90 * bins)])
+    if left <= 0 or right <= 0:
+        return None
+    central = range(int(0.40 * bins), int(0.60 * bins) + 1)
+    valley = min(central, key=lambda b: counts[b])
+    if counts[valley] <= 0.4 * (left + right) / 2:
+        return (valley + 0.5) / bins
+    return None
 
 
 def _clamp_box(x0: float, y0: float, x1: float, y1: float) -> tuple[float, float, float, float]:
@@ -113,26 +157,26 @@ def _clamp_box(x0: float, y0: float, x1: float, y1: float) -> tuple[float, float
     return x0, y0, x1, y1
 
 
-def _extract_column(
-    lines: list[_Line],
+def _emit_column(
+    col_words: list[Word],
     column: int,
     page_index: int,
     config: ExtractionConfig,
     ordinal: int,
-    extraction_method: str,
+    method: str,
 ) -> tuple[list[Entry], int]:
-    # Candidate gutter anchors: a line whose leftmost token is a small integer,
-    # kept only while strictly increasing down the page.
+    lines = group_lines(col_words)
+
+    # Left-edge gutter anchors: a line whose *leftmost* token is a small integer,
+    # kept only while strictly increasing down the column.
     anchors: list[tuple[_Line, Word, int]] = []
     last = -1
-    candidates = [
-        (ln, ln.words[0]) for ln in lines if ln.words and ln.words[0].text.strip().isdigit()
-    ]
-    for ln, lead in sorted(candidates, key=lambda c: c[0].cy):
-        value = int(lead.text)
-        if 1 <= value <= _ANCHOR_MAX and value > last:
-            anchors.append((ln, lead, value))
-            last = value
+    for ln in sorted(lines, key=lambda ln: ln.cy):
+        if ln.words and _is_int_token(ln.words[0].text):
+            value = int(ln.words[0].text)
+            if value > last:
+                anchors.append((ln, ln.words[0], value))
+                last = value
 
     band_hi = max((lead.x1 for _, lead, _ in anchors), default=0.0)
     fit = _fit([(ln.cy, v) for ln, _, v in anchors])
@@ -178,11 +222,11 @@ def _extract_column(
                 source_text=text,
                 display_text=text,
                 provenance=Provenance(
-                    extraction_method=extraction_method,
+                    extraction_method=method,
                     ocr_confidence=ocr_confidence,
                     reference_method=ref_method,
                 ),
-                text_confidence="high" if extraction_method == "native" else "medium",
+                text_confidence="high" if method == "native" else "medium",
                 reference_confidence=ref_conf,
             )
         )
@@ -193,23 +237,25 @@ def _extract_column(
 def extract_page(
     page: Page, config: ExtractionConfig, ordinal_start: int, *, method: str = "native"
 ) -> tuple[list[Entry], int]:
-    # Split columns *first* (each column has its own ~65-line baseline grid), then
-    # group lines within a column so side-by-side columns don't merge (§12.5).
-    boundary = column_boundary(page.words)
+    # Drop running header / footer margins (§12.5).
+    words = [
+        w for w in page.words if config.content_top_margin <= w.cy <= config.content_bottom_margin
+    ]
+
+    boundary = column_boundary(words)
     if boundary is None:
-        columns = [(1, page.words)]
+        columns = [(1, words)]
     else:
         columns = [
-            (1, [w for w in page.words if w.cx < boundary]),
-            (2, [w for w in page.words if w.cx >= boundary]),
+            (1, [w for w in words if w.cx < boundary]),
+            (2, [w for w in words if w.cx >= boundary]),
         ]
 
     entries: list[Entry] = []
     ordinal = ordinal_start
     for column, col_words in columns:
-        col_lines = group_lines(col_words)
-        col_entries, ordinal = _extract_column(
-            col_lines, column, page.index, config, ordinal, method
+        col_entries, ordinal = _emit_column(
+            col_words, column, page.index, config, ordinal, method
         )
         entries.extend(col_entries)
     return entries, ordinal
