@@ -16,7 +16,8 @@ from __future__ import annotations
 import hashlib
 
 from .applications import count_paragraph_markers, extract_application_page
-from .artifact import Artifact
+from .artifact import Artifact, CalloutOccurrence
+from .callouts import associate_mentions, detect_callouts, detect_page_figure, is_drawing_page
 from .config import ExtractionConfig
 from .figures import detect_figure_references, detect_reference_numerals
 from .model import Page
@@ -37,12 +38,15 @@ def extract_from_pages(
     source_sha256: str,
     page_methods: list[str] | None = None,
     doc_type: str = "grant",
+    callouts: list[CalloutOccurrence] | None = None,
+    total_pages: int | None = None,
 ) -> Artifact:
     """Assemble an immutable artifact from parsed pages (pure, testable).
 
-    ``page_methods[i]`` is ``"native"`` or ``"ocr"`` for ``pages[i]`` (default all
-    native). ``doc_type`` selects the reconstruction: ``"grant"`` (col:line) or
-    ``"application"`` (paragraph markers).
+    ``pages`` are the specification pages; ``callouts`` are pre-detected drawing
+    callouts (drawing pages are handled by ``extract``). ``page_methods[i]`` is
+    ``"native"`` or ``"ocr"`` for ``pages[i]``; ``doc_type`` selects the
+    reconstruction (grant col:line or application paragraph).
     """
     methods = page_methods or ["native"] * len(pages)
     entries = []
@@ -61,6 +65,10 @@ def extract_from_pages(
 
     figure_mentions = detect_figure_references(entries)
     numeral_mentions = detect_reference_numerals(entries)
+    callout_occurrences = callouts or []
+    mention_associations = associate_mentions(
+        numeral_mentions, callout_occurrences, figure_mentions, entries
+    )
 
     detected = sum(1 for e in entries if e.provenance.reference_method == "detected")
     interpolated = sum(1 for e in entries if e.provenance.reference_method == "interpolated")
@@ -89,7 +97,7 @@ def extract_from_pages(
         schema_version=2,
         source_sha256=source_sha256,
         doc_type=doc_type if doc_type in ("grant", "application") else "grant",
-        page_count=len(pages),
+        page_count=total_pages if total_pages is not None else len(pages),
         engine_version=config.version,
         config_hash=config.config_hash(),
         mode=mode,
@@ -97,14 +105,18 @@ def extract_from_pages(
         entries=entries,
         figure_mentions=figure_mentions,
         numeral_mentions=numeral_mentions,
+        callout_occurrences=callout_occurrences,
+        mention_associations=mention_associations,
         quality={
-            "page_count": len(pages),
+            "page_count": total_pages if total_pages is not None else len(pages),
             "ocr_pages": ocr_pages,
             "entry_count": len(entries),
             "detected_references": detected,
             "interpolated_references": interpolated,
             "figure_mentions": len(figure_mentions),
             "numeral_mentions": len(numeral_mentions),
+            "callouts": len(callout_occurrences),
+            "verified_links": sum(1 for a in mention_associations if a.status == "verified"),
         },
         warnings=warnings,
     )
@@ -124,24 +136,43 @@ def extract(pdf_bytes: bytes, config: ExtractionConfig, doc_type: str = "auto") 
     source_sha256 = hashlib.sha256(pdf_bytes).hexdigest()
     native_pages = load_pages(pdf_bytes)
     can_ocr = ocr_available()
+    total_pages = len(native_pages)
 
-    pages: list[Page] = []
+    spec_pages: list[Page] = []
     methods: list[str] = []
+    callouts: list[CalloutOccurrence] = []
     for native_page in native_pages:
         if len(native_page.words) >= config.min_native_words_per_page:
-            pages.append(native_page)
-            methods.append("native")
+            page, method = native_page, "native"
         elif can_ocr:
             words = ocr_page_words(pdf_bytes, native_page.index, config)
-            pages.append(Page(index=native_page.index, words=words))
-            methods.append("ocr")
+            page, method = Page(index=native_page.index, words=words), "ocr"
         else:
-            pages.append(native_page)  # no text layer, no OCR -> yields no entries
-            methods.append("native")
+            page, method = native_page, "native"  # no text layer, no OCR
+
+        # A drawing page yields callouts, not specification lines. Re-OCR it in
+        # sparse mode (§12.7) so isolated numeral labels are found, not prose.
+        if is_drawing_page(page.words):
+            draw_words = page.words
+            if method == "ocr" and can_ocr:
+                draw_words = ocr_page_words(
+                    pdf_bytes, page.index, config, psm=config.ocr_sparse_psm
+                )
+            figure_id = detect_page_figure(draw_words)
+            callouts.extend(detect_callouts(draw_words, page.index, figure_id))
+        else:
+            spec_pages.append(page)
+            methods.append(method)
 
     if doc_type not in ("grant", "application"):
-        doc_type = detect_doc_type(pages)
+        doc_type = detect_doc_type(spec_pages)
 
     return extract_from_pages(
-        pages, config, source_sha256=source_sha256, page_methods=methods, doc_type=doc_type
+        spec_pages,
+        config,
+        source_sha256=source_sha256,
+        page_methods=methods,
+        doc_type=doc_type,
+        callouts=callouts,
+        total_pages=total_pages,
     )

@@ -70,13 +70,21 @@ def render_page(pdf_bytes: bytes, page_index: int, dpi: int):
         doc.close()
 
 
-def ocr_page_words(pdf_bytes: bytes, page_index: int, config: ExtractionConfig) -> list[Word]:
+def ocr_page_words(
+    pdf_bytes: bytes, page_index: int, config: ExtractionConfig, *, psm: int | None = None
+) -> list[Word]:
+    """OCR a page. ``psm`` overrides the page-segmentation mode — use the sparse
+    mode (§12.7) for drawing pages, where numeral labels are isolated, not prose."""
     import pytesseract
     from pytesseract import Output
 
     image = render_page(pdf_bytes, page_index, config.ocr_dpi)
+    tess_config = f"--psm {psm}" if psm is not None else ""
     data = pytesseract.image_to_data(
-        image, lang="+".join(config.ocr_languages), output_type=Output.DICT
+        image,
+        lang="+".join(config.ocr_languages),
+        config=tess_config,
+        output_type=Output.DICT,
     )
     return words_from_tsv(
         data, image.width, image.height, min_confidence=config.ocr_min_confidence

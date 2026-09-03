@@ -30,6 +30,7 @@ class ExtractionConfig:
     ocr_languages: tuple[str, ...] = ("eng",)
     ocr_min_confidence: float = 0.0  # keep all non-empty tokens by default
     min_native_words_per_page: int = 15  # below this a page is treated as image-only
+    ocr_sparse_psm: int = 11  # Tesseract page-seg mode for drawing callout labels (§12.7)
 
     # Grant line-reference reconstruction (§12.5)
     line_y_tolerance: float = 3.0

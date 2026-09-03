@@ -82,6 +82,31 @@ class NumeralMention:
 
 
 @dataclass(frozen=True, slots=True)
+class CalloutOccurrence:
+    """A printed reference-numeral label on a drawing (§8.4)."""
+
+    callout_id: str
+    value: str  # normalized numeral, e.g. "104"
+    page_index: int
+    box: Box
+    figure_id: str | None = None
+    confidence: float | None = None
+    method: str = "sparse_ocr"
+
+
+@dataclass(frozen=True, slots=True)
+class MentionAssociation:
+    """A text numeral mention linked to drawing callout(s) (§8.4, §12.7)."""
+
+    entry_id: str
+    value: str
+    span: tuple[int, int]
+    status: str  # "verified" | "probable" | "ambiguous" | "unresolved"
+    selected_callout_ids: list[str] = field(default_factory=list)
+    candidate_callout_ids: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
 class Artifact:
     """Immutable result of one extraction run (DESIGN.md §8.1)."""
 
@@ -96,5 +121,7 @@ class Artifact:
     entries: list[Entry] = field(default_factory=list)
     figure_mentions: list[FigureMention] = field(default_factory=list)
     numeral_mentions: list[NumeralMention] = field(default_factory=list)
+    callout_occurrences: list[CalloutOccurrence] = field(default_factory=list)
+    mention_associations: list[MentionAssociation] = field(default_factory=list)
     quality: dict[str, object] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
