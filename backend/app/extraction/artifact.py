@@ -32,8 +32,9 @@ def valid_box(b: Box) -> bool:
 class Provenance:
     extraction_method: str  # "native" | "ocr"
     ocr_confidence: float | None = None
-    alignment_method: str | None = None  # e.g. "fuzzy"
+    alignment_method: str | None = None  # "exact" | "fuzzy" | "unmatched"
     alignment_score: float | None = None
+    provider: str | None = None  # alignment source, e.g. "google_patents"
     identity_verified: bool = False
     reference_method: str | None = None  # "detected" | "interpolated" | "borrowed"
     layout_borrowed: bool = False

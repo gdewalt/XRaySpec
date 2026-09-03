@@ -39,6 +39,11 @@ class ExtractionConfig:
     content_top_margin: float = 0.06  # drop the running header band
     content_bottom_margin: float = 0.95  # drop the page-number/footer band
 
+    # Clean-text alignment (§13)
+    alignment_min_ratio: float = 0.72  # below this, keep source_text (reject substitution)
+    alignment_exact_ratio: float = 0.97  # at/above this, call it an exact match
+    alignment_search_slack: int = 8  # forward token window when locating a line
+
     # Safety bounds re-enforced in the worker (§11.1, §17.6)
     max_pages: int = 2000
     max_pixels_per_page: int = 40_000_000
