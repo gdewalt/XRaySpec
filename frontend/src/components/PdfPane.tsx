@@ -42,18 +42,30 @@ export function PdfPane({
 
   useEffect(() => {
     let doc: PDFDocumentProxy | null = null;
+    let cancelled = false;
+    setError(null);
     const task = pdfjsLib.getDocument({
       url: `/api/v1/documents/${documentId}/source.pdf`,
       httpHeaders: { Authorization: `Bearer ${getToken() ?? ""}` },
     });
     task.promise.then(
       (d) => {
+        if (cancelled) {
+          d.destroy();
+          return;
+        }
         doc = d;
         setPdf(d);
       },
-      (err) => setError(err instanceof Error ? err.message : String(err)),
+      // The cleanup below destroys the loading task; its promise then rejects
+      // with "Worker was destroyed". Ignore rejections once cancelled so a
+      // torn-down load (e.g. React StrictMode's double mount) shows no banner.
+      (err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      },
     );
     return () => {
+      cancelled = true;
       task.destroy();
       doc?.destroy();
     };
