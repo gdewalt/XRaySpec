@@ -15,7 +15,7 @@ from ..config import get_settings
 from ..db.base import get_sessionmaker
 from ..storage.base import ObjectStore
 from .engine import process_one
-from .processors import stub_processor
+from .processors import dispatch_processor
 
 
 def _build_store() -> ObjectStore:
@@ -36,7 +36,7 @@ async def main() -> None:
     store = _build_store()
     idle_backoff = 1.0
     while True:
-        did_work = await process_one(sessionmaker, store, stub_processor)
+        did_work = await process_one(sessionmaker, store, dispatch_processor)
         await asyncio.sleep(0 if did_work else idle_backoff)
 
 

@@ -34,6 +34,18 @@ class Settings(BaseSettings):
     upload_grant_ttl_seconds: int = 3600
     max_import_bytes: int = 10 * 1024 * 1024  # 10 MiB portable-save cap
 
+    # Restricted outbound fetch (§11.2, §17.4)
+    fetch_allowed_hosts: list[str] = Field(
+        default_factory=lambda: [
+            "patents.google.com",
+            "patentimages.storage.googleapis.com",
+            "storage.googleapis.com",
+        ]
+    )
+    fetch_max_html_bytes: int = 5 * 1024 * 1024
+    fetch_max_pdf_bytes: int = 100 * 1024 * 1024
+    fetch_max_redirects: int = 5
+
     # Access control: allowlist of permitted user emails (§3.1, single-tenant).
     allowed_emails: list[str] = Field(default_factory=list)
 
