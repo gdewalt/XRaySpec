@@ -10,6 +10,7 @@ This slice adds the restricted-egress fetch stage. The real extraction pipeline
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 
 from ..config import get_settings
@@ -18,6 +19,7 @@ from ..fetch.adapter import RestrictedFetcher
 from ..fetch.errors import FetchError
 from ..fetch.google_patents import extract_pdf_url, patent_page_url
 from ..fetch.guard import check_url
+from ..services.publication import publish_artifact
 from .engine import JobContext
 
 
@@ -80,9 +82,46 @@ async def fetch_source(
         await session.commit()
 
 
+async def extraction_processor(ctx: JobContext, job: ExtractionJob) -> None:
+    """Full pipeline: fetch the source if needed, run the native extraction core,
+    and atomically publish the immutable artifact (DESIGN.md §9.2, §12)."""
+    if await _needs_fetch(ctx, job):
+        await fetch_source(ctx, job)
+
+    async with ctx.sessionmaker() as session:
+        doc = await session.get(UserDocument, job.document_id) if job.document_id else None
+        source = await session.get(SourceDocument, doc.source_id) if doc else None
+        pdf_key = source.pdf_object_key if source else None
+        source_id = source.id if source else None
+        owner_id = source.owner_id if source else None
+    if not pdf_key or source_id is None or job.document_id is None:
+        raise FetchError("no_source_pdf", "job has no source PDF to extract")
+
+    settings = get_settings()
+    await ctx.heartbeat(stage="extracting_native", stage_label="Reading text", indeterminate=True)
+    pdf_bytes = await ctx.store.read(pdf_key, limit=settings.max_upload_bytes)
+
+    from ..extraction.config import DEFAULT_CONFIG
+    from ..extraction.core import extract
+
+    # CPU-bound + blocking PDF parsing — keep it off the event loop.
+    artifact = await asyncio.to_thread(extract, pdf_bytes, DEFAULT_CONFIG)
+
+    await ctx.heartbeat(stage="persisting_artifact", stage_label="Publishing")
+    async with ctx.sessionmaker() as session:
+        await publish_artifact(
+            session,
+            ctx.store,
+            document_id=job.document_id,
+            source_id=source_id,
+            owner_id=owner_id,
+            artifact=artifact,
+        )
+
+
 async def dispatch_processor(ctx: JobContext, job: ExtractionJob) -> None:
     """Route a job: fetch the source first if it still needs downloading, then
-    (placeholder) mark the document ready. Real extraction slots in here."""
+    (placeholder) mark the document ready. Retained for the stub demo path."""
     if await _needs_fetch(ctx, job):
         await fetch_source(ctx, job)
     await _mark_ready(ctx, job)
