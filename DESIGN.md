@@ -26,6 +26,7 @@ The product ambition is **unchanged** — the goal is to build the full capabili
 13. **Limits: safety caps only.** Keep every per-document and per-artifact resource-safety cap plus one global concurrency constant. Drop fair scheduling, admission control, and daily budgets.
 14. **Clean-room extraction.** The prior `app.py` is discarded, not reused. Extraction is re-implemented from scratch in the same **deterministic, geometry-anchored paradigm** (§12, §25.1) — not a model-based/VLM paradigm. Models may propose, geometry must confirm, and source text is never overwritten by a model. Consequence: extraction quality is entirely net-new and validated in Phase 3.
 15. **Technology stack.** Python · FastAPI · React + TypeScript SPA · SQLAlchemy 2.0 + Alembic · Supabase (Auth + managed Postgres + object storage). See §25.
+16. **Modular viewer + PDF-pane selection (scope addition).** The viewer's panes (Outline / Specification / Source-PDF / Details) are independently toggleable with layout presets (Text only, Source only, split, …), persisted as a user preference. Text can be selected directly in the PDF pane — via a selectable text layer sourced from the artifact's line geometry, so it works for scanned/OCR documents too — and copies plain text or text-with-citation through the *same* citation engine as the text pane. See §16.4.
 
 One decision remains open: the **OCR engine** (measure Tesseract on the scanned corpus before committing; a cloud OCR API would trade away privacy and worker isolation and is disallowed without a separate review). The hosting **provider** is now Supabase (§25.2).
 
@@ -1076,7 +1077,7 @@ Citation text and clipboard layout are separate:
 
 `{quote}` is plain text from `display_text` or `source_text`; it is never interpreted as markup. Options control quote style, separator, paragraph preservation, metadata-driven dehyphenation, terminal punctuation, dash style, and preferred text source. The copy preview exactly matches the clipboard.
 
-Smart-copy interception is opt-in/configurable. The default interaction uses a selection popover with separate Copy text, Copy citation, and Copy text with citation commands so ordinary browser copy remains predictable.
+Smart-copy interception is opt-in/configurable. The default interaction uses a selection popover with separate Copy text, Copy citation, and Copy text with citation commands so ordinary browser copy remains predictable. The identical popover and copy commands are available whether the selection was made in the specification text pane or the PDF (Source) pane — both resolve to the same artifact entries and render through this same citation engine (§16.4).
 
 ### 15.5 Confidence behavior
 
@@ -1120,9 +1121,11 @@ Users may navigate away. Returning reloads the job snapshot and reconnects SSE f
 
 ### 16.4 Viewer layout and source tools
 
-Desktop uses resizable outline, specification, and PDF regions. Tablet supports split or stacked views. Narrow screens use accessible Text, Source, and Details tabs while retaining the current reference/search position.
+The viewer is a **modular workspace** of independent panes — Outline, Specification (display text), Source (PDF), and Details (provenance/quality) — each shown or hidden independently. Users pick the layout: **Text only, Source only, Text + Source (split), or any combination**, including whether the Outline and Details panes appear. One-click presets and per-pane toggles are provided, panes are resizable, and the chosen layout **persists as a user preference** (§16.9). Tablet supports split or stacked views; narrow screens collapse the same panes into accessible Text, Source, and Details tabs while retaining the current reference/search position. All pane toggles and preset switches are keyboard-operable and announced (§16.8), and hiding a pane never changes the underlying selection, deep link, or copy behavior.
 
 PDF controls include page entry, previous/next, zoom, fit width/page, rotation, and authorized download/open-original. The overlay layer supports line boxes, figure-region boxes, figure-label boxes, and exact reference-numeral callout boxes. Absent boxes produce a clear page-only or unavailable message.
+
+**Selecting text in the Source (PDF) pane.** The PDF pane carries a selectable text layer positioned from the artifact's line boxes, so text can be selected directly on the page. For scanned patents this text comes from the OCR/aligned artifact entries — the scan image itself has no text layer — which is exactly what makes selection work uniformly across native, OCR, and clean-text-aligned documents. A PDF selection resolves to the **same range of artifact entries** the Specification pane would, and the copy/citation control behaves **identically in both panes**: the same selection popover (Copy text, Copy citation, Copy text with citation), the same source-versus-display text choice, and the same citation engine and active profile (§15). A multi-line PDF selection therefore yields the correct `col:line` (or paragraph) range and renders the citation from the active profile exactly as a Specification-pane selection does, with the copy preview matching the clipboard exactly. Because the selection is anchored to entry geometry, it stays correct at any zoom, rotation, or page fit.
 
 Bookmark, Annotate, and View source are distinct controls. Clicking a line selects it and can update the deep link but does not prompt unexpectedly. Raw/display comparison highlights changed tokens and explains alignment provenance. Inferred figures show candidates and confidence.
 
@@ -1175,6 +1178,21 @@ Accessible **by construction** from day one, with a formal audit right-sized to 
 - PDF text layer or clearly identified accessible source-text alternative.
 
 A formal multi-screen-reader conformance audit (e.g. NVDA + VoiceOver) is scoped to the assistive technologies that actual users depend on; when a user needs one, the build is tested against what they use. Accessible-by-construction is unconditional; the drilled audit is scaled to real need.
+
+### 16.9 Browser state ownership
+
+| State | Owner |
+|---|---|
+| Document identity, ownership, retention, active artifact | PostgreSQL |
+| Source PDF and immutable artifacts | Private object storage |
+| Job status, attempts, sequence, checkpoints | Durable job store |
+| Bookmarks, annotations, citation profiles/default | Server-side user state |
+| **Pane layout (which panes are visible), pane sizes, theme/density** | Server preference, with a non-sensitive local fallback |
+| Current entry, figure, reference-numeral mention/callout, PDF page, safe search state | URL where useful |
+| Selection (in either the text or PDF pane), dialogs, pending copy preview | Browser memory |
+| Patent/PDF content cache | Memory-only by default; no persistent offline cache without a separate design |
+
+The client treats API snapshots as authoritative. An SSE sequence gap triggers a fresh snapshot. Document state, job state, and artifact availability are not collapsed into one boolean. The visible-pane layout is a saved preference, not document state: it never affects the selection, deep link, citation, or copied text.
 
 ## 17. Security and privacy
 
@@ -1478,7 +1496,7 @@ Phases are worked in order (infra-first, by decision). A **Phase −1** (§25) s
 ### Phase 4 — citation and viewer completion
 
 - Add built-in citation profiles (grant + application), structured formatting options, defaults, previews, and copy layouts; version profiles. (The user-authored template DSL is deferred.)
-- Deliver responsive/resizable viewer, richer PDF controls, inline figure/reference-numeral links, exact figure/callout overlays, ambiguity chooser, occurrence cycling/reverse navigation, scoped search, deep links, distinct source/bookmark actions, server bookmarks/annotations/overrides, reporting, and portable exports.
+- Deliver the responsive **modular-pane viewer** (independently toggleable Outline/Specification/Source/Details panes with layout presets and persisted preference), richer PDF controls, **selectable PDF-pane text with copy-and-cite parity**, inline figure/reference-numeral links, exact figure/callout overlays, ambiguity chooser, occurrence cycling/reverse navigation, scoped search, deep links, distinct source/bookmark actions, server bookmarks/annotations/overrides, reporting, and portable exports.
 - Complete accessible-by-construction and supported browser/device testing.
 
 ### Phase 5 — production readiness and launch
@@ -1535,6 +1553,8 @@ Launch requires identity/ownership, durable private storage, safe rendering/impo
 - Documents provide one durable place to open, resume, retry, reprocess, export, and delete.
 - Processing shows real stages/page progress without a fabricated timer or popup dependency.
 - Source, bookmark, annotation, and copy interactions are distinct.
+- The viewer's panes (Outline/Specification/Source/Details) toggle independently with layout presets; the chosen layout persists and never changes the selection, deep link, or copied text.
+- Text can be selected in the PDF pane and copied as plain text or text-with-citation identically to the specification pane (same entries, same citation profile, preview matches clipboard) — including on scanned/OCR documents.
 - Desktop, tablet, and mobile layouts remain usable.
 - Core journeys are keyboard-complete and accessible by construction; AT-specific testing covers real users' tools.
 
