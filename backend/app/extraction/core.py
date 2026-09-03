@@ -15,10 +15,18 @@ from __future__ import annotations
 
 import hashlib
 
+from .applications import count_paragraph_markers, extract_application_page
 from .artifact import Artifact
 from .config import ExtractionConfig
 from .model import Page
 from .native import extract_page
+
+_MARKER_THRESHOLD = 3  # a document with this many paragraph markers is an application
+
+
+def detect_doc_type(pages: list[Page]) -> str:
+    """Classify grant (``col:line``) vs application (paragraph) by marker density."""
+    return "application" if count_paragraph_markers(pages) >= _MARKER_THRESHOLD else "grant"
 
 
 def extract_from_pages(
@@ -27,18 +35,28 @@ def extract_from_pages(
     *,
     source_sha256: str,
     page_methods: list[str] | None = None,
+    doc_type: str = "grant",
 ) -> Artifact:
     """Assemble an immutable artifact from parsed pages (pure, testable).
 
     ``page_methods[i]`` is ``"native"`` or ``"ocr"`` for ``pages[i]`` (default all
-    native).
+    native). ``doc_type`` selects the reconstruction: ``"grant"`` (col:line) or
+    ``"application"`` (paragraph markers).
     """
     methods = page_methods or ["native"] * len(pages)
     entries = []
     ordinal = 0
-    for page, method in zip(pages, methods, strict=False):
-        page_entries, ordinal = extract_page(page, config, ordinal, method=method)
-        entries.extend(page_entries)
+    if doc_type == "application":
+        state: dict = {"paragraph": None}
+        for page, method in zip(pages, methods, strict=False):
+            page_entries, ordinal, state = extract_application_page(
+                page, config, ordinal, method, state
+            )
+            entries.extend(page_entries)
+    else:
+        for page, method in zip(pages, methods, strict=False):
+            page_entries, ordinal = extract_page(page, config, ordinal, method=method)
+            entries.extend(page_entries)
 
     detected = sum(1 for e in entries if e.provenance.reference_method == "detected")
     interpolated = sum(1 for e in entries if e.provenance.reference_method == "interpolated")
@@ -46,7 +64,8 @@ def extract_from_pages(
 
     warnings: list[str] = []
     if entries and detected == 0:
-        warnings.append("No printed gutter line-numbers detected; references are unanchored.")
+        label = "paragraph markers" if doc_type == "application" else "printed gutter line-numbers"
+        warnings.append(f"No {label} detected; references are unanchored.")
 
     if not entries:
         disposition = "partial"
@@ -65,7 +84,7 @@ def extract_from_pages(
     return Artifact(
         schema_version=2,
         source_sha256=source_sha256,
-        doc_type="grant",
+        doc_type=doc_type if doc_type in ("grant", "application") else "grant",
         page_count=len(pages),
         engine_version=config.version,
         config_hash=config.config_hash(),
@@ -83,11 +102,13 @@ def extract_from_pages(
     )
 
 
-def extract(pdf_bytes: bytes, config: ExtractionConfig) -> Artifact:
+def extract(pdf_bytes: bytes, config: ExtractionConfig, doc_type: str = "auto") -> Artifact:
     """Extract an immutable :class:`Artifact` from raw PDF bytes.
 
     Routes each page: native words if the page has a usable text layer, otherwise
-    render + OCR (when Tesseract is available). Runs only in the isolated worker.
+    render + OCR (when Tesseract is available). ``doc_type`` is ``"grant"``,
+    ``"application"``, or ``"auto"`` (classify by paragraph-marker density). Runs
+    only in the isolated worker.
     """
     from .ocr import ocr_available, ocr_page_words
     from .pdf import load_pages
@@ -110,6 +131,9 @@ def extract(pdf_bytes: bytes, config: ExtractionConfig) -> Artifact:
             pages.append(native_page)  # no text layer, no OCR -> yields no entries
             methods.append("native")
 
+    if doc_type not in ("grant", "application"):
+        doc_type = detect_doc_type(pages)
+
     return extract_from_pages(
-        pages, config, source_sha256=source_sha256, page_methods=methods
+        pages, config, source_sha256=source_sha256, page_methods=methods, doc_type=doc_type
     )

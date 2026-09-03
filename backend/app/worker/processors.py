@@ -94,6 +94,7 @@ async def extraction_processor(ctx: JobContext, job: ExtractionJob) -> None:
         pdf_key = source.pdf_object_key if source else None
         source_id = source.id if source else None
         owner_id = source.owner_id if source else None
+        doc_type = (source.doc_type if source else None) or "auto"
     if not pdf_key or source_id is None or job.document_id is None:
         raise FetchError("no_source_pdf", "job has no source PDF to extract")
 
@@ -105,7 +106,7 @@ async def extraction_processor(ctx: JobContext, job: ExtractionJob) -> None:
     from ..extraction.core import extract
 
     # CPU-bound + blocking PDF parsing — keep it off the event loop.
-    artifact = await asyncio.to_thread(extract, pdf_bytes, DEFAULT_CONFIG)
+    artifact = await asyncio.to_thread(extract, pdf_bytes, DEFAULT_CONFIG, doc_type)
 
     await ctx.heartbeat(stage="persisting_artifact", stage_label="Publishing")
     async with ctx.sessionmaker() as session:
