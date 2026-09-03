@@ -23,7 +23,7 @@ function StateBadge({ state }: { state: string }) {
   return <span className={`badge state-${state}`}>{state.replace(/_/g, " ")}</span>;
 }
 
-export function DocumentsView() {
+export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void }) {
   const [docs, setDocs] = useState<DocumentRead[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -106,6 +106,9 @@ export function DocumentsView() {
                   <td>{formatDate(d.created_at)}</td>
                   <td>{formatDate(d.last_opened_at)}</td>
                   <td className="row-actions">
+                    <button type="button" className="secondary" onClick={() => onOpen(d.id)}>
+                      Open
+                    </button>
                     <button type="button" className="danger" onClick={() => remove(d)}>
                       Delete
                     </button>

@@ -3,6 +3,7 @@
 
 import { getToken } from "../auth/session";
 import type {
+  ArtifactEntries,
   DocumentList,
   DocumentRead,
   ImportAnalysis,
@@ -45,6 +46,11 @@ const jsonInit = (method: string, body: unknown): RequestInit => ({
 
 export const api = {
   listDocuments: () => request<DocumentList>("/api/v1/documents"),
+
+  getDocument: (id: string) => request<DocumentRead>(`/api/v1/documents/${id}`),
+
+  getArtifactEntries: (artifactId: string) =>
+    request<ArtifactEntries>(`/api/v1/artifacts/${artifactId}/entries`),
 
   createFetch: (patentIdentifier: string, title?: string) =>
     request<DocumentRead>(

@@ -16,13 +16,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from . import documents, imports, jobs, uploads
+from . import artifacts, documents, imports, jobs, uploads
 
 api_router = APIRouter()
 api_router.include_router(uploads.router)
 api_router.include_router(imports.router)
 api_router.include_router(documents.router)
 api_router.include_router(jobs.router)
+api_router.include_router(artifacts.router)
 
 
 @api_router.get("/ping", tags=["meta"])

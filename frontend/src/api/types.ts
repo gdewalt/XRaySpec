@@ -43,3 +43,58 @@ export interface ImportAnalysis {
   imported_unverified: boolean;
   warnings: string[];
 }
+
+export interface Locator {
+  kind: "grant" | "application";
+  column?: number;
+  printed_line?: number;
+  paragraph?: string;
+}
+
+export interface EntryDto {
+  entry_id: string;
+  ordinal: number;
+  page_index: number;
+  locator: Locator;
+  box: number[] | null;
+  source_text: string;
+  display_text: string;
+  text_confidence: string;
+  reference_confidence: string;
+}
+
+export interface FigureMentionDto {
+  entry_id: string;
+  raw_text: string;
+  span: [number, number];
+  figure_ids: string[];
+}
+
+export interface NumeralMentionDto {
+  entry_id: string;
+  value: string;
+  component_label: string | null;
+  span: [number, number];
+}
+
+export interface AssociationDto {
+  entry_id: string;
+  value: string;
+  span: [number, number];
+  status: string;
+  selected_callout_ids: string[];
+  candidate_callout_ids: string[];
+}
+
+export interface ArtifactEntries {
+  artifact_id: string;
+  doc_type: string | null;
+  mode: string | null;
+  disposition: string | null;
+  page_count: number | null;
+  entries: EntryDto[];
+  figure_mentions: FigureMentionDto[];
+  numeral_mentions: NumeralMentionDto[];
+  mention_associations: AssociationDto[];
+  callout_occurrences: Record<string, unknown>[];
+}

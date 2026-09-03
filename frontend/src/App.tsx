@@ -1,15 +1,30 @@
-import { useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 
 import { getToken, setToken, subscribe } from "./auth/session";
 import { DocumentsView } from "./components/DocumentsView";
 import { Login } from "./components/Login";
+import { Viewer } from "./components/Viewer";
+
+type View = { mode: "list" } | { mode: "viewer"; documentId: string };
 
 /**
- * App shell (DESIGN.md §16.1). Gates on a bearer-token session; renders the
- * Documents view (list + ingestion) when signed in, otherwise the sign-in panel.
+ * App shell (DESIGN.md §16.1). Gates on a bearer-token session; routes between the
+ * Documents list and the reading Viewer (simple state routing, no router lib).
  */
 export function App() {
   const token = useSyncExternalStore(subscribe, getToken);
+  const [view, setView] = useState<View>({ mode: "list" });
+
+  let body;
+  if (!token) {
+    body = <Login />;
+  } else if (view.mode === "viewer") {
+    body = (
+      <Viewer documentId={view.documentId} onBack={() => setView({ mode: "list" })} />
+    );
+  } else {
+    body = <DocumentsView onOpen={(id) => setView({ mode: "viewer", documentId: id })} />;
+  }
 
   return (
     <div className="app">
@@ -21,7 +36,7 @@ export function App() {
           </button>
         )}
       </header>
-      <main className="container">{token ? <DocumentsView /> : <Login />}</main>
+      <main className="container">{body}</main>
     </div>
   );
 }
