@@ -13,9 +13,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import select
 
+from ...config import get_settings
 from ...db.models import Bookmark, ExtractionJob, SourceDocument, UserDocument
 from ...patents import PatentParseError, parse_patent_identifier
 from ...schemas.bookmarks import BookmarkCreate, BookmarkRead
@@ -130,6 +131,24 @@ async def _create_placeholder_document(
     await session.commit()
     await session.refresh(doc)
     return DocumentRead.model_validate(doc)
+
+
+@router.get("/documents/{document_id}/source.pdf")
+async def get_source_pdf(
+    document_id: str, user: CurrentUser, session: DbSession, store: Storage
+) -> Response:
+    """Authorized source-PDF delivery (DESIGN.md §14.1, §17.5). Storage keys never
+    appear in responses; the bytes are streamed from private storage."""
+    doc = await _owned_document(session, user, document_id)
+    source = await session.get(SourceDocument, doc.source_id)
+    if source is None or not source.pdf_object_key:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No source PDF for this document")
+    data = await store.read(source.pdf_object_key, limit=get_settings().max_upload_bytes)
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "inline", "Cache-Control": "private, max-age=300"},
+    )
 
 
 @router.get("/documents", response_model=DocumentList)

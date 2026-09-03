@@ -402,3 +402,81 @@ table.docs th {
   color: var(--ok-text);
   font-size: 0.85rem;
 }
+
+/* --- modular panes + PDF --- */
+.panes {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+.panes .spec {
+  flex: 1;
+  min-width: 0;
+  max-height: calc(100vh - 210px);
+  overflow-y: auto;
+  padding-right: 0.5rem;
+}
+.panes.split .spec {
+  flex: 1 1 50%;
+}
+
+.pdf-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
+.pdf-controls {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.pdf-controls button {
+  padding: 0.25rem 0.6rem;
+}
+.pdf-pageno {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  color: var(--muted);
+  min-width: 4.5rem;
+  text-align: center;
+}
+.pdf-scroll {
+  overflow: auto;
+  max-height: calc(100vh - 230px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #2a2d33;
+}
+.pdf-page {
+  position: relative;
+  margin: 0 auto;
+}
+.pdf-page canvas {
+  display: block;
+}
+.pdf-overlay {
+  position: absolute;
+  inset: 0;
+}
+.pdf-line {
+  position: absolute;
+  color: transparent;
+  cursor: text;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 8px;
+  line-height: 1;
+  border-radius: 2px;
+}
+.pdf-line::selection {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.pdf-line:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.pdf-line.hit {
+  background: color-mix(in srgb, #d19a24 35%, transparent);
+  outline: 1px solid #d19a24;
+}
