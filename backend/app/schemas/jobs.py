@@ -25,5 +25,6 @@ class JobRead(BaseModel):
     indeterminate: bool
     cancel_requested: bool
     failure_code: str | None = None
+    progress_sequence: int = 0
     created_at: datetime
     finished_at: datetime | None = None

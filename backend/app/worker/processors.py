@@ -107,14 +107,21 @@ async def extraction_processor(
         raise FetchError("no_source_pdf", "job has no source PDF to extract")
 
     settings = get_settings()
-    await ctx.heartbeat(stage="extracting_native", stage_label="Reading text", indeterminate=True)
     pdf_bytes = await ctx.store.read(pdf_key, limit=settings.max_upload_bytes)
 
     from ..extraction.config import DEFAULT_CONFIG
-    from ..extraction.core import extract
+    from .extraction import run_extraction
 
-    # CPU-bound + blocking PDF parsing — keep it off the event loop.
-    artifact = await asyncio.to_thread(extract, pdf_bytes, DEFAULT_CONFIG, doc_type)
+    # Resume-aware: reuse valid page_text checkpoints, recompute the rest, then
+    # recompute the fast downstream pipeline fresh (§10.6–10.7).
+    artifact = await run_extraction(
+        ctx,
+        pdf_bytes=pdf_bytes,
+        source_id=source_id,
+        owner_id=owner_id,
+        config=DEFAULT_CONFIG,
+        doc_type=doc_type,
+    )
 
     artifact = await _enrich_artifact(
         ctx, artifact, config=DEFAULT_CONFIG, canonical=canonical, title=title, fetcher=fetcher

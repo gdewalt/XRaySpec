@@ -20,6 +20,7 @@ from ..db.models import (
     Bookmark,
     ExtractionArtifact,
     ExtractionJob,
+    JobCheckpoint,
     SourceDocument,
     UserDocument,
 )
@@ -49,13 +50,17 @@ async def purge_document(session: AsyncSession, store: ObjectStore, doc: UserDoc
             await _delete_blob(store, artifact.manifest_object_key)
             await session.delete(artifact)
 
-        # Only delete the source (and its PDF blob) if no other document shares it.
+        # Only delete the source (and its PDF blob + resume checkpoints) if no other
+        # document shares it.
         shared = await session.scalar(
             select(func.count())
             .select_from(UserDocument)
             .where(UserDocument.source_id == source.id, UserDocument.id != doc.id)
         )
         if not shared:
+            await session.execute(
+                delete(JobCheckpoint).where(JobCheckpoint.source_id == source.id)
+            )
             await _delete_blob(store, source.pdf_object_key)
             await session.delete(source)
 

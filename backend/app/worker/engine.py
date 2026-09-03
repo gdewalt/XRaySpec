@@ -66,12 +66,15 @@ class JobContext:
                 raise JobCancelled()
 
             now = datetime.now(UTC)
-            if stage is not None:
+            changed = False
+            if stage is not None and stage != job.stage:
                 job.stage = stage
+                changed = True
             if stage_label is not None:
                 job.stage_label = stage_label
-            if completed_units is not None:
+            if completed_units is not None and completed_units != job.completed_units:
                 job.completed_units = completed_units
+                changed = True
             if total_units is not None:
                 job.total_units = total_units
             if unit is not None:
@@ -80,6 +83,10 @@ class JobContext:
                 job.indeterminate = indeterminate
             if job.total_units:
                 job.overall_fraction = min(1.0, job.completed_units / job.total_units)
+            # A meaningful transition (new stage or work-unit progress) advances the
+            # durable progress sequence so SSE clients get an event (§10.2).
+            if changed:
+                job.progress_sequence += 1
             job.heartbeat_at = now
             job.lease_expires_at = now + timedelta(seconds=self.lease_seconds)
             await session.commit()
@@ -102,6 +109,7 @@ async def _finish(
         job.status = status
         job.failure_code = failure_code
         job.finished_at = datetime.now(UTC)
+        job.progress_sequence += 1  # terminal transition emits a final SSE event
         await session.commit()
 
 

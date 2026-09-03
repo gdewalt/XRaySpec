@@ -17,7 +17,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, func
+from sqlalchemy import JSON, DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
@@ -176,9 +176,45 @@ class ExtractionJob(Base):
     overall_fraction: Mapped[float | None] = mapped_column(default=None)
     indeterminate: Mapped[bool] = mapped_column(default=True)
 
+    # Durable, monotonically increasing progress sequence (§10.2). Bumped on every
+    # meaningful transition; the SSE stream (`/jobs/{id}/events`) uses it as the
+    # event id so a reconnect with `Last-Event-ID` skips what the client already saw.
+    progress_sequence: Mapped[int] = mapped_column(default=0)
+
     failure_code: Mapped[str | None] = mapped_column(String, default=None)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     created_at: Mapped[datetime] = _ts()
+
+
+class JobCheckpoint(Base):
+    """Resume checkpoint (DESIGN.md §10.7). Only two kinds exist:
+
+    - ``source_ready`` — the source has been fetched/validated/preflighted
+      (page inventory, dimensions, classification inputs); ``page_index`` is null.
+    - ``page_text`` — one page's text result (native or OCR) with word coordinates
+      and confidence, keyed by ``page_index``.
+
+    ``cache_key`` binds a checkpoint to the exact source hash + engine + config +
+    artifact schema that produced it; a mismatch means the checkpoint is stale and
+    is recomputed. Checkpoints are keyed by ``source_id`` so they are shared across
+    a source's jobs (a resume reuses a prior attempt's pages) and purged with the
+    document. The fast downstream pipeline is always recomputed, never checkpointed.
+    """
+
+    __tablename__ = "job_checkpoints"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("ckpt"))
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey("source_documents.id"), index=True)
+    kind: Mapped[str] = mapped_column(String)  # "source_ready" | "page_text"
+    page_index: Mapped[int | None] = mapped_column(default=None)
+    cache_key: Mapped[str] = mapped_column(String, index=True)
+    payload: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = _ts()
+
+    __table_args__ = (
+        UniqueConstraint("source_id", "kind", "page_index", name="uq_checkpoint_page"),
+    )
 
 
 class Bookmark(Base):

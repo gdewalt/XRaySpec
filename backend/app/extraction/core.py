@@ -14,21 +14,97 @@ callouts land in later slices behind this same entry point.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from .applications import count_paragraph_markers, extract_application_page
 from .artifact import Artifact, CalloutOccurrence
 from .callouts import associate_mentions, detect_callouts, detect_page_figure, is_drawing_page
 from .config import ExtractionConfig
 from .figures import detect_figure_references, detect_reference_numerals
-from .model import Page
+from .model import Page, Word
 from .native import extract_page
 
 _MARKER_THRESHOLD = 3  # a document with this many paragraph markers is an application
 
 
+@dataclass(frozen=True, slots=True)
+class PageResult:
+    """The per-page text result (DESIGN.md §10.7 ``page_text``): a specification
+    page's words *or* a drawing page's callouts. This is the checkpointable unit —
+    the expensive (OCR) work — that a resume reuses; the downstream pipeline over
+    these results is always recomputed fresh."""
+
+    page_index: int
+    method: str  # "native" | "ocr"
+    is_drawing: bool
+    words: tuple[Word, ...] = ()  # specification words (empty for a drawing page)
+    callouts: tuple[CalloutOccurrence, ...] = ()  # drawing callouts (empty for a spec page)
+
+
 def detect_doc_type(pages: list[Page]) -> str:
     """Classify grant (``col:line``) vs application (paragraph) by marker density."""
     return "application" if count_paragraph_markers(pages) >= _MARKER_THRESHOLD else "grant"
+
+
+def route_page(
+    pdf_bytes: bytes,
+    native_page: Page,
+    config: ExtractionConfig,
+    can_ocr: bool,
+    *,
+    ocr_fn: Callable[..., list[Word]] | None = None,
+) -> PageResult:
+    """Route one page to native words or OCR, and classify spec-vs-drawing (§12.3–12.7).
+
+    Pure per-page work with no persistence: the resume orchestrator calls this only
+    for pages without a valid ``page_text`` checkpoint."""
+    if ocr_fn is None:
+        from .ocr import ocr_page_words as ocr_fn  # lazy: OCR libs only in the worker
+
+    if len(native_page.words) >= config.min_native_words_per_page:
+        page, method = native_page, "native"
+    elif can_ocr:
+        words = ocr_fn(pdf_bytes, native_page.index, config)
+        page, method = Page(index=native_page.index, words=words), "ocr"
+    else:
+        page, method = native_page, "native"  # no text layer, no OCR
+
+    if is_drawing_page(page.words):
+        draw_words = page.words
+        if method == "ocr" and can_ocr:
+            draw_words = ocr_fn(pdf_bytes, page.index, config, psm=config.ocr_sparse_psm)
+        figure_id = detect_page_figure(draw_words)
+        callouts = tuple(detect_callouts(draw_words, page.index, figure_id))
+        return PageResult(page.index, method, True, callouts=callouts)
+    return PageResult(page.index, method, False, words=tuple(page.words))
+
+
+def assemble_from_results(
+    results: list[PageResult],
+    config: ExtractionConfig,
+    *,
+    source_sha256: str,
+    doc_type: str,
+    total_pages: int,
+) -> Artifact:
+    """Recompute the fast downstream pipeline over per-page results (§10.7)."""
+    ordered = sorted(results, key=lambda r: r.page_index)
+    spec = [r for r in ordered if not r.is_drawing]
+    spec_pages = [Page(index=r.page_index, words=list(r.words)) for r in spec]
+    methods = [r.method for r in spec]
+    callouts = [c for r in ordered if r.is_drawing for c in r.callouts]
+    if doc_type not in ("grant", "application"):
+        doc_type = detect_doc_type(spec_pages)
+    return extract_from_pages(
+        spec_pages,
+        config,
+        source_sha256=source_sha256,
+        page_methods=methods,
+        doc_type=doc_type,
+        callouts=callouts,
+        total_pages=total_pages,
+    )
 
 
 def extract_from_pages(
@@ -130,49 +206,18 @@ def extract(pdf_bytes: bytes, config: ExtractionConfig, doc_type: str = "auto") 
     ``"application"``, or ``"auto"`` (classify by paragraph-marker density). Runs
     only in the isolated worker.
     """
-    from .ocr import ocr_available, ocr_page_words
+    from .ocr import ocr_available
     from .pdf import load_pages
 
     source_sha256 = hashlib.sha256(pdf_bytes).hexdigest()
     native_pages = load_pages(pdf_bytes)
     can_ocr = ocr_available()
-    total_pages = len(native_pages)
 
-    spec_pages: list[Page] = []
-    methods: list[str] = []
-    callouts: list[CalloutOccurrence] = []
-    for native_page in native_pages:
-        if len(native_page.words) >= config.min_native_words_per_page:
-            page, method = native_page, "native"
-        elif can_ocr:
-            words = ocr_page_words(pdf_bytes, native_page.index, config)
-            page, method = Page(index=native_page.index, words=words), "ocr"
-        else:
-            page, method = native_page, "native"  # no text layer, no OCR
-
-        # A drawing page yields callouts, not specification lines. Re-OCR it in
-        # sparse mode (§12.7) so isolated numeral labels are found, not prose.
-        if is_drawing_page(page.words):
-            draw_words = page.words
-            if method == "ocr" and can_ocr:
-                draw_words = ocr_page_words(
-                    pdf_bytes, page.index, config, psm=config.ocr_sparse_psm
-                )
-            figure_id = detect_page_figure(draw_words)
-            callouts.extend(detect_callouts(draw_words, page.index, figure_id))
-        else:
-            spec_pages.append(page)
-            methods.append(method)
-
-    if doc_type not in ("grant", "application"):
-        doc_type = detect_doc_type(spec_pages)
-
-    return extract_from_pages(
-        spec_pages,
+    results = [route_page(pdf_bytes, np, config, can_ocr) for np in native_pages]
+    return assemble_from_results(
+        results,
         config,
         source_sha256=source_sha256,
-        page_methods=methods,
         doc_type=doc_type,
-        callouts=callouts,
-        total_pages=total_pages,
+        total_pages=len(native_pages),
     )
