@@ -114,7 +114,12 @@ def _clamp_box(x0: float, y0: float, x1: float, y1: float) -> tuple[float, float
 
 
 def _extract_column(
-    lines: list[_Line], column: int, page_index: int, config: ExtractionConfig, ordinal: int
+    lines: list[_Line],
+    column: int,
+    page_index: int,
+    config: ExtractionConfig,
+    ordinal: int,
+    extraction_method: str,
 ) -> tuple[list[Entry], int]:
     # Candidate gutter anchors: a line whose leftmost token is a small integer,
     # kept only while strictly increasing down the page.
@@ -143,12 +148,12 @@ def _extract_column(
             continue
 
         if id(ln) in anchor_value:
-            printed, method, ref_conf = anchor_value[id(ln)], "detected", "high"
+            printed, ref_method, ref_conf = anchor_value[id(ln)], "detected", "high"
         elif fit is not None:
             a, b = fit
-            printed, method, ref_conf = round(a * ln.cy + b), "interpolated", "medium"
+            printed, ref_method, ref_conf = round(a * ln.cy + b), "interpolated", "medium"
         else:
-            printed, method, ref_conf = prev + 1, "none", "low"
+            printed, ref_method, ref_conf = prev + 1, "none", "low"
 
         printed = max(1, min(printed, max_line))
         if printed <= prev:
@@ -161,6 +166,8 @@ def _extract_column(
             max(w.x1 for w in body),
             max(w.y1 for w in body),
         )
+        confidences = [w.confidence for w in body if w.confidence is not None]
+        ocr_confidence = (sum(confidences) / len(confidences)) if confidences else None
         entries.append(
             Entry(
                 entry_id=f"line_{ordinal:07d}",
@@ -170,8 +177,12 @@ def _extract_column(
                 box=box,
                 source_text=text,
                 display_text=text,
-                provenance=Provenance(extraction_method="native", reference_method=method),
-                text_confidence="high",
+                provenance=Provenance(
+                    extraction_method=extraction_method,
+                    ocr_confidence=ocr_confidence,
+                    reference_method=ref_method,
+                ),
+                text_confidence="high" if extraction_method == "native" else "medium",
                 reference_confidence=ref_conf,
             )
         )
@@ -180,7 +191,7 @@ def _extract_column(
 
 
 def extract_page(
-    page: Page, config: ExtractionConfig, ordinal_start: int
+    page: Page, config: ExtractionConfig, ordinal_start: int, *, method: str = "native"
 ) -> tuple[list[Entry], int]:
     # Split columns *first* (each column has its own ~65-line baseline grid), then
     # group lines within a column so side-by-side columns don't merge (§12.5).
@@ -197,6 +208,8 @@ def extract_page(
     ordinal = ordinal_start
     for column, col_words in columns:
         col_lines = group_lines(col_words)
-        col_entries, ordinal = _extract_column(col_lines, column, page.index, config, ordinal)
+        col_entries, ordinal = _extract_column(
+            col_lines, column, page.index, config, ordinal, method
+        )
         entries.extend(col_entries)
     return entries, ordinal

@@ -28,6 +28,8 @@ class ExtractionConfig:
     ocr_policy: OcrPolicy = "auto"
     ocr_dpi: int = 300
     ocr_languages: tuple[str, ...] = ("eng",)
+    ocr_min_confidence: float = 0.0  # keep all non-empty tokens by default
+    min_native_words_per_page: int = 15  # below this a page is treated as image-only
 
     # Grant line-reference reconstruction (§12.5)
     line_y_tolerance: float = 3.0

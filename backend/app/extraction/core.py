@@ -5,9 +5,10 @@ no database, no global state. Deterministic and geometry-anchored: models may
 *propose*, geometry must *confirm*, and ``source_text`` is never overwritten by a
 model (§25.1).
 
-This first cut does native grant ``col:line`` extraction (§12.5). OCR fallback,
-applications (paragraphs), figures, and callouts land in later slices behind this
-same entry point.
+Native grant ``col:line`` with per-page OCR fallback (§12.3–12.4): pages with a
+usable text layer are read natively; image-only pages are rendered and OCR'd, and
+both feed the same line-reconstruction. Applications (paragraphs), figures, and
+callouts land in later slices behind this same entry point.
 """
 
 from __future__ import annotations
@@ -21,24 +22,45 @@ from .native import extract_page
 
 
 def extract_from_pages(
-    pages: list[Page], config: ExtractionConfig, *, source_sha256: str
+    pages: list[Page],
+    config: ExtractionConfig,
+    *,
+    source_sha256: str,
+    page_methods: list[str] | None = None,
 ) -> Artifact:
-    """Assemble an immutable artifact from already-parsed pages (pure, testable)."""
+    """Assemble an immutable artifact from parsed pages (pure, testable).
+
+    ``page_methods[i]`` is ``"native"`` or ``"ocr"`` for ``pages[i]`` (default all
+    native).
+    """
+    methods = page_methods or ["native"] * len(pages)
     entries = []
     ordinal = 0
-    for page in pages:
-        page_entries, ordinal = extract_page(page, config, ordinal)
+    for page, method in zip(pages, methods, strict=False):
+        page_entries, ordinal = extract_page(page, config, ordinal, method=method)
         entries.extend(page_entries)
 
     detected = sum(1 for e in entries if e.provenance.reference_method == "detected")
     interpolated = sum(1 for e in entries if e.provenance.reference_method == "interpolated")
+    ocr_pages = sum(1 for m in methods if m == "ocr")
+
     warnings: list[str] = []
     if entries and detected == 0:
         warnings.append("No printed gutter line-numbers detected; references are unanchored.")
 
-    disposition = "complete" if entries and not warnings else (
-        "complete_with_warnings" if entries else "partial"
-    )
+    if not entries:
+        disposition = "partial"
+    elif warnings:
+        disposition = "complete_with_warnings"
+    else:
+        disposition = "complete"
+
+    if ocr_pages == 0:
+        mode = "native"
+    elif ocr_pages == len(methods):
+        mode = "ocr"
+    else:
+        mode = "hybrid"
 
     return Artifact(
         schema_version=2,
@@ -47,11 +69,12 @@ def extract_from_pages(
         page_count=len(pages),
         engine_version=config.version,
         config_hash=config.config_hash(),
-        mode="native",
+        mode=mode,
         disposition=disposition,
         entries=entries,
         quality={
             "page_count": len(pages),
+            "ocr_pages": ocr_pages,
             "entry_count": len(entries),
             "detected_references": detected,
             "interpolated_references": interpolated,
@@ -61,9 +84,32 @@ def extract_from_pages(
 
 
 def extract(pdf_bytes: bytes, config: ExtractionConfig) -> Artifact:
-    """Extract an immutable :class:`Artifact` from raw PDF bytes (native pass)."""
-    from .pdf import load_pages  # lazy: pdfplumber only needed at runtime
+    """Extract an immutable :class:`Artifact` from raw PDF bytes.
+
+    Routes each page: native words if the page has a usable text layer, otherwise
+    render + OCR (when Tesseract is available). Runs only in the isolated worker.
+    """
+    from .ocr import ocr_available, ocr_page_words
+    from .pdf import load_pages
 
     source_sha256 = hashlib.sha256(pdf_bytes).hexdigest()
-    pages = load_pages(pdf_bytes)
-    return extract_from_pages(pages, config, source_sha256=source_sha256)
+    native_pages = load_pages(pdf_bytes)
+    can_ocr = ocr_available()
+
+    pages: list[Page] = []
+    methods: list[str] = []
+    for native_page in native_pages:
+        if len(native_page.words) >= config.min_native_words_per_page:
+            pages.append(native_page)
+            methods.append("native")
+        elif can_ocr:
+            words = ocr_page_words(pdf_bytes, native_page.index, config)
+            pages.append(Page(index=native_page.index, words=words))
+            methods.append("ocr")
+        else:
+            pages.append(native_page)  # no text layer, no OCR -> yields no entries
+            methods.append("native")
+
+    return extract_from_pages(
+        pages, config, source_sha256=source_sha256, page_methods=methods
+    )

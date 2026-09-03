@@ -20,6 +20,7 @@ class Word:
     y0: float
     x1: float
     y1: float
+    confidence: float | None = None  # OCR word confidence (0–100); None for native
 
     @property
     def cx(self) -> float:
