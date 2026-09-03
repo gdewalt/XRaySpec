@@ -62,6 +62,26 @@ class Entry:
 
 
 @dataclass(frozen=True, slots=True)
+class FigureMention:
+    """A textual figure reference (``FIG. 3``, ``FIGS. 4-6``) and its expansion (§8.3)."""
+
+    entry_id: str
+    raw_text: str
+    span: tuple[int, int]  # half-open char offsets in source_text
+    figure_ids: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class NumeralMention:
+    """A component reference numeral in prose (``housing 104``) (§8.4)."""
+
+    entry_id: str
+    value: str  # normalized numeral, e.g. "104" or "104A"
+    component_label: str | None
+    span: tuple[int, int]  # half-open char offsets in source_text
+
+
+@dataclass(frozen=True, slots=True)
 class Artifact:
     """Immutable result of one extraction run (DESIGN.md §8.1)."""
 
@@ -74,5 +94,7 @@ class Artifact:
     mode: Literal["native", "ocr", "hybrid"]
     disposition: Disposition
     entries: list[Entry] = field(default_factory=list)
+    figure_mentions: list[FigureMention] = field(default_factory=list)
+    numeral_mentions: list[NumeralMention] = field(default_factory=list)
     quality: dict[str, object] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)

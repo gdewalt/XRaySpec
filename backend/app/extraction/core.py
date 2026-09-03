@@ -18,6 +18,7 @@ import hashlib
 from .applications import count_paragraph_markers, extract_application_page
 from .artifact import Artifact
 from .config import ExtractionConfig
+from .figures import detect_figure_references, detect_reference_numerals
 from .model import Page
 from .native import extract_page
 
@@ -58,6 +59,9 @@ def extract_from_pages(
             page_entries, ordinal = extract_page(page, config, ordinal, method=method)
             entries.extend(page_entries)
 
+    figure_mentions = detect_figure_references(entries)
+    numeral_mentions = detect_reference_numerals(entries)
+
     detected = sum(1 for e in entries if e.provenance.reference_method == "detected")
     interpolated = sum(1 for e in entries if e.provenance.reference_method == "interpolated")
     ocr_pages = sum(1 for m in methods if m == "ocr")
@@ -91,12 +95,16 @@ def extract_from_pages(
         mode=mode,
         disposition=disposition,
         entries=entries,
+        figure_mentions=figure_mentions,
+        numeral_mentions=numeral_mentions,
         quality={
             "page_count": len(pages),
             "ocr_pages": ocr_pages,
             "entry_count": len(entries),
             "detected_references": detected,
             "interpolated_references": interpolated,
+            "figure_mentions": len(figure_mentions),
+            "numeral_mentions": len(numeral_mentions),
         },
         warnings=warnings,
     )
