@@ -12,9 +12,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from dataclasses import replace
 
 from ..config import get_settings
 from ..db.models import ExtractionJob, SourceDocument, UserDocument
+from ..extraction.artifact import Artifact
+from ..extraction.config import ExtractionConfig
 from ..fetch.adapter import RestrictedFetcher
 from ..fetch.errors import FetchError
 from ..fetch.google_patents import extract_pdf_url, patent_page_url
@@ -82,11 +85,14 @@ async def fetch_source(
         await session.commit()
 
 
-async def extraction_processor(ctx: JobContext, job: ExtractionJob) -> None:
+async def extraction_processor(
+    ctx: JobContext, job: ExtractionJob, *, fetcher: RestrictedFetcher | None = None
+) -> None:
     """Full pipeline: fetch the source if needed, run the native extraction core,
-    and atomically publish the immutable artifact (DESIGN.md §9.2, §12)."""
+    align it to the provider's clean text, and atomically publish the immutable
+    artifact (DESIGN.md §9.2, §12, §13)."""
     if await _needs_fetch(ctx, job):
-        await fetch_source(ctx, job)
+        await fetch_source(ctx, job, fetcher=fetcher)
 
     async with ctx.sessionmaker() as session:
         doc = await session.get(UserDocument, job.document_id) if job.document_id else None
@@ -95,6 +101,8 @@ async def extraction_processor(ctx: JobContext, job: ExtractionJob) -> None:
         source_id = source.id if source else None
         owner_id = source.owner_id if source else None
         doc_type = (source.doc_type if source else None) or "auto"
+        canonical = source.patent_canonical if source else None
+        title = doc.title if doc else None
     if not pdf_key or source_id is None or job.document_id is None:
         raise FetchError("no_source_pdf", "job has no source PDF to extract")
 
@@ -108,6 +116,10 @@ async def extraction_processor(ctx: JobContext, job: ExtractionJob) -> None:
     # CPU-bound + blocking PDF parsing — keep it off the event loop.
     artifact = await asyncio.to_thread(extract, pdf_bytes, DEFAULT_CONFIG, doc_type)
 
+    artifact = await _enrich_artifact(
+        ctx, artifact, config=DEFAULT_CONFIG, canonical=canonical, title=title, fetcher=fetcher
+    )
+
     await ctx.heartbeat(stage="persisting_artifact", stage_label="Publishing")
     async with ctx.sessionmaker() as session:
         await publish_artifact(
@@ -118,6 +130,55 @@ async def extraction_processor(ctx: JobContext, job: ExtractionJob) -> None:
             owner_id=owner_id,
             artifact=artifact,
         )
+
+
+async def _enrich_artifact(
+    ctx: JobContext,
+    artifact: Artifact,
+    *,
+    config: ExtractionConfig,
+    canonical: str | None,
+    title: str | None,
+    fetcher: RestrictedFetcher | None = None,
+) -> Artifact:
+    """Clean-text alignment stage (DESIGN.md §13): fetch the provider page, verify
+    identity, and align each line's ``display_text`` to the authoritative text —
+    ``source_text`` is never touched. Best-effort: a disabled instance, a missing
+    patent identity, a fetch failure, or an identity mismatch all fall back to the
+    unaligned artifact, so extraction still publishes."""
+    settings = get_settings()
+    if not settings.enrichment_enabled or not canonical or not artifact.entries:
+        return artifact
+
+    from ..enrichment import enrich_from_page_html
+
+    await ctx.heartbeat(
+        stage="aligning_text", stage_label="Aligning clean text", indeterminate=True
+    )
+    fetcher = fetcher or RestrictedFetcher(
+        settings.fetch_allowed_hosts, max_redirects=settings.fetch_max_redirects
+    )
+    try:
+        page = await fetcher.fetch(
+            patent_page_url(canonical), max_bytes=settings.fetch_max_html_bytes
+        )
+    except FetchError:
+        return artifact  # graceful: keep the unaligned entries
+    html = page.content.decode("utf-8", "replace")
+
+    # difflib alignment over the whole spec is CPU-bound — keep it off the loop.
+    aligned, identity = await asyncio.to_thread(
+        enrich_from_page_html, artifact.entries, html, canonical, config, source_title=title
+    )
+    aligned_count = sum(
+        1 for e in aligned if e.provenance.alignment_method in ("exact", "fuzzy")
+    )
+    quality = {
+        **artifact.quality,
+        "identity_status": identity.status,
+        "aligned_lines": aligned_count,
+    }
+    return replace(artifact, entries=aligned, quality=quality)
 
 
 async def dispatch_processor(ctx: JobContext, job: ExtractionJob) -> None:
