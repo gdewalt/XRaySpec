@@ -25,8 +25,9 @@ class Settings(BaseSettings):
     supabase_project_url: str = ""
 
     # Object storage (Supabase Storage or external S3-compatible; §23 #1 open).
-    storage_backend: str = "supabase"  # "supabase" | "memory" (tests)
+    storage_backend: str = "supabase"  # "supabase" | "local" (dev) | "memory" (tests)
     storage_bucket: str = "xray-sources"
+    local_storage_dir: str = "./devstorage"
     supabase_service_key: str = Field(default="", description="Supabase service-role key")
 
     # Ingestion safety bounds (§11.1, §11.3, §17.6)

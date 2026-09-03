@@ -24,6 +24,10 @@ def _build_store() -> ObjectStore:
         from ..storage.memory import MemoryObjectStore
 
         return MemoryObjectStore()
+    if settings.storage_backend == "local":
+        from ..storage.local import LocalFileObjectStore
+
+        return LocalFileObjectStore(settings.local_storage_dir)
     from ..storage.supabase import SupabaseObjectStore
 
     return SupabaseObjectStore(
