@@ -12,6 +12,15 @@ algorithms, toward ≥150 for launch, stratified across grants/applications,
 born-digital/scanned/hybrid, with a locked holdout set. Do **not** commit the source
 PDFs here; store them out of band and reference by `doc_id`/hash.
 
+**Don't hand-transcribe — bootstrap.** Run the scaffold generator to pre-fill a label
+file from an extraction run, then correct the engine's guesses in place:
+
+```bash
+python -m app.eval.scaffold /path/to/US12262260B2.pdf --doc-id US12262260B2 --doc-type auto
+```
+
+The full review procedure is in **[LABELING.md](LABELING.md)**.
+
 ## Label file schema
 
 ```jsonc
