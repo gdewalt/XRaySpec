@@ -38,3 +38,6 @@ Thumbs.db
 *.db-wal
 *.db-shm
 devstorage/
+
+# Dev corpus-review store
+devreview_store/
