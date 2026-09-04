@@ -63,7 +63,7 @@ def _token() -> str:
 
 async def _seed(doc_id: str) -> str:
     from app.db.base import Base, get_engine, get_sessionmaker
-    from app.db.models import SourceDocument, User, UserDocument
+    from app.db.models import SourceDocument, UserDocument
     from app.extraction.config import DEFAULT_CONFIG
     from app.extraction.core import extract
     from app.services.publication import publish_artifact
