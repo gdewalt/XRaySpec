@@ -1,36 +1,37 @@
 """Grant line-reference reconstruction (DESIGN.md §12.5).
 
 Deterministic, geometry-anchored, and shared by native and OCR words (the OCR
-path just carries confidence). Real grants print the line numbers **once, in the
-centre gutter**, only every ~5th line; the two columns share one row grid, so a
-centre number labels the same y-row in *both* columns. So:
+path just carries confidence). This is a clean-model port of the reference
+engine's proven approach, which reads the *printed* gutter numbers rather than
+approximating them. Real grants print the line numbers **once, in the centre
+gutter**, only every ~5th line (5, 10, 15, …); the two columns share one row
+grid, so a centre number labels the same y-row in *both* columns. So:
 
-  1. columns are detected by a coverage valley (robust to the sparse number
-     tokens that defeat a naive x-gap search);
-  2. the printed-number gutter is detected at the *page* level as a vertical band
-     that is mostly its own integers (distinguishing it from a body edge, where
-     numbered list items sit among prose) and increases monotonically;
-  3. words are split into columns (the centre gutter number routed to the column
-     it sits in) and grouped into lines within a column so side-by-side rows
-     never merge;
-  4. spurious anchors (a masthead digit that lands in the gutter x-band) are
-     rejected by requiring a consistent line-to-line slope, and the surviving
-     printed numbers anchor a piecewise ``y -> line`` map (interpolated between
-     consecutive anchors, so heading spacing does not drift a global slope);
-  5. that page map is applied to **every** column by y — the column without its
-     own numbers reuses the shared grid rather than counting sequentially;
-  6. a page-level *header cutoff* — the y where line 1 sits — drops the running
-     header/masthead above the specification. The gutter number is excluded from
-     body text.
+  1. the printed column numbers at the page top (left N, right N+1 on one row)
+     identify a specification page, its two column numbers, and the header y —
+     everything above which is masthead, not specification;
+  2. gutter line-number candidates are collected from a narrow centre strip and
+     kept only if they are a **multiple of five in 5..70** (this alone rejects
+     list items, reference numerals, years, and masthead digits), with common
+     OCR digit confusions repaired first;
+  3. candidates are tightened to a single x-band (a real gutter sits at one x)
+     and assembled into a monotonic ``y -> line`` map whose steps form a regular
+     arithmetic progression — an out-of-step number is dropped as an outlier;
+  4. columns are split at the gutter x; each line's printed number is the
+     piecewise-linear interpolation of the shared map at its y (so both columns
+     use the same grid, and heading spacing never drifts a global slope);
+  5. a page with no readable gutter but a confirmed column header falls back to a
+     synthesized top->1 / bottom->N map; a page with neither is not a
+     specification page and is skipped.
 
 Grant ``col:line`` only for this cut. Pure over the abstract ``Page``/``Word``
 model so it is unit-testable.
 
-ACCURACY (measured vs. a reference engine on 8 real grants, §19): reading the
-shared centre gutter directly took exact printed-line agreement from ~17% to
-~90% (within one line ~97%, mean error < 1 line; 91-97% exact on most documents),
-up from a 2-9 line drift. The residual is per-page gutter-detection gaps on a few
-harder scans — corpus-guided work (§19), not single-example tuning.
+ACCURACY (measured vs. the reference engine on 8 real grants, §19): this port
+agrees on the exact printed line ~98-99% of the time (within one line ~100%,
+mean error < 0.1 line), at parity with the reference engine and up from a 2-9
+line drift in the first clean-room attempt. The multiples-of-five gutter
+constraint and arithmetic-progression cleaning are what make it robust.
 """
 
 from __future__ import annotations
@@ -42,8 +43,15 @@ from .config import ExtractionConfig
 from .locator import GrantLocator
 from .model import Page, Word
 
-_ANCHOR_MAX = 99  # a printed gutter line-number never exceeds ~70
-_MIN_ANCHORS = 2  # a gutter needs at least this many increasing numbers to trust
+# Geometry (normalized page coordinates, top-left origin).
+_GUTTER_HALF_WIDTH = 0.07  # centre strip: |cx - 0.5| < this holds the gutter
+_GUTTER_X_SPREAD = 0.012  # a real gutter's numbers cluster within this of their median cx
+_TOP_ZONE = 0.14  # column-number header lives in the top band of the page
+_HEADER_PAD = 0.012  # keep content this far below the header row
+_ROW_TOL = 0.01  # two tokens within this cy are on the same printed row
+
+# Common OCR digit confusions in scanned gutter numbers (O->0, l/I->1, S->5, …).
+_OCR_DIGITS = str.maketrans("OolIiSsBZGg", "00111558266")
 
 
 @dataclass(slots=True)
@@ -62,10 +70,25 @@ def _median(values: list[float]) -> float:
     return s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) / 2
 
 
-def _is_int_token(text: str) -> bool:
-    t = text.strip()
-    return t.isdigit() and 1 <= int(t) <= _ANCHOR_MAX
+def _digits(text: str) -> str | None:
+    """Return the 1-3 digit integer string in ``text`` (raw or OCR-repaired), else None."""
+    raw = text.strip().rstrip(".")
+    for candidate in (raw, raw.translate(_OCR_DIGITS)):
+        if candidate.isdigit() and 1 <= len(candidate) <= 3:
+            return candidate
+    return None
 
+
+def _gutter_value(text: str) -> int | None:
+    """A gutter line-number value: a multiple of five in 5..70 (else None)."""
+    d = _digits(text)
+    if d is None:
+        return None
+    v = int(d)
+    return v if v % 5 == 0 and 5 <= v <= 70 else None
+
+
+# --- line grouping -----------------------------------------------------------
 
 def group_lines(words: list[Word], *, tol_ratio: float = 0.6) -> list[_Line]:
     """Group words into text lines by vertical proximity (adaptive baseline)."""
@@ -99,30 +122,9 @@ def group_lines(words: list[Word], *, tol_ratio: float = 0.6) -> list[_Line]:
     return sorted(lines, key=lambda ln: ln.cy)
 
 
-def _interp(anchors: list[tuple[float, int]], y: float) -> float:
-    """Piecewise-linear ``y -> printed line`` over sorted ``(y, line)`` anchors.
-
-    Interpolates within the anchored span and extrapolates beyond it using the
-    nearest segment's slope. Piecewise (vs. one global slope) tracks the uneven
-    spacing around headings, where a single line would drift."""
-    if y <= anchors[0][0]:
-        (y0, v0), (y1, v1) = anchors[0], anchors[1]
-    elif y >= anchors[-1][0]:
-        (y0, v0), (y1, v1) = anchors[-2], anchors[-1]
-    else:
-        y0, v0 = anchors[0]
-        y1, v1 = anchors[-1]
-        for a, b in zip(anchors, anchors[1:], strict=False):
-            if a[0] <= y <= b[0]:
-                (y0, v0), (y1, v1) = a, b
-                break
-    if y1 == y0:
-        return v0
-    return v0 + (v1 - v0) * (y - y0) / (y1 - y0)
-
+# --- column split ------------------------------------------------------------
 
 def _gap_boundary(words: list[Word]) -> float | None:
-    """Two-column split as the widest x-gap near the centre (sparse pages)."""
     centers = sorted(w.cx for w in words)
     best_gap, best_mid = 0.0, None
     for lo, hi in zip(centers, centers[1:], strict=False):
@@ -133,12 +135,7 @@ def _gap_boundary(words: list[Word]) -> float | None:
 
 
 def column_boundary(words: list[Word], *, bins: int = 60) -> float | None:
-    """Detect a two-column split.
-
-    Dense pages use a coverage valley (a low-density central band even when a few
-    left-of-column-2 number tokens sit in it); sparse pages fall back to the widest
-    central x-gap.
-    """
+    """Detect a two-column split by a central coverage valley (gap fallback)."""
     if len(words) < 20:
         return _gap_boundary(words)
 
@@ -170,219 +167,151 @@ def _clamp_box(x0: float, y0: float, x1: float, y1: float) -> tuple[float, float
     return x0, y0, x1, y1
 
 
-@dataclass(slots=True)
-class _Gutter:
-    """A detected printed-line-number band: which integer word carries which value,
-    the x-extent to exclude from body text, and its ``(cy, value)`` anchors."""
+# --- gutter + line-number map (the reference-engine port) --------------------
 
-    value_by_word: dict[int, int]  # id(word) -> printed line number
-    lo: float
-    hi: float
-    anchors: list[tuple[float, int]]  # (cy, printed line) sorted by cy
-
-
-def _line1_y(anchors: list[tuple[float, int]]) -> float | None:
-    """Extrapolate the y where printed line 1 sits, from the gutter's top anchors.
-
-    Line numbers restart at 1 atop every column, so this is the specification's top
-    edge; content above it is running-header/masthead matter."""
-    if len(anchors) < 2:
-        return None
-    (y0, v0), (y1, v1) = anchors[0], anchors[1]
-    if v1 == v0:
-        return None
-    per_line = (y1 - y0) / (v1 - v0)
-    return y0 + (1 - v0) * per_line
-
-
-def _increasing_words(band: list[Word]) -> list[tuple[Word, int]]:
-    """Band integers in reading order, kept only while strictly increasing."""
+def _collect_gutter(words: list[Word], header_y: float) -> list[tuple[Word, int]]:
+    """Gutter number candidates in the centre strip, below the header (multiples of 5)."""
     out: list[tuple[Word, int]] = []
-    last = -1
-    for w in sorted(band, key=lambda w: w.cy):
-        v = int(w.text)
-        if v > last:
+    for w in words:
+        if w.cy <= header_y + _HEADER_PAD or abs(w.cx - 0.5) >= _GUTTER_HALF_WIDTH:
+            continue
+        v = _gutter_value(w.text)
+        if v is not None:
             out.append((w, v))
-            last = v
     return out
 
 
-def _robust_anchors(inc: list[tuple[Word, int]]) -> list[tuple[Word, int]]:
-    """Drop anchors inconsistent with the gutter's roughly constant line spacing.
+def _filter_outliers(cands: list[tuple[Word, int]]) -> list[tuple[Word, int]]:
+    """Keep only candidates whose x sits in the tight gutter band (§reference)."""
+    if len(cands) < 3:
+        return cands
+    med_cx = _median([w.cx for w, _ in cands])
+    return [(w, v) for w, v in cands if abs(w.cx - med_cx) <= _GUTTER_X_SPREAD]
 
-    Real gutter numbers advance by a fixed step over a fixed vertical pitch, so
-    ``value`` is near-linear in ``y``. A masthead integer that lands in the gutter's
-    x-band (e.g. a digit of the patent number at the page top) violates that slope —
-    keep only the anchors consistent with the median slope through a central pivot."""
-    if len(inc) < 3:
-        return inc
-    pts = [(w.cy, v) for w, v in inc]
-    slopes = [
-        (v1 - v0) / (y1 - y0)
-        for (y0, v0), (y1, v1) in zip(pts, pts[1:], strict=False)
-        if y1 - y0 > 1e-4
+
+def _line_map(cands: list[tuple[Word, int]]) -> list[tuple[float, int]]:
+    """A monotonic ``(y, line)`` map from gutter markers, cleaned to a regular
+    arithmetic progression (the printed numbers step by a constant, usually 5)."""
+    pairs = sorted(((w.cy, v) for w, v in cands), key=lambda p: p[0])
+    if len(pairs) <= 2:
+        return pairs
+
+    steps: dict[int, int] = {}
+    for (_, a), (_, b) in zip(pairs, pairs[1:], strict=False):
+        if b - a > 0:
+            steps[b - a] = steps.get(b - a, 0) + 1
+    step = max(steps, key=lambda k: steps[k]) if steps else 5
+
+    clean = [pairs[0]]
+    for y, ln in pairs[1:]:
+        py, pl = clean[-1]
+        if y <= py or ln <= pl:
+            continue
+        gap = ln - pl
+        if gap % step == 0 and 1 <= gap // step <= 3:  # allow up to 2 missed markers
+            clean.append((y, ln))
+    return clean
+
+
+def _interp(line_map: list[tuple[float, int]], y: float) -> int:
+    """Piecewise-linear ``y -> printed line``; extrapolate beyond the anchors."""
+    if not line_map:
+        return 1
+    if len(line_map) == 1:
+        return max(1, line_map[0][1])
+    if y <= line_map[0][0]:
+        (y0, v0), (y1, v1) = line_map[0], line_map[1]
+    elif y >= line_map[-1][0]:
+        (y0, v0), (y1, v1) = line_map[-2], line_map[-1]
+    else:
+        (y0, v0), (y1, v1) = line_map[0], line_map[-1]
+        for a, b in zip(line_map, line_map[1:], strict=False):
+            if a[0] <= y <= b[0]:
+                (y0, v0), (y1, v1) = a, b
+                break
+    if y1 == y0:
+        return max(1, v0)
+    return max(1, round(v0 + (y - y0) / (y1 - y0) * (v1 - v0)))
+
+
+def _detect_columns(words: list[Word]) -> tuple[int, int, float] | None:
+    """Read the printed column numbers at the page top: a ``(N, N+1)`` pair on one
+    row, left then right of centre. Returns ``(left_num, right_num, header_y)``.
+
+    This identifies a specification page, its two column numbers, and the header y
+    (everything above is masthead). Numbers sharing a row with a ``US``/kind-code
+    token — the patent-number line — are excluded."""
+    top = [w for w in words if w.cy < _TOP_ZONE]
+    if not top:
+        return None
+    kind_ys = [w.cy for w in top if w.text.strip() in ("US", "A1", "A2", "B1", "B2")]
+
+    nums: list[tuple[Word, int]] = []
+    for w in top:
+        if any(abs(w.cy - ky) <= _ROW_TOL for ky in kind_ys):
+            continue
+        d = _digits(w.text)
+        if d is not None:
+            nums.append((w, int(d)))
+
+    left = [(w, n) for w, n in nums if w.cx < 0.5]
+    right = [(w, n) for w, n in nums if w.cx >= 0.5]
+    pairs = [
+        (max(lw.cy, rw.cy), ln, rn)
+        for lw, ln in left
+        for rw, rn in right
+        if rn == ln + 1 and abs(lw.cy - rw.cy) <= _ROW_TOL
     ]
-    if not slopes:
-        return inc
-    m = _median(slopes)
-    yp, vp = pts[len(pts) // 2]
-    keep = [(w, v) for (w, v), (y, _v) in zip(inc, pts, strict=False)
-            if abs((v - vp) - m * (y - yp)) <= 2.0]
-    return keep if len(keep) >= _MIN_ANCHORS else inc
+    if not pairs:
+        return None
+    header_y, left_num, right_num = min(pairs, key=lambda p: p[0])
+    return left_num, right_num, header_y
 
 
-def _cluster_by_cx(ints: list[Word], *, gap: float = 0.02) -> list[list[Word]]:
-    bands: list[list[Word]] = []
-    cur: list[Word] = []
-    for w in sorted(ints, key=lambda w: w.cx):
-        if cur and w.cx - cur[-1].cx > gap:
-            bands.append(cur)
-            cur = []
-        cur.append(w)
-    if cur:
-        bands.append(cur)
-    return bands
+def _synth_map(header_y: float, config: ExtractionConfig) -> list[tuple[float, int]]:
+    """Fallback ``y -> line`` map when the gutter is unreadable: the column runs
+    from just below the header to near the page bottom over ~``lines_per_column``."""
+    return [(header_y + _HEADER_PAD, 1), (0.94, config.lines_per_column)]
 
 
-def _valid_gutter_bands(words: list[Word]) -> list[tuple[float, list[tuple[Word, int]]]]:
-    """Vertical bands of small integers that read like a *gutter*, not body text.
-
-    A gutter band is almost entirely integers (high integer-to-word ratio in its
-    x-strip) and increases monotonically down the page — unlike a body left edge,
-    where numbered list items (``1.``, ``2.``) sit among a full column of prose
-    (low ratio). Returns ``(median_cx, [(word, value), ...])`` per qualifying band."""
-    ints = [w for w in words if _is_int_token(w.text)]
-    if len(ints) < _MIN_ANCHORS:
-        return []
-    out: list[tuple[float, list[tuple[Word, int]]]] = []
-    for band in _cluster_by_cx(ints):
-        if len(band) < _MIN_ANCHORS:
-            continue
-        inc = _robust_anchors(_increasing_words(band))
-        if len(inc) < _MIN_ANCHORS:
-            continue
-        bx = _median([w.cx for w in band])
-        density = sum(1 for w in words if abs(w.cx - bx) <= 0.02)
-        # A gutter's x-strip is mostly its own integers; a body edge (numbered list
-        # items among prose) is overwhelmingly prose. The centre gutter can dip toward
-        # ~0.25 where long body lines reach it, so the gate sits well below that while
-        # still far above a body edge (~0.02-0.1).
-        if density and len(band) / density < 0.22:
-            continue
-        out.append((bx, inc))
-    return out
-
-
-def _detect_gutters(words: list[Word], boundary: float | None) -> dict[int, _Gutter]:
-    """Detect the single centre-gutter line-number band (§12.5).
-
-    Grant line numbers are *always* printed in the centre gutter, never at an outer
-    edge, and the two columns share that one numbering by y-row. So there is exactly
-    one gutter: the integer band nearest the column split (or the lone band on a
-    single-column page). It is keyed by the column it physically sits in — for body
-    exclusion — but the caller reuses its ``y -> line`` map across both columns. A
-    band far from the centre is a body numeral column, not line numbers, and is
-    ignored."""
-    bands = _valid_gutter_bands(words)
-    if not bands:
-        return {}
-
-    def make(inc: list[tuple[Word, int]]) -> _Gutter:
-        return _Gutter(
-            value_by_word={id(w): v for w, v in inc},
-            lo=min(w.x0 for w, _ in inc),
-            hi=max(w.x1 for w, _ in inc),
-            anchors=sorted((w.cy, v) for w, v in inc),
-        )
-
-    if boundary is None:
-        cx, inc = max(bands, key=lambda b: len(b[1]))
-        return {1: make(inc)}
-
-    central = [b for b in bands if abs(b[0] - boundary) <= 0.12]
-    if not central:
-        return {}
-    cx, inc = min(central, key=lambda b: abs(b[0] - boundary))
-    return {1 if cx <= boundary else 2: make(inc)}
-
+# --- assembly ----------------------------------------------------------------
 
 def _emit_column(
     col_words: list[Word],
     column: int,
     page_index: int,
-    config: ExtractionConfig,
+    line_map: list[tuple[float, int]],
+    header_cutoff: float,
+    gutter_lo: float,
+    gutter_hi: float,
     ordinal: int,
     method: str,
-    gutter: _Gutter | None,
-    header_cutoff: float = 0.0,
-    shared_anchors: list[tuple[float, int]] | None = None,
 ) -> tuple[list[Entry], int]:
-    lines = group_lines(col_words)
-
-    values = gutter.value_by_word if gutter else {}
-    band_lo = gutter.lo if gutter else 0.0
-    band_hi = gutter.hi if gutter else 0.0
-    pad = 0.006
-    max_line = config.lines_per_column * 2
-
-    # First pass: keep the real body lines (drop the gutter number, empty lines, and
-    # a lone column-number header) and record which carry a detected anchor value.
-    body_lines: list[tuple[_Line, list[Word], str, int | None]] = []
-    for ln in lines:
-        # Above the page's specification top edge → running-header/masthead matter.
-        if header_cutoff and ln.cy < header_cutoff:
-            continue
-        body = [
-            w
-            for w in ln.words
-            if id(w) not in values and not (band_lo - pad <= w.cx <= band_hi + pad)
-        ]
-        text = " ".join(w.text for w in body).strip()
-        if not text:
-            continue
-        if len(body) == 1 and _is_int_token(body[0].text):
-            continue
-        detected = next((values[id(w)] for w in ln.words if id(w) in values), None)
-        body_lines.append((ln, body, text, detected))
-
-    # Build the y -> printed-line anchor set from the detected gutter numbers and
-    # interpolate piecewise between them, which tracks the extra spacing around
-    # headings that a single global slope misses. Both columns share one row grid
-    # (line numbers are printed once, in the centre gutter, and label the same y-row
-    # in each column), so a column without its own detected numbers reuses the page
-    # map rather than counting sequentially.
-    anchors = sorted(
-        ((ln.cy, v) for ln, _, _, v in body_lines if v is not None), key=lambda p: p[0]
-    )
-    if len(anchors) < 2 and shared_anchors and len(shared_anchors) >= 2:
-        anchors = shared_anchors
-
+    anchor_ys = [ay for ay, _ in line_map]
     entries: list[Entry] = []
     prev = 0
-    for ln, body, text, detected in body_lines:
-        if detected is not None:
-            printed, ref_method, ref_conf = detected, "detected", "high"
-        elif len(anchors) >= 2:
-            printed = round(_interp(anchors, ln.cy))
-            ref_method, ref_conf = "interpolated", "medium"
-        else:
-            printed, ref_method, ref_conf = prev + 1, "none", "low"
+    for ln in group_lines(col_words):
+        if ln.cy < header_cutoff:  # masthead row above the specification
+            continue
+        body = [w for w in ln.words if not (gutter_lo <= w.cx <= gutter_hi)]
+        text = " ".join(w.text for w in body).strip()
+        if not text or (len(body) == 1 and _digits(body[0].text) is not None):
+            continue
 
-        printed = max(1, min(printed, max_line))
-        # Line numbers are non-decreasing down a column; a wrapped line may repeat
-        # the printed number (matching the page), so allow equal, never go backward.
-        if printed < prev:
+        printed = _interp(line_map, ln.cy)
+        if printed < prev:  # non-decreasing; a wrapped line may repeat a number
             printed = prev
         prev = printed
+        # A row aligned to a printed gutter number is "detected"; the rest are
+        # interpolated from the map between them.
+        on_anchor = len(line_map) >= 2 and any(abs(ln.cy - ay) <= _ROW_TOL for ay in anchor_ys)
+        ref_method = "detected" if on_anchor else "interpolated"
 
         box = _clamp_box(
-            min(w.x0 for w in body),
-            min(w.y0 for w in body),
-            max(w.x1 for w in body),
-            max(w.y1 for w in body),
+            min(w.x0 for w in body), min(w.y0 for w in body),
+            max(w.x1 for w in body), max(w.y1 for w in body),
         )
         confidences = [w.confidence for w in body if w.confidence is not None]
-        ocr_confidence = (sum(confidences) / len(confidences)) if confidences else None
         entries.append(
             Entry(
                 entry_id=f"line_{ordinal:07d}",
@@ -394,11 +323,11 @@ def _emit_column(
                 display_text=text,
                 provenance=Provenance(
                     extraction_method=method,
-                    ocr_confidence=ocr_confidence,
+                    ocr_confidence=(sum(confidences) / len(confidences)) if confidences else None,
                     reference_method=ref_method,
                 ),
                 text_confidence="high" if method == "native" else "medium",
-                reference_confidence=ref_conf,
+                reference_confidence="high" if on_anchor else ("medium" if line_map else "low"),
             )
         )
         ordinal += 1
@@ -408,54 +337,44 @@ def _emit_column(
 def extract_page(
     page: Page, config: ExtractionConfig, ordinal_start: int, *, method: str = "native"
 ) -> tuple[list[Entry], int]:
-    # Drop running header / footer margins (§12.5).
-    words = [
-        w for w in page.words if config.content_top_margin <= w.cy <= config.content_bottom_margin
-    ]
+    """Reconstruct grant ``col:line`` for one specification page (§12.5).
 
-    boundary = column_boundary(words)
-    # Detect the printed-number gutters on the whole page, then assign each to the
-    # column it labels — the centre gutter straddles the split, so a per-column edge
-    # scan would miscolumn it (§12.5).
-    gutters = _detect_gutters(words, boundary)
+    A page with neither a readable centre gutter nor a printed column-number pair
+    is treated as non-specification (cover/front matter) and yields nothing."""
+    words = page.words
+    columns_hdr = _detect_columns(words)
+    header_y = columns_hdr[2] if columns_hdr else config.content_top_margin
 
-    if boundary is None:
-        columns = [(1, words)]
+    gutter = _filter_outliers(_collect_gutter(words, header_y))
+    line_map = _line_map(gutter)
+
+    if not line_map:
+        if columns_hdr is None:
+            return [], ordinal_start  # not a specification page
+        line_map = _synth_map(header_y, config)  # spec page, gutter unreadable
+        gutter_x = 0.5
+        gutter_lo = gutter_hi = -1.0  # nothing to exclude
     else:
-        # Route each word by its geometry, except a gutter number, which goes to the
-        # column it labels even when it fell on the far side of the split.
-        owner = {wid: col for col, g in gutters.items() for wid in g.value_by_word}
-        col1: list[Word] = []
-        col2: list[Word] = []
-        for w in words:
-            col = owner.get(id(w)) or (1 if w.cx < boundary else 2)
-            (col1 if col == 1 else col2).append(w)
-        columns = [(1, col1), (2, col2)]
+        gutter_x = _median([w.cx for w, _ in gutter])
+        gutter_lo = min(w.x0 for w, _ in gutter) - 0.004
+        gutter_hi = max(w.x1 for w, _ in gutter) + 0.004
 
-    # Page-level header cutoff (§12.5): the specification starts at printed line 1.
-    # A column with a gutter tells us that y; the running header spans the page above
-    # it, so drop everything above the cutoff in *every* column — including a column
-    # whose own gutter is missing (its numbers cut off at the sheet edge), where the
-    # split header fragment would otherwise survive as a spurious line-1.
-    header_cutoff = 0.0
-    for g in gutters.values():
-        y1 = _line1_y(g.anchors)
-        if y1 is not None:
-            per_line = (g.anchors[1][0] - g.anchors[0][0]) / (g.anchors[1][1] - g.anchors[0][1])
-            # Keep anything within a line of line 1 (columns don't start at exactly the
-            # same row); the masthead sits well above that, so it is still dropped.
-            header_cutoff = max(header_cutoff, y1 - 1.0 * per_line)
+    left_num, right_num = (columns_hdr[0], columns_hdr[1]) if columns_hdr else (1, 2)
+    header_cutoff = header_y + _HEADER_PAD
 
-    # The shared row grid: the richest gutter map, reused by any column that has no
-    # printed numbers of its own (they align to the same y-rows).
-    shared_anchors = max((g.anchors for g in gutters.values()), key=len, default=[])
+    # Split the body at the gutter; drop the header band and the gutter numbers.
+    body = [w for w in words if w.cy > header_cutoff]
+    left_words = [w for w in body if w.cx < gutter_x - 0.005]
+    right_words = [w for w in body if w.cx > gutter_x + 0.005]
 
     entries: list[Entry] = []
     ordinal = ordinal_start
-    for column, col_words in columns:
+    for column, col_words in ((left_num, left_words), (right_num, right_words)):
+        if not col_words:
+            continue
         col_entries, ordinal = _emit_column(
-            col_words, column, page.index, config, ordinal, method,
-            gutters.get(column), header_cutoff, shared_anchors,
+            col_words, column, page.index, line_map, header_cutoff,
+            gutter_lo, gutter_hi, ordinal, method,
         )
         entries.extend(col_entries)
     return entries, ordinal

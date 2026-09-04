@@ -1,4 +1,9 @@
-"""Native grant line-reference reconstruction (DESIGN.md §12.5)."""
+"""Native grant line-reference reconstruction (DESIGN.md §12.5).
+
+Fixtures mirror the real page: a two-column specification with the printed column
+numbers at the top, and line numbers in the **centre gutter** as multiples of five
+every ~5th row (both columns share that one numbering by y-row).
+"""
 
 from __future__ import annotations
 
@@ -8,109 +13,111 @@ from app.extraction.model import Page, Word
 from app.extraction.native import column_boundary, group_lines
 
 
-def _row(i: int, *, gutter: int | None = None) -> list[Word]:
-    cy = 0.1 + 0.05 * i
-    y0, y1 = cy - 0.01, cy + 0.01
-    words: list[Word] = []
-    if gutter is not None:
-        words.append(Word(str(gutter), 0.03, y0, 0.06, y1))
-    words.append(Word("The", 0.12, y0, 0.18, y1))
-    words.append(Word("housing", 0.19, y0, 0.30, y1))
-    return words
-
-
-def _single_column_page() -> Page:
-    words: list[Word] = []
-    for i in range(15):  # lines 1..15; gutter numbers printed at 5, 10, 15
-        words.extend(_row(i, gutter={4: 5, 9: 10, 14: 15}.get(i)))
+def _spec_page(n_rows: int = 30, *, left_num: int = 1, right_num: int = 2) -> Page:
+    """A two-column spec page: column-number header + centre-gutter numbers (×5)."""
+    words = [
+        Word(str(left_num), 0.28, 0.045, 0.30, 0.062),  # printed column numbers
+        Word(str(right_num), 0.70, 0.045, 0.72, 0.062),
+    ]
+    for i in range(n_rows):
+        cy = 0.11 + 0.025 * i
+        y0, y1 = cy - 0.008, cy + 0.008
+        words += [
+            Word("left", 0.12, y0, 0.30, y1),
+            Word("body", 0.32, y0, 0.44, y1),
+            Word("right", 0.55, y0, 0.72, y1),
+            Word("side", 0.74, y0, 0.88, y1),
+        ]
+        if (i + 1) % 5 == 0:  # printed gutter number every 5th row (a multiple of 5)
+            words.append(Word(str(i + 1), 0.49, y0, 0.51, y1))
     return Page(index=0, words=words)
 
 
+def _flat_rows() -> list[Word]:
+    words: list[Word] = []
+    for i in range(15):
+        cy = 0.1 + 0.05 * i
+        words += [Word("The", 0.12, cy - 0.01, 0.18, cy + 0.01),
+                  Word("housing", 0.19, cy - 0.01, 0.30, cy + 0.01)]
+    return words
+
+
 def test_group_lines_groups_by_baseline():
-    assert len(group_lines(_single_column_page().words)) == 15
+    assert len(group_lines(_flat_rows())) == 15
 
 
 def test_single_column_has_no_boundary():
-    assert column_boundary(_single_column_page().words) is None
+    assert column_boundary(_flat_rows()) is None
 
 
-def test_printed_lines_are_detected_and_interpolated():
-    art = extract_from_pages([_single_column_page()], DEFAULT_CONFIG, source_sha256="x")
+def _by_loc(art) -> dict[tuple[int, int], object]:
+    return {(e.locator.column, e.locator.printed_line): e for e in art.entries}
+
+
+def test_printed_lines_detected_and_interpolated():
+    art = extract_from_pages([_spec_page(30)], DEFAULT_CONFIG, source_sha256="x")
     assert art.doc_type == "grant" and art.mode == "native"
+    loc = _by_loc(art)
 
-    located = [(e.locator.column, e.locator.printed_line) for e in art.entries]
-    assert located == [(1, n) for n in range(1, 16)]
+    # Both columns are numbered 1..30 off the shared centre gutter.
+    for col in (1, 2):
+        assert (col, 1) in loc and (col, 30) in loc
 
-    # Gutter number excluded from the body text.
-    assert art.entries[4].source_text == "The housing"
+    # The gutter number is excluded from body text.
+    assert loc[(1, 5)].source_text == "left body"
+    assert loc[(2, 5)].source_text == "right side"
 
-    methods = {e.locator.printed_line: e.provenance.reference_method for e in art.entries}
-    assert methods[5] == "detected" and methods[10] == "detected"
-    assert methods[1] == "interpolated" and methods[7] == "interpolated"
+    # Rows on a printed gutter number are "detected"; the rest are interpolated.
+    assert loc[(1, 5)].provenance.reference_method == "detected"
+    assert loc[(1, 10)].provenance.reference_method == "detected"
+    assert loc[(1, 1)].provenance.reference_method == "interpolated"
+    assert loc[(1, 7)].provenance.reference_method == "interpolated"
 
 
 def test_boxes_are_valid_normalized():
-    art = extract_from_pages([_single_column_page()], DEFAULT_CONFIG, source_sha256="x")
+    art = extract_from_pages([_spec_page(30)], DEFAULT_CONFIG, source_sha256="x")
+    assert art.entries
     for e in art.entries:
         x0, y0, x1, y1 = e.box
         assert 0.0 <= x0 < x1 <= 1.0 and 0.0 <= y0 < y1 <= 1.0
 
 
 def test_reference_numeral_is_not_a_line_number():
-    words: list[Word] = []
-    for i in range(6):  # gutter anchors on lines 1 and 6
-        cy = 0.1 + 0.05 * i
-        y0, y1 = cy - 0.01, cy + 0.01
-        gutter = {0: 1, 5: 6}.get(i)
-        if gutter is not None:
-            words.append(Word(str(gutter), 0.03, y0, 0.06, y1))
-        if i == 2:
-            words.append(Word("104", 0.12, y0, 0.16, y1))
-            words.append(Word("housing", 0.17, y0, 0.28, y1))
-        else:
-            words.append(Word("word", 0.12, y0, 0.20, y1))
+    page = _spec_page(15)
+    # Inject a component numeral into a left-column body row (5th row -> line 5).
+    row5_cy = 0.11 + 0.025 * 4
+    page.words.append(Word("104", 0.12, row5_cy - 0.008, 0.16, row5_cy + 0.008))
 
-    art = extract_from_pages([Page(0, words)], DEFAULT_CONFIG, source_sha256="x")
-    third = art.entries[2]
-    assert third.locator.printed_line == 3  # interpolated from the fit, not 104
-    assert third.source_text.startswith("104")
-
-
-def test_center_gutter_two_column():
-    # Real-patent shape: two dense columns with line numbers in the CENTER gutter.
-    words: list[Word] = []
-    for i in range(30):
-        cy = 0.10 + 0.02 * i
-        y0, y1 = cy - 0.006, cy + 0.006
-        words.append(Word("left", 0.10, y0, 0.30, y1))
-        words.append(Word("text", 0.32, y0, 0.45, y1))
-        words.append(Word("right", 0.55, y0, 0.75, y1))
-        words.append(Word("side", 0.77, y0, 0.90, y1))
-        if (i + 1) % 5 == 0:  # a center line-number every 5th row
-            words.append(Word(str(i + 1), 0.49, y0, 0.51, y1))
-
-    art = extract_from_pages([Page(0, words)], DEFAULT_CONFIG, source_sha256="x")
-
-    assert {e.locator.column for e in art.entries} == {1, 2}  # columns not merged
-    left = [e for e in art.entries if e.locator.column == 1]
-    right = [e for e in art.entries if e.locator.column == 2]
-    assert all("right" not in e.source_text and "left" in e.source_text for e in left)
-    assert all("left" not in e.source_text and "right" in e.source_text for e in right)
-    # Center numbers are excluded from body text (every line starts with a word).
-    assert all(e.source_text[0].isalpha() for e in art.entries)
-    # The center gutter numbers anchored the fit.
-    assert any(e.provenance.reference_method == "detected" for e in art.entries)
+    art = extract_from_pages([page], DEFAULT_CONFIG, source_sha256="x")
+    line5 = _by_loc(art)[(1, 5)]
+    assert line5.locator.printed_line == 5  # from the gutter map, never 104
+    assert "104" in line5.source_text  # the numeral stays in the body text
 
 
 def test_two_column_split():
-    words: list[Word] = []
-    for i in range(4):
-        cy = 0.1 + 0.05 * i
-        y0, y1 = cy - 0.01, cy + 0.01
-        words.append(Word("left", 0.10, y0, 0.20, y1))
-        words.append(Word("right", 0.60, y0, 0.72, y1))
-    page = Page(0, words)
-    assert column_boundary(page.words) is not None
-    art = extract_from_pages([page], DEFAULT_CONFIG, source_sha256="x")
-    columns = {e.locator.column for e in art.entries}
-    assert columns == {1, 2}
+    art = extract_from_pages([_spec_page(30)], DEFAULT_CONFIG, source_sha256="x")
+    assert {e.locator.column for e in art.entries} == {1, 2}
+    left = [e for e in art.entries if e.locator.column == 1]
+    right = [e for e in art.entries if e.locator.column == 2]
+    assert all("right" not in e.source_text for e in left)
+    assert all("left" not in e.source_text for e in right)
+
+
+def test_column_numbers_read_from_the_page():
+    # A later spec page prints columns 7 and 8; those numbers must be used.
+    art = extract_from_pages(
+        [_spec_page(20, left_num=7, right_num=8)], DEFAULT_CONFIG, source_sha256="x"
+    )
+    assert {e.locator.column for e in art.entries} == {7, 8}
+
+
+def test_non_spec_page_yields_nothing():
+    # A cover/front-matter page: no centre gutter, no column-number pair.
+    words = [
+        Word("United", 0.30, 0.05, 0.42, 0.07),
+        Word("States", 0.44, 0.05, 0.55, 0.07),
+        Word("Patent", 0.57, 0.05, 0.68, 0.07),
+        Word("Abstract", 0.12, 0.20, 0.25, 0.22),
+    ]
+    art = extract_from_pages([Page(0, words)], DEFAULT_CONFIG, source_sha256="x")
+    assert art.entries == []

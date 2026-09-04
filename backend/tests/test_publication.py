@@ -14,7 +14,18 @@ from app.services.publication import publish_artifact
 
 
 def _artifact():
-    words = [Word("1", 0.03, 0.09, 0.06, 0.11), Word("The", 0.12, 0.09, 0.20, 0.11)]
+    # A minimal two-column spec page: column header + centre gutter (×5).
+    words = [Word("1", 0.28, 0.045, 0.30, 0.062), Word("2", 0.70, 0.045, 0.72, 0.062)]
+    for i in range(10):
+        cy = 0.11 + 0.025 * i
+        y0, y1 = cy - 0.008, cy + 0.008
+        words += [
+            Word("The", 0.12, y0, 0.30, y1),
+            Word("housing", 0.32, y0, 0.44, y1),
+            Word("right", 0.55, y0, 0.72, y1),
+        ]
+        if (i + 1) % 5 == 0:
+            words.append(Word(str(i + 1), 0.49, y0, 0.51, y1))
     return extract_from_pages([Page(0, words)], DEFAULT_CONFIG, source_sha256="abc")
 
 

@@ -35,9 +35,17 @@ class Recorder:
 
     def __call__(self, _pdf, native_page: Page, _config, _can_ocr) -> PageResult:
         self.pages.append(native_page.index)
+        # A minimal valid spec page (column header + centre gutter) so the downstream
+        # assembly yields entries.
         words = (
-            Word("housing", 0.1, 0.1, 0.3, 0.12),
-            Word("104", 0.32, 0.1, 0.38, 0.12),
+            Word("1", 0.28, 0.045, 0.30, 0.062),
+            Word("2", 0.70, 0.045, 0.72, 0.062),
+            Word("housing", 0.12, 0.10, 0.30, 0.115),
+            Word("right", 0.55, 0.10, 0.72, 0.115),
+            Word("5", 0.49, 0.225, 0.51, 0.235),
+            Word("body", 0.12, 0.225, 0.30, 0.235),
+            Word("10", 0.49, 0.35, 0.51, 0.36),
+            Word("more", 0.12, 0.35, 0.30, 0.36),
         )
         return PageResult(native_page.index, "ocr", is_drawing=False, words=words)
 

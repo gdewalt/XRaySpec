@@ -44,25 +44,34 @@ def test_words_from_tsv_respects_min_confidence():
 
 
 def test_ocr_method_recorded_in_provenance():
-    # Two gutter-numbered lines so an anchor fit forms and the numbers are excluded.
+    # A small OCR'd spec page: column header, centre gutter (×5), two columns.
     words = [
-        Word("1", 0.04, 0.09, 0.07, 0.11, confidence=99.0),
-        Word("The", 0.12, 0.09, 0.20, 0.11, confidence=91.0),
-        Word("housing", 0.21, 0.09, 0.35, 0.11, confidence=80.0),
-        Word("2", 0.04, 0.19, 0.07, 0.21, confidence=99.0),
-        Word("receives", 0.12, 0.19, 0.28, 0.21, confidence=88.0),
+        Word("1", 0.28, 0.045, 0.30, 0.062, confidence=95.0),
+        Word("2", 0.70, 0.045, 0.72, 0.062, confidence=95.0),
     ]
+    for i in range(10):
+        cy = 0.11 + 0.025 * i
+        y0, y1 = cy - 0.008, cy + 0.008
+        conf_a, conf_b = (91.0, 80.0) if i == 0 else (85.0, 85.0)
+        words += [
+            Word("The", 0.12, y0, 0.20, y1, confidence=conf_a),
+            Word("housing", 0.21, y0, 0.35, y1, confidence=conf_b),
+            Word("right", 0.55, y0, 0.72, y1, confidence=88.0),
+        ]
+        if (i + 1) % 5 == 0:  # gutter numbers 5 and 10
+            words.append(Word(str(i + 1), 0.49, y0, 0.51, y1, confidence=99.0))
+
     art = extract_from_pages(
         [Page(0, words)], DEFAULT_CONFIG, source_sha256="x", page_methods=["ocr"]
     )
     assert art.mode == "ocr"
-    first = art.entries[0]
+    first = {(e.locator.column, e.locator.printed_line): e for e in art.entries}[(1, 1)]
     assert first.provenance.extraction_method == "ocr"
     assert first.text_confidence == "medium"
-    assert first.source_text == "The housing"  # gutter '1' excluded from body
-    # Average of body-word confidences (The 91, housing 80); the excluded '1' (99) is not counted.
+    assert first.source_text == "The housing"
+    # Body-word confidences (91, 80); the excluded gutter number (99) is not counted.
     assert abs(first.provenance.ocr_confidence - 85.5) < 1e-6
-    assert [e.locator.printed_line for e in art.entries] == [1, 2]
+    assert all("5" not in e.source_text for e in art.entries)  # gutter numbers excluded
 
 
 def test_hybrid_mode_when_pages_mixed():

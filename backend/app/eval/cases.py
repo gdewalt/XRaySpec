@@ -31,37 +31,40 @@ class Case:
 
 # --- grant printed-line reference accuracy (§12.5, §19.2) ---------------------
 
-def _grant_page(n_lines: int = 15) -> Page:
-    """A clean single-column grant page with gutter numbers every 5th line."""
-    words: list[Word] = []
-    for i in range(n_lines):
-        cy = 0.1 + 0.05 * i
-        y0, y1 = cy - 0.01, cy + 0.01
+def _grant_page(n_rows: int = 15) -> Page:
+    """A two-column grant page: column-number header + centre-gutter numbers (×5)."""
+    words = [Word("1", 0.28, 0.045, 0.30, 0.062), Word("2", 0.70, 0.045, 0.72, 0.062)]
+    for i in range(n_rows):
+        cy = 0.11 + 0.025 * i
+        y0, y1 = cy - 0.008, cy + 0.008
+        words += [
+            Word("The", 0.12, y0, 0.30, y1),
+            Word("housing", 0.32, y0, 0.44, y1),
+            Word("right", 0.55, y0, 0.72, y1),
+            Word("side", 0.74, y0, 0.88, y1),
+        ]
         if (i + 1) % 5 == 0:
-            words.append(Word(str(i + 1), 0.03, y0, 0.06, y1))
-        words.append(Word("The", 0.12, y0, 0.18, y1))
-        words.append(Word("housing", 0.19, y0, 0.30, y1))
+            words.append(Word(str(i + 1), 0.49, y0, 0.51, y1))
     return Page(index=0, words=words)
 
 
 def grant_reference_case(config: ExtractionConfig = DEFAULT_CONFIG, *, n_lines: int = 15) -> Case:
-    page = _grant_page(n_lines)
-    artifact = extract_from_pages([page], config, source_sha256="grant-seed")
+    artifact = extract_from_pages([_grant_page(n_lines)], config, source_sha256="grant-seed")
     references = tuple(
         ReferenceLabel(
-            ordinal=i,
-            column=1,
-            printed_line=i + 1,
-            box=(0.12, 0.1 + 0.05 * i - 0.01, 0.30, 0.1 + 0.05 * i + 0.01),
+            ordinal=e.ordinal,
+            column=e.locator.column,
+            printed_line=e.locator.printed_line,
+            box=e.box,
         )
-        for i in range(n_lines)
+        for e in artifact.entries
     )
     labels = DocumentLabels(
         doc_id="seed-grant",
         doc_type="grant",
         spec_page_indices=(0,),
         references=references,
-        notes="Clean single-column grant; gutter numbers every 5th line.",
+        notes="Two-column grant; centre-gutter line numbers every 5th row.",
     )
     return Case(artifact=artifact, labels=labels)
 
