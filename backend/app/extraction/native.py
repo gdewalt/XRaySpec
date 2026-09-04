@@ -15,21 +15,26 @@ outer margin for column 2 — only every ~5th line. So:
   3. words are split into columns (a gutter number routed to the column it
      labels) and grouped into lines within a column so side-by-side rows never
      merge;
-  4. printed numbers anchor a piecewise ``y -> line`` map (interpolated between
-     consecutive anchors, so heading spacing does not drift a global slope) and
-     are excluded from body text; a top/bottom margin drops most header/footer.
+  4. spurious anchors (a masthead digit that lands in the gutter x-band) are
+     rejected by requiring a consistent line-to-line slope, and the surviving
+     printed numbers anchor a piecewise ``y -> line`` map (interpolated between
+     consecutive anchors, so heading spacing does not drift a global slope);
+  5. a page-level *header cutoff* — the y where the anchored column's line 1 sits —
+     drops running-header/masthead matter above the specification in every column,
+     including one whose own gutter is missing (its numbers cut off at the sheet
+     edge), where the split header fragment would otherwise survive as a spurious
+     line 1. The gutter number is excluded from body text.
 
 Grant ``col:line`` only for this cut. Pure over the abstract ``Page``/``Word``
 model so it is unit-testable.
 
-ACCURACY (measured vs. a reference engine on 8 real grants, §19): the gutter is
-now read directly rather than approximated — printed line numbers land within one
-line on ~88-96% of lines (mean error < 1 line), up from a 2-9 line drift. The
-residual is exact-match jitter of ~±1 from two remaining sources, both needing a
-precise specification-boundary pass (not this module): occasional line
-over-segmentation between anchors, and running-header/heading lines that leak in
-above column 1. Closing that gap is corpus-guided work (§19), not single-example
-tuning.
+ACCURACY (measured vs. a reference engine on 8 real grants, §19): reading the
+gutter directly took exact printed-line agreement from ~17% to ~64% (within one
+line ~88%, mean error < 1 line; ~89% exact where the gutter is cleanly present in
+both columns), up from a 2-9 line drift. The residual is concentrated in columns
+whose printed numbers are absent from the source text (they fall back to sequential
+numbering, which is sensitive to line over-segmentation) — genuinely corpus-guided
+work (§19), not single-example tuning.
 """
 
 from __future__ import annotations
@@ -172,11 +177,26 @@ def _clamp_box(x0: float, y0: float, x1: float, y1: float) -> tuple[float, float
 @dataclass(slots=True)
 class _Gutter:
     """A detected printed-line-number band: which integer word carries which value,
-    and the x-extent to exclude from body text."""
+    the x-extent to exclude from body text, and its ``(cy, value)`` anchors."""
 
     value_by_word: dict[int, int]  # id(word) -> printed line number
     lo: float
     hi: float
+    anchors: list[tuple[float, int]]  # (cy, printed line) sorted by cy
+
+
+def _line1_y(anchors: list[tuple[float, int]]) -> float | None:
+    """Extrapolate the y where printed line 1 sits, from the gutter's top anchors.
+
+    Line numbers restart at 1 atop every column, so this is the specification's top
+    edge; content above it is running-header/masthead matter."""
+    if len(anchors) < 2:
+        return None
+    (y0, v0), (y1, v1) = anchors[0], anchors[1]
+    if v1 == v0:
+        return None
+    per_line = (y1 - y0) / (v1 - v0)
+    return y0 + (1 - v0) * per_line
 
 
 def _increasing_words(band: list[Word]) -> list[tuple[Word, int]]:
@@ -189,6 +209,30 @@ def _increasing_words(band: list[Word]) -> list[tuple[Word, int]]:
             out.append((w, v))
             last = v
     return out
+
+
+def _robust_anchors(inc: list[tuple[Word, int]]) -> list[tuple[Word, int]]:
+    """Drop anchors inconsistent with the gutter's roughly constant line spacing.
+
+    Real gutter numbers advance by a fixed step over a fixed vertical pitch, so
+    ``value`` is near-linear in ``y``. A masthead integer that lands in the gutter's
+    x-band (e.g. a digit of the patent number at the page top) violates that slope —
+    keep only the anchors consistent with the median slope through a central pivot."""
+    if len(inc) < 3:
+        return inc
+    pts = [(w.cy, v) for w, v in inc]
+    slopes = [
+        (v1 - v0) / (y1 - y0)
+        for (y0, v0), (y1, v1) in zip(pts, pts[1:], strict=False)
+        if y1 - y0 > 1e-4
+    ]
+    if not slopes:
+        return inc
+    m = _median(slopes)
+    yp, vp = pts[len(pts) // 2]
+    keep = [(w, v) for (w, v), (y, _v) in zip(inc, pts, strict=False)
+            if abs((v - vp) - m * (y - yp)) <= 2.0]
+    return keep if len(keep) >= _MIN_ANCHORS else inc
 
 
 def _cluster_by_cx(ints: list[Word], *, gap: float = 0.02) -> list[list[Word]]:
@@ -222,7 +266,7 @@ def _valid_gutter_bands(words: list[Word]) -> list[tuple[float, list[tuple[Word,
         density = sum(1 for w in words if abs(w.cx - bx) <= 0.02)
         if density and len(band) / density < 0.4:  # mostly prose here → a body edge
             continue
-        inc = _increasing_words(band)
+        inc = _robust_anchors(_increasing_words(band))
         if len(inc) >= _MIN_ANCHORS:
             out.append((bx, inc))
     return out
@@ -243,6 +287,7 @@ def _detect_gutters(words: list[Word], boundary: float | None) -> dict[int, _Gut
             value_by_word={id(w): v for w, v in inc},
             lo=min(w.x0 for w, _ in inc),
             hi=max(w.x1 for w, _ in inc),
+            anchors=sorted((w.cy, v) for w, v in inc),
         )
 
     if boundary is None:
@@ -267,6 +312,7 @@ def _emit_column(
     ordinal: int,
     method: str,
     gutter: _Gutter | None,
+    header_cutoff: float = 0.0,
 ) -> tuple[list[Entry], int]:
     lines = group_lines(col_words)
 
@@ -280,6 +326,9 @@ def _emit_column(
     # a lone column-number header) and record which carry a detected anchor value.
     body_lines: list[tuple[_Line, list[Word], str, int | None]] = []
     for ln in lines:
+        # Above the page's specification top edge → running-header/masthead matter.
+        if header_cutoff and ln.cy < header_cutoff:
+            continue
         body = [
             w
             for w in ln.words
@@ -375,11 +424,26 @@ def extract_page(
             (col1 if col == 1 else col2).append(w)
         columns = [(1, col1), (2, col2)]
 
+    # Page-level header cutoff (§12.5): the specification starts at printed line 1.
+    # A column with a gutter tells us that y; the running header spans the page above
+    # it, so drop everything above the cutoff in *every* column — including a column
+    # whose own gutter is missing (its numbers cut off at the sheet edge), where the
+    # split header fragment would otherwise survive as a spurious line-1.
+    header_cutoff = 0.0
+    for g in gutters.values():
+        y1 = _line1_y(g.anchors)
+        if y1 is not None:
+            per_line = (g.anchors[1][0] - g.anchors[0][0]) / (g.anchors[1][1] - g.anchors[0][1])
+            # Keep anything within a line of line 1 (columns don't start at exactly the
+            # same row); the masthead sits well above that, so it is still dropped.
+            header_cutoff = max(header_cutoff, y1 - 1.0 * per_line)
+
     entries: list[Entry] = []
     ordinal = ordinal_start
     for column, col_words in columns:
         col_entries, ordinal = _emit_column(
-            col_words, column, page.index, config, ordinal, method, gutters.get(column)
+            col_words, column, page.index, config, ordinal, method,
+            gutters.get(column), header_cutoff,
         )
         entries.extend(col_entries)
     return entries, ordinal
