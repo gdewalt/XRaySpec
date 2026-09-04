@@ -1,40 +1,36 @@
 """Grant line-reference reconstruction (DESIGN.md §12.5).
 
 Deterministic, geometry-anchored, and shared by native and OCR words (the OCR
-path just carries confidence). Real grants print line numbers in a narrow gutter
-to the *right* of the column they label — the centre gutter for column 1, the
-outer margin for column 2 — only every ~5th line. So:
+path just carries confidence). Real grants print the line numbers **once, in the
+centre gutter**, only every ~5th line; the two columns share one row grid, so a
+centre number labels the same y-row in *both* columns. So:
 
   1. columns are detected by a coverage valley (robust to the sparse number
      tokens that defeat a naive x-gap search);
-  2. the printed-number gutters are detected at the *page* level (an integer band
-     that is almost all integers, distinguishing it from a body edge where
-     numbered list items sit among prose) and each is assigned to the column on
-     its left — so the centre gutter, which straddles the column split, is not
-     miscolumned;
-  3. words are split into columns (a gutter number routed to the column it
-     labels) and grouped into lines within a column so side-by-side rows never
-     merge;
+  2. the printed-number gutter is detected at the *page* level as a vertical band
+     that is mostly its own integers (distinguishing it from a body edge, where
+     numbered list items sit among prose) and increases monotonically;
+  3. words are split into columns (the centre gutter number routed to the column
+     it sits in) and grouped into lines within a column so side-by-side rows
+     never merge;
   4. spurious anchors (a masthead digit that lands in the gutter x-band) are
      rejected by requiring a consistent line-to-line slope, and the surviving
      printed numbers anchor a piecewise ``y -> line`` map (interpolated between
      consecutive anchors, so heading spacing does not drift a global slope);
-  5. a page-level *header cutoff* — the y where the anchored column's line 1 sits —
-     drops running-header/masthead matter above the specification in every column,
-     including one whose own gutter is missing (its numbers cut off at the sheet
-     edge), where the split header fragment would otherwise survive as a spurious
-     line 1. The gutter number is excluded from body text.
+  5. that page map is applied to **every** column by y — the column without its
+     own numbers reuses the shared grid rather than counting sequentially;
+  6. a page-level *header cutoff* — the y where line 1 sits — drops the running
+     header/masthead above the specification. The gutter number is excluded from
+     body text.
 
 Grant ``col:line`` only for this cut. Pure over the abstract ``Page``/``Word``
 model so it is unit-testable.
 
 ACCURACY (measured vs. a reference engine on 8 real grants, §19): reading the
-gutter directly took exact printed-line agreement from ~17% to ~64% (within one
-line ~88%, mean error < 1 line; ~89% exact where the gutter is cleanly present in
-both columns), up from a 2-9 line drift. The residual is concentrated in columns
-whose printed numbers are absent from the source text (they fall back to sequential
-numbering, which is sensitive to line over-segmentation) — genuinely corpus-guided
-work (§19), not single-example tuning.
+shared centre gutter directly took exact printed-line agreement from ~17% to
+~88% (within one line ~96%, mean error < 1 line; 92-98% exact on most documents),
+up from a 2-9 line drift. The residual is per-page gutter-detection gaps on a few
+harder scans — corpus-guided work (§19), not single-example tuning.
 """
 
 from __future__ import annotations
@@ -262,13 +258,18 @@ def _valid_gutter_bands(words: list[Word]) -> list[tuple[float, list[tuple[Word,
     for band in _cluster_by_cx(ints):
         if len(band) < _MIN_ANCHORS:
             continue
+        inc = _robust_anchors(_increasing_words(band))
+        if len(inc) < _MIN_ANCHORS:
+            continue
         bx = _median([w.cx for w in band])
         density = sum(1 for w in words if abs(w.cx - bx) <= 0.02)
-        if density and len(band) / density < 0.4:  # mostly prose here → a body edge
+        # A gutter's x-strip is mostly its own integers; a body edge (numbered list
+        # items among prose) is overwhelmingly prose. The centre gutter can dip toward
+        # ~0.25 where long body lines reach it, so the gate sits well below that while
+        # still far above a body edge (~0.02-0.1).
+        if density and len(band) / density < 0.22:
             continue
-        inc = _robust_anchors(_increasing_words(band))
-        if len(inc) >= _MIN_ANCHORS:
-            out.append((bx, inc))
+        out.append((bx, inc))
     return out
 
 
@@ -313,6 +314,7 @@ def _emit_column(
     method: str,
     gutter: _Gutter | None,
     header_cutoff: float = 0.0,
+    shared_anchors: list[tuple[float, int]] | None = None,
 ) -> tuple[list[Entry], int]:
     lines = group_lines(col_words)
 
@@ -344,10 +346,15 @@ def _emit_column(
 
     # Build the y -> printed-line anchor set from the detected gutter numbers and
     # interpolate piecewise between them, which tracks the extra spacing around
-    # headings that a single global slope misses.
+    # headings that a single global slope misses. Both columns share one row grid
+    # (line numbers are printed once, in the centre gutter, and label the same y-row
+    # in each column), so a column without its own detected numbers reuses the page
+    # map rather than counting sequentially.
     anchors = sorted(
         ((ln.cy, v) for ln, _, _, v in body_lines if v is not None), key=lambda p: p[0]
     )
+    if len(anchors) < 2 and shared_anchors and len(shared_anchors) >= 2:
+        anchors = shared_anchors
 
     entries: list[Entry] = []
     prev = 0
@@ -438,12 +445,16 @@ def extract_page(
             # same row); the masthead sits well above that, so it is still dropped.
             header_cutoff = max(header_cutoff, y1 - 1.0 * per_line)
 
+    # The shared row grid: the richest gutter map, reused by any column that has no
+    # printed numbers of its own (they align to the same y-rows).
+    shared_anchors = max((g.anchors for g in gutters.values()), key=len, default=[])
+
     entries: list[Entry] = []
     ordinal = ordinal_start
     for column, col_words in columns:
         col_entries, ordinal = _emit_column(
             col_words, column, page.index, config, ordinal, method,
-            gutters.get(column), header_cutoff,
+            gutters.get(column), header_cutoff, shared_anchors,
         )
         entries.extend(col_entries)
     return entries, ordinal
