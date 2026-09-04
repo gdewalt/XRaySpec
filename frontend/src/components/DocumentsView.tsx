@@ -4,6 +4,7 @@ import { ApiError, api } from "../api/client";
 import type { DocumentRead } from "../api/types";
 import { setToken } from "../auth/session";
 import { IngestPanel } from "./IngestPanel";
+import { JobProgress } from "./JobProgress";
 
 const ACTIVE_STATES = new Set([
   "preparing",
@@ -102,6 +103,9 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
                   <td>{d.title}</td>
                   <td>
                     <StateBadge state={d.state} />
+                    {ACTIVE_STATES.has(d.state) && d.state !== "deleting" && (
+                      <JobProgress documentId={d.id} onComplete={load} />
+                    )}
                   </td>
                   <td>{formatDate(d.created_at)}</td>
                   <td>{formatDate(d.last_opened_at)}</td>

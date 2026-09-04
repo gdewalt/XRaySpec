@@ -266,6 +266,59 @@ table.docs th {
   border: 0;
 }
 
+/* --- live job progress (SSE, §10.2) --- */
+.job-progress {
+  margin-top: 0.4rem;
+  max-width: 16rem;
+}
+.job-progress-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 0.2rem;
+}
+.job-stage {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.job-meta {
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.job-track {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--badge-bg);
+  overflow: hidden;
+}
+.job-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+.job-track.indeterminate .job-fill {
+  width: 40%;
+  animation: job-indeterminate 1.2s ease-in-out infinite;
+}
+@keyframes job-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(350%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .job-track.indeterminate .job-fill {
+    animation-duration: 2.4s;
+  }
+}
+
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;

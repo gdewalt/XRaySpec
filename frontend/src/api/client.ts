@@ -7,6 +7,7 @@ import type {
   DocumentList,
   DocumentRead,
   ImportAnalysis,
+  JobRead,
   UploadCompleteResponse,
   UploadGrant,
 } from "./types";
@@ -48,6 +49,8 @@ export const api = {
   listDocuments: () => request<DocumentList>("/api/v1/documents"),
 
   getDocument: (id: string) => request<DocumentRead>(`/api/v1/documents/${id}`),
+
+  getDocumentJob: (id: string) => request<JobRead>(`/api/v1/documents/${id}/job`),
 
   getArtifactEntries: (artifactId: string) =>
     request<ArtifactEntries>(`/api/v1/artifacts/${artifactId}/entries`),

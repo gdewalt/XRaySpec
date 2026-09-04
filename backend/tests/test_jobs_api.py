@@ -70,6 +70,27 @@ async def test_retry_after_cancel_requeues(client, make_token, auth):
     assert body["cancel_requested"] is False
 
 
+async def test_get_document_job(client, make_token, auth):
+    tok = make_token("owner", "o@example.com")
+    doc_id = await _fetch_doc(client, auth, tok)
+    job_id = await _job_for(client, doc_id)
+
+    r = await client.get(f"/api/v1/documents/{doc_id}/job", headers=auth(tok))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["id"] == job_id
+    assert body["document_id"] == doc_id
+    assert "progress_sequence" in body
+
+
+async def test_get_document_job_owner_scoped(client, make_token, auth):
+    tok = make_token("owner", "o@example.com")
+    doc_id = await _fetch_doc(client, auth, tok)
+    other = make_token("intruder", "x@example.com")
+    r = await client.get(f"/api/v1/documents/{doc_id}/job", headers=auth(other))
+    assert r.status_code == 404
+
+
 async def test_retry_running_job_conflicts(client, make_token, auth):
     tok = make_token("owner", "o@example.com")
     doc_id = await _fetch_doc(client, auth, tok)

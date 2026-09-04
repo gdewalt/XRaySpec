@@ -21,6 +21,7 @@ from ...db.models import Bookmark, ExtractionJob, SourceDocument, UserDocument
 from ...patents import PatentParseError, parse_patent_identifier
 from ...schemas.bookmarks import BookmarkCreate, BookmarkRead
 from ...schemas.documents import DocumentCreate, DocumentList, DocumentRead
+from ...schemas.jobs import JobRead
 from ...services.audit import record_audit
 from ...services.deletion import purge_document
 from ..deps import CurrentUser, DbSession, Storage
@@ -149,6 +150,24 @@ async def get_source_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": "inline", "Cache-Control": "private, max-age=300"},
     )
+
+
+@router.get("/documents/{document_id}/job", response_model=JobRead)
+async def get_document_job(
+    document_id: str, user: CurrentUser, session: DbSession
+) -> JobRead:
+    """The document's most recent extraction job (DESIGN.md §10.2), so the UI can
+    open its SSE progress stream. Owner-scoped via the document; 404 if the
+    document isn't the caller's or has no job yet."""
+    await _owned_document(session, user, document_id)
+    job = await session.scalar(
+        select(ExtractionJob)
+        .where(ExtractionJob.document_id == document_id, ExtractionJob.owner_id == user.id)
+        .order_by(ExtractionJob.created_at.desc())
+    )
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No job for this document")
+    return JobRead.model_validate(job)
 
 
 @router.get("/documents", response_model=DocumentList)

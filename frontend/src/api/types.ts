@@ -16,6 +16,25 @@ export interface DocumentList {
   items: DocumentRead[];
 }
 
+export interface JobRead {
+  id: string;
+  document_id: string | null;
+  status: string; // queued | running | succeeded | failed | cancelled
+  stage: string | null;
+  stage_label: string | null;
+  attempt: number;
+  completed_units: number;
+  total_units: number | null;
+  unit: string | null;
+  overall_fraction: number | null;
+  indeterminate: boolean;
+  cancel_requested: boolean;
+  failure_code: string | null;
+  progress_sequence: number;
+  created_at: string;
+  finished_at: string | null;
+}
+
 export interface UploadGrant {
   upload_id: string;
   object_key: string;
