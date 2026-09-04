@@ -1,0 +1,17 @@
+{
+  "doc_id": "EXAMPLE-grant",
+  "doc_type": "grant",
+  "spec_page_indices": [0],
+  "references": [
+    { "ordinal": 0, "column": 1, "printed_line": 1, "box": [0.12, 0.09, 0.30, 0.11] },
+    { "ordinal": 1, "column": 1, "printed_line": 2, "box": [0.12, 0.14, 0.30, 0.16] }
+  ],
+  "callouts": [
+    { "value": "104", "box": [0.20, 0.30, 0.24, 0.33], "page_index": 1 }
+  ],
+  "associations": [
+    { "entry_ordinal": 0, "value": "104", "status": "verified" }
+  ],
+  "wrong_document": false,
+  "notes": "Illustrative label file — schema only, not a real patent. See README.md."
+}
