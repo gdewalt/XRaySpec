@@ -64,14 +64,18 @@ is the signal that the file is still raw engine output.) You can drop the whole
 
 ## 4. Check it scores
 
+Put the PDF where the harness can find it — `corpus/pdfs/<doc_id>.pdf` by default,
+or set `XRAY_CORPUS_PDF_DIR` (both are gitignored) — then:
+
 ```bash
-python -m app.eval.run          # runs the seed corpus + gates
+python -m app.eval.run          # seed corpus + every VERIFIED corpus/*.json, gated
 ```
 
-To score your own file, load it with `app.eval.labels.load_labels_file` and pair it
-with a fresh extraction of the same PDF through `app.eval.metrics.score_case`. As the
-corpus grows, wire `load_labels_dir("corpus")` into the harness so real documents
-join the aggregate and the two deferred limits (§19.1) get real numbers.
+The harness discovers verified label files, extracts each one's PDF, and folds the
+results into the aggregate; a label whose PDF (or the extraction libraries) is
+unavailable is reported as *skipped*, not failed, and an unreviewed scaffold
+(`_scaffold.verified` false) is ignored until you flip it. As real documents land,
+the two deferred limits (§19.1) start getting real numbers.
 
 ## Effort
 
