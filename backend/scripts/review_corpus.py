@@ -120,31 +120,47 @@ async def _get_or_create_user(session):
     return user
 
 
+def _serve() -> None:
+    """Run the API with the review env already applied in-process (this module set
+    it at import), so no shell-specific env-var command is needed."""
+    import uvicorn
+
+    print(f"API on http://localhost:8000  (DB {DB_PATH.name}, local store)")
+    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, log_level="info")
+
+
 def main() -> None:
     if "--list" in sys.argv:
         _list()
         return
+    if "--serve" in sys.argv:
+        _serve()
+        return
+
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
     if not args:
-        raise SystemExit("Usage: python -m scripts.review_corpus <DOC_ID> | --list")
+        raise SystemExit(
+            "Usage:\n"
+            "  python -m scripts.review_corpus <DOC_ID>   # seed a document\n"
+            "  python -m scripts.review_corpus --serve    # run the API\n"
+            "  python -m scripts.review_corpus --list     # list corpus PDFs"
+        )
 
     doc_id = asyncio.run(_seed(args[0]))
     token = _token()
+    (BACKEND / "devreview_token.txt").write_text(token + "\n", encoding="utf-8")
     print("\n" + "=" * 70)
     print(f"Seeded document {doc_id}")
-    print("Start the API and SPA in two more terminals (from backend/ and frontend/):")
+    print("Now run these two commands in two more terminals:")
     print()
-    print("  # terminal 2 — API")
-    print(f'  XRAY_DATABASE_URL="sqlite+aiosqlite:///{DB_PATH}" \\')
-    print('    XRAY_STORAGE_BACKEND=local \\')
-    print(f'    XRAY_LOCAL_STORAGE_DIR="{STORE_DIR}" \\')
-    print(f'    XRAY_SUPABASE_JWT_SECRET="{SECRET}" \\')
-    print("    uvicorn app.main:app --port 8000")
+    print("  # terminal 2 — API (from backend/) — sets the right env itself")
+    print("  python -m scripts.review_corpus --serve")
     print()
-    print("  # terminal 3 — SPA (proxy /api to :8000 already configured)")
+    print("  # terminal 3 — SPA (from frontend/)")
     print("  npm run dev")
     print()
-    print("Then open http://localhost:5173, and on the sign-in screen paste this token:")
+    print("Open http://localhost:5173 and paste this token on the sign-in screen")
+    print("(also saved to backend/devreview_token.txt):")
     print()
     print(f"  {token}")
     print("=" * 70)

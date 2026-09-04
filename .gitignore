@@ -41,3 +41,4 @@ devstorage/
 
 # Dev corpus-review store
 devreview_store/
+devreview_token.txt
