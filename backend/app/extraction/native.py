@@ -28,7 +28,7 @@ model so it is unit-testable.
 
 ACCURACY (measured vs. a reference engine on 8 real grants, §19): reading the
 shared centre gutter directly took exact printed-line agreement from ~17% to
-~88% (within one line ~96%, mean error < 1 line; 92-98% exact on most documents),
+~90% (within one line ~97%, mean error < 1 line; 91-97% exact on most documents),
 up from a 2-9 line drift. The residual is per-page gutter-detection gaps on a few
 harder scans — corpus-guided work (§19), not single-example tuning.
 """
@@ -274,11 +274,15 @@ def _valid_gutter_bands(words: list[Word]) -> list[tuple[float, list[tuple[Word,
 
 
 def _detect_gutters(words: list[Word], boundary: float | None) -> dict[int, _Gutter]:
-    """Assign each gutter band to the column whose body sits to its left (§12.5).
+    """Detect the single centre-gutter line-number band (§12.5).
 
-    Line numbers are printed to the right of the column they label: the centre
-    gutter labels column 1, the outer margin labels column 2. A single column is
-    labelled by its rightmost gutter."""
+    Grant line numbers are *always* printed in the centre gutter, never at an outer
+    edge, and the two columns share that one numbering by y-row. So there is exactly
+    one gutter: the integer band nearest the column split (or the lone band on a
+    single-column page). It is keyed by the column it physically sits in — for body
+    exclusion — but the caller reuses its ``y -> line`` map across both columns. A
+    band far from the centre is a body numeral column, not line numbers, and is
+    ignored."""
     bands = _valid_gutter_bands(words)
     if not bands:
         return {}
@@ -292,17 +296,14 @@ def _detect_gutters(words: list[Word], boundary: float | None) -> dict[int, _Gut
         )
 
     if boundary is None:
-        cx, inc = max(bands, key=lambda b: b[0])
+        cx, inc = max(bands, key=lambda b: len(b[1]))
         return {1: make(inc)}
 
-    gutters: dict[int, _Gutter] = {}
-    left = [b for b in bands if 0.30 <= b[0] <= boundary + 0.05]
-    right = [b for b in bands if b[0] > boundary + 0.05]
-    if left:
-        gutters[1] = make(max(left, key=lambda b: b[0])[1])
-    if right:
-        gutters[2] = make(max(right, key=lambda b: b[0])[1])
-    return gutters
+    central = [b for b in bands if abs(b[0] - boundary) <= 0.12]
+    if not central:
+        return {}
+    cx, inc = min(central, key=lambda b: abs(b[0] - boundary))
+    return {1 if cx <= boundary else 2: make(inc)}
 
 
 def _emit_column(
