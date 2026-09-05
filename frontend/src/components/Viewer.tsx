@@ -6,6 +6,7 @@ import type {
   ArtifactEntries,
   AssociationDto,
   BookmarkRead,
+  CalloutDto,
   DocumentRead,
   EntryDto,
   FigureMentionDto,
@@ -32,7 +33,13 @@ import { PdfPane } from "./PdfPane";
 type Layout = "text" | "pdf" | "split" | "details";
 type Selection = { start: number; end: number } | null;
 
-type Mark = { start: number; end: number; cls: string; title: string };
+type Mark = {
+  start: number;
+  end: number;
+  cls: string;
+  title: string;
+  mention?: NumeralMentionDto;
+};
 
 function groupByEntry<T extends { entry_id: string }>(items: T[]): Map<string, T[]> {
   const map = new Map<string, T[]>();
@@ -66,7 +73,8 @@ function buildMarks(
       start: n.span[0],
       end: n.span[1],
       cls: `mention numeral ${status}`,
-      title: `Reference numeral ${n.value}${label} — ${status}`,
+      title: `Reference numeral ${n.value}${label} — ${status} (click to locate on drawing)`,
+      mention: n,
     });
   }
   const len = entry.source_text.length;
@@ -89,7 +97,12 @@ function renderPlain(text: string, query: string, keyBase: string): ReactNode[] 
   );
 }
 
-function renderText(entry: EntryDto, marks: Mark[], query: string): ReactNode {
+function renderText(
+  entry: EntryDto,
+  marks: Mark[],
+  query: string,
+  onMentionClick: (m: NumeralMentionDto) => void,
+): ReactNode {
   const text = entry.source_text;
   const nodes: ReactNode[] = [];
   let pos = 0;
@@ -97,8 +110,21 @@ function renderText(entry: EntryDto, marks: Mark[], query: string): ReactNode {
   for (const m of marks) {
     if (m.start < pos) continue;
     if (m.start > pos) nodes.push(...renderPlain(text.slice(pos, m.start), query, `p${key++}`));
+    const mention = m.mention;
     nodes.push(
-      <mark key={`m${key++}`} className={m.cls} title={m.title}>
+      <mark
+        key={`m${key++}`}
+        className={mention ? `${m.cls} clickable` : m.cls}
+        title={m.title}
+        onClick={
+          mention
+            ? (e) => {
+                e.stopPropagation();
+                onMentionClick(mention);
+              }
+            : undefined
+        }
+      >
         {text.slice(m.start, m.end)}
       </mark>,
     );
@@ -258,6 +284,58 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   );
 
   const selectLine = useCallback((e: EntryDto) => selectRange(e.ordinal, e.ordinal), [selectRange]);
+
+  // --- figure/callout cross-navigation ---
+  const [highlightCallouts, setHighlightCallouts] = useState<Set<string>>(new Set());
+  const [chooser, setChooser] = useState<{
+    mention: NumeralMentionDto;
+    candidates: CalloutDto[];
+  } | null>(null);
+  const mentionCycle = useRef<{ value: string; idx: number } | null>(null);
+
+  const calloutById = useMemo(
+    () => new Map((artifact?.callout_occurrences ?? []).map((c) => [c.callout_id, c])),
+    [artifact],
+  );
+
+  const navigateToCallout = useCallback((callout: CalloutDto, highlightIds: string[]) => {
+    setLayout((l) => (l === "text" ? "split" : l));
+    setPdfPage(callout.page_index + 1);
+    setHighlightCallouts(new Set(highlightIds));
+  }, []);
+
+  // Forward: text numeral → its drawing callout(s); ambiguous opens a chooser.
+  const onMentionClick = useCallback(
+    (mention: NumeralMentionDto) => {
+      const a = assocByKey.get(`${mention.entry_id}:${mention.span[0]}:${mention.span[1]}`);
+      const ids = (a?.selected_callout_ids.length ? a.selected_callout_ids : a?.candidate_callout_ids) ?? [];
+      const cos = ids.map((id) => calloutById.get(id)).filter((c): c is CalloutDto => !!c);
+      if (cos.length === 0) return; // unresolved — nothing to point at
+      if (a?.status === "ambiguous" && cos.length > 1) {
+        setChooser({ mention, candidates: cos });
+      } else {
+        setChooser(null);
+        navigateToCallout(cos[0], cos.map((c) => c.callout_id));
+      }
+    },
+    [assocByKey, calloutById, navigateToCallout],
+  );
+
+  // Reverse: drawing callout → cycle through the text mentions of that numeral.
+  const onSelectCallout = useCallback(
+    (c: CalloutDto) => {
+      const ms = (artifact?.numeral_mentions ?? []).filter((m) => m.value === c.value);
+      if (ms.length === 0) return;
+      const cur = mentionCycle.current;
+      const idx = cur && cur.value === c.value ? (cur.idx + 1) % ms.length : 0;
+      mentionCycle.current = { value: c.value, idx };
+      setLayout((l) => (l === "pdf" ? "split" : l));
+      setHighlightCallouts(new Set([c.callout_id]));
+      const ord = ordByEntryId.get(ms[idx].entry_id);
+      if (ord !== undefined) selectRange(ord, ord, { scroll: true });
+    },
+    [artifact, ordByEntryId, selectRange],
+  );
 
   // Deep link: honor #L<ordinal>[-<end>] once entries are loaded.
   const deepLinked = useRef(false);
@@ -581,7 +659,9 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                       )}
                     </span>
                     <span className="ref">{refShort(e.locator)}</span>
-                    <span className="line-text">{renderText(e, marks, query)}</span>
+                    <span className="line-text">
+                      {renderText(e, marks, query, onMentionClick)}
+                    </span>
                   </div>
                 );
               })}
@@ -591,13 +671,49 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
             <PdfPane
               documentId={documentId}
               entries={entries}
+              callouts={artifact.callout_occurrences}
               page={pdfPage}
               onPageChange={setPdfPage}
               highlightOrdinal={highlightOrdinal}
+              highlightCallouts={highlightCallouts}
               onSelectLine={selectLine}
               onSelectRange={(a, b) => selectRange(a, b)}
+              onSelectCallout={onSelectCallout}
             />
           )}
+        </div>
+      )}
+
+      {chooser && (
+        <div className="chooser" role="dialog" aria-label="Choose a callout">
+          <div className="chooser-head">
+            <strong>Numeral {chooser.mention.value}</strong> appears on more than one drawing —
+            choose which:
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => setChooser(null)}
+              aria-label="Cancel"
+            >
+              ×
+            </button>
+          </div>
+          <div className="chooser-options">
+            {chooser.candidates.map((c) => (
+              <button
+                key={c.callout_id}
+                type="button"
+                className="secondary"
+                onClick={() => {
+                  navigateToCallout(c, [c.callout_id]);
+                  setChooser(null);
+                }}
+              >
+                {c.value}
+                {c.figure_id ? ` · FIG. ${c.figure_id}` : ""} · p.{c.page_index + 1}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

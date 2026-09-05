@@ -122,6 +122,15 @@ export interface AssociationDto {
   candidate_callout_ids: string[];
 }
 
+export interface CalloutDto {
+  callout_id: string;
+  value: string;
+  page_index: number;
+  box: number[];
+  figure_id: string | null;
+  confidence: number | null;
+}
+
 export interface ArtifactEntries {
   artifact_id: string;
   doc_type: string | null;
@@ -132,5 +141,5 @@ export interface ArtifactEntries {
   figure_mentions: FigureMentionDto[];
   numeral_mentions: NumeralMentionDto[];
   mention_associations: AssociationDto[];
-  callout_occurrences: Record<string, unknown>[];
+  callout_occurrences: CalloutDto[];
 }

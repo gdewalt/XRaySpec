@@ -4,7 +4,7 @@ import workerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { useEffect, useRef, useState } from "react";
 
 import { getToken } from "../auth/session";
-import type { EntryDto } from "../api/types";
+import type { CalloutDto, EntryDto } from "../api/types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
 
@@ -18,19 +18,25 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
 export function PdfPane({
   documentId,
   entries,
+  callouts = [],
   page,
   onPageChange,
   highlightOrdinal,
+  highlightCallouts,
   onSelectLine,
   onSelectRange,
+  onSelectCallout,
 }: {
   documentId: string;
   entries: EntryDto[];
+  callouts?: CalloutDto[];
   page: number;
   onPageChange: (p: number) => void;
   highlightOrdinal: number | null;
+  highlightCallouts?: Set<string>;
   onSelectLine: (e: EntryDto) => void;
   onSelectRange: (startOrdinal: number, endOrdinal: number) => void;
+  onSelectCallout?: (c: CalloutDto) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -109,6 +115,7 @@ export function PdfPane({
   }
 
   const pageEntries = entries.filter((e) => e.page_index === page - 1 && e.box);
+  const pageCallouts = callouts.filter((c) => c.page_index === page - 1 && c.box?.length === 4);
   const pageCount = pdf?.numPages ?? 0;
 
   return (
@@ -163,6 +170,27 @@ export function PdfPane({
                 >
                   {e.source_text}
                 </span>
+              );
+            })}
+            {pageCallouts.map((c) => {
+              const [x0, y0, x1, y1] = c.box;
+              const hit = highlightCallouts?.has(c.callout_id);
+              return (
+                <button
+                  key={c.callout_id}
+                  type="button"
+                  className={`pdf-callout${hit ? " hit" : ""}`}
+                  style={{
+                    left: `${x0 * 100}%`,
+                    top: `${y0 * 100}%`,
+                    width: `${(x1 - x0) * 100}%`,
+                    height: `${(y1 - y0) * 100}%`,
+                  }}
+                  title={`Callout ${c.value}${c.figure_id ? ` (FIG. ${c.figure_id})` : ""}`}
+                  onClick={() => onSelectCallout?.(c)}
+                >
+                  <span className="pdf-callout-tag">{c.value}</span>
+                </button>
               );
             })}
           </div>

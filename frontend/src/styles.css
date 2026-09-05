@@ -732,3 +732,73 @@ mark.search-hit {
   background: color-mix(in srgb, #d19a24 35%, transparent);
   outline: 1px solid #d19a24;
 }
+.pdf-callout {
+  position: absolute;
+  padding: 0;
+  margin: 0;
+  border: 1.5px solid var(--accent);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  cursor: pointer;
+}
+.pdf-callout:hover {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.pdf-callout.hit {
+  border-color: #d19a24;
+  background: color-mix(in srgb, #d19a24 40%, transparent);
+  box-shadow: 0 0 0 2px #d19a24;
+}
+.pdf-callout-tag {
+  position: absolute;
+  top: -0.9rem;
+  left: 0;
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: var(--accent-text);
+  background: var(--accent);
+  border-radius: 2px;
+  padding: 0 2px;
+  line-height: 1.1;
+}
+.pdf-callout.hit .pdf-callout-tag {
+  background: #d19a24;
+  color: #1c1206;
+}
+
+mark.mention.clickable {
+  cursor: pointer;
+}
+mark.mention.clickable:hover {
+  filter: brightness(1.25);
+}
+
+.chooser {
+  position: fixed;
+  left: 50%;
+  bottom: 4.5rem;
+  transform: translateX(-50%);
+  z-index: 20;
+  max-width: min(90vw, 40rem);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.8rem 1rem;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+  display: grid;
+  gap: 0.6rem;
+}
+.chooser-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+}
+.chooser-head .link-btn {
+  margin-left: auto;
+}
+.chooser-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
