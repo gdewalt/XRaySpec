@@ -456,6 +456,86 @@ table.docs th {
   font-size: 0.85rem;
 }
 
+/* --- search + outline (viewer navigation) --- */
+.search {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.search input[type="search"] {
+  padding: 0.35rem 0.55rem;
+  border-radius: 7px;
+  min-width: 12rem;
+}
+.search-count {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 3rem;
+  text-align: center;
+}
+.search button {
+  padding: 0.3rem 0.5rem;
+}
+.outline-toggle.active,
+.tab.active {
+  color: var(--text);
+}
+
+mark.search-hit {
+  background: color-mix(in srgb, #d19a24 55%, transparent);
+  color: inherit;
+  border-radius: 2px;
+}
+
+.outline {
+  flex: 0 0 15rem;
+  max-height: calc(100vh - 210px);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.4rem;
+  display: grid;
+  gap: 0.1rem;
+  align-content: start;
+}
+.outline-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: baseline;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-radius: 6px;
+  padding: 0.3rem 0.45rem;
+  text-align: left;
+  width: 100%;
+  font-weight: 500;
+}
+.outline-item:hover {
+  background: var(--badge-bg);
+}
+.outline-item.heading .outline-label {
+  font-size: 0.82rem;
+  letter-spacing: 0.01em;
+}
+.outline-item.figure .outline-label {
+  color: var(--accent);
+  font-weight: 600;
+}
+.outline-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.outline-ref {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
 /* --- modular panes + PDF --- */
 .panes {
   display: flex;

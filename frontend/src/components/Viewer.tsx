@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../api/client";
 import type {
@@ -7,9 +7,16 @@ import type {
   DocumentRead,
   EntryDto,
   FigureMentionDto,
-  Locator,
   NumeralMentionDto,
 } from "../api/types";
+import {
+  buildViewHash,
+  detectOutline,
+  highlightSegments,
+  parseViewHash,
+  refShort,
+  searchEntries,
+} from "../spec/navigation";
 import { PdfPane } from "./PdfPane";
 
 type Layout = "text" | "pdf" | "split" | "details";
@@ -33,10 +40,6 @@ function refRange(entries: EntryDto[]): string {
       : `¶¶ [${a.paragraph}]–[${b.paragraph}]`;
   }
   return "";
-}
-
-function refShort(loc: Locator): string {
-  return loc.kind === "grant" ? `${loc.column}:${loc.printed_line}` : `[${loc.paragraph}]`;
 }
 
 type Mark = { start: number; end: number; cls: string; title: string };
@@ -77,27 +80,41 @@ function buildMarks(
     });
   }
   const len = entry.source_text.length;
-  return marks.filter((m) => m.start >= 0 && m.start < m.end && m.end <= len).sort(
-    (a, b) => a.start - b.start,
+  return marks
+    .filter((m) => m.start >= 0 && m.start < m.end && m.end <= len)
+    .sort((a, b) => a.start - b.start);
+}
+
+/** Plain text with case-insensitive search matches wrapped in <mark class="search-hit">. */
+function renderPlain(text: string, query: string, keyBase: string): ReactNode[] {
+  if (!query) return [text];
+  return highlightSegments(text, query).map((seg, i) =>
+    seg.hit ? (
+      <mark key={`${keyBase}s${i}`} className="search-hit">
+        {seg.text}
+      </mark>
+    ) : (
+      <span key={`${keyBase}s${i}`}>{seg.text}</span>
+    ),
   );
 }
 
-function renderText(entry: EntryDto, marks: Mark[]): ReactNode {
+function renderText(entry: EntryDto, marks: Mark[], query: string): ReactNode {
   const text = entry.source_text;
   const nodes: ReactNode[] = [];
   let pos = 0;
   let key = 0;
   for (const m of marks) {
     if (m.start < pos) continue;
-    if (m.start > pos) nodes.push(<span key={key++}>{text.slice(pos, m.start)}</span>);
+    if (m.start > pos) nodes.push(...renderPlain(text.slice(pos, m.start), query, `p${key++}`));
     nodes.push(
-      <mark key={key++} className={m.cls} title={m.title}>
+      <mark key={`m${key++}`} className={m.cls} title={m.title}>
         {text.slice(m.start, m.end)}
       </mark>,
     );
     pos = m.end;
   }
-  if (pos < text.length) nodes.push(<span key={key++}>{text.slice(pos)}</span>);
+  if (pos < text.length) nodes.push(...renderPlain(text.slice(pos), query, `p${key++}`));
   return nodes;
 }
 
@@ -109,6 +126,10 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   const [selection, setSelection] = useState<Selection>(null);
   const [pdfPage, setPdfPage] = useState(1);
   const [copied, setCopied] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [matchIdx, setMatchIdx] = useState(0);
+  const [outlineOpen, setOutlineOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -141,10 +162,61 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
     return map;
   }, [artifact]);
 
-  const selectLine = useCallback((e: EntryDto) => {
-    setSelection({ start: e.ordinal, end: e.ordinal });
-    setPdfPage(e.page_index + 1);
+  const outline = useMemo(() => {
+    const ordOf = new Map(entries.map((e) => [e.entry_id, e.ordinal]));
+    const figFirst = new Map<string, number>();
+    for (const f of artifact?.figure_mentions ?? []) {
+      const ord = ordOf.get(f.entry_id);
+      if (ord === undefined) continue;
+      for (const fid of f.figure_ids) {
+        const prev = figFirst.get(fid);
+        if (prev === undefined || ord < prev) figFirst.set(fid, ord);
+      }
+    }
+    return detectOutline(entries, figFirst);
+  }, [entries, artifact]);
+
+  const scrollToOrdinal = useCallback((ordinal: number) => {
+    document.getElementById(`spec-L${ordinal}`)?.scrollIntoView({ block: "center" });
   }, []);
+
+  const selectRange = useCallback(
+    (start: number, end: number, opts: { scroll?: boolean } = {}) => {
+      setSelection({ start, end });
+      const e = entries.find((x) => x.ordinal === start);
+      if (e) setPdfPage(e.page_index + 1);
+      if (opts.scroll) scrollToOrdinal(start);
+      history.replaceState(null, "", buildViewHash(documentId, start, end));
+    },
+    [entries, scrollToOrdinal, documentId],
+  );
+
+  const selectLine = useCallback((e: EntryDto) => selectRange(e.ordinal, e.ordinal), [selectRange]);
+
+  // Deep link: honor #L<ordinal>[-<end>] once entries are loaded.
+  const deepLinked = useRef(false);
+  useEffect(() => {
+    if (deepLinked.current || entries.length === 0) return;
+    deepLinked.current = true;
+    const target = parseViewHash(window.location.hash);
+    if (target.start !== undefined && entries.some((e) => e.ordinal === target.start)) {
+      selectRange(target.start, target.end ?? target.start, { scroll: true });
+    }
+  }, [entries, selectRange]);
+
+  const matches = useMemo(() => searchEntries(entries, query), [entries, query]);
+  useEffect(() => setMatchIdx(0), [query]);
+
+  const gotoMatch = useCallback(
+    (idx: number) => {
+      if (matches.length === 0) return;
+      const wrapped = ((idx % matches.length) + matches.length) % matches.length;
+      setMatchIdx(wrapped);
+      const ord = matches[wrapped];
+      selectRange(ord, ord, { scroll: true });
+    },
+    [matches, selectRange],
+  );
 
   const selectedEntries = useMemo(
     () =>
@@ -164,6 +236,28 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
     }
   }, []);
 
+  // Keyboard: '/' focuses search; arrows move the selected line; Esc clears search.
+  useEffect(() => {
+    function onKey(ev: KeyboardEvent) {
+      const inField = ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement;
+      if (ev.key === "/" && !inField) {
+        ev.preventDefault();
+        searchRef.current?.focus();
+      } else if (ev.key === "Escape" && inField) {
+        setQuery("");
+        (ev.target as HTMLInputElement).blur();
+      } else if ((ev.key === "ArrowDown" || ev.key === "ArrowUp") && !inField && selection) {
+        ev.preventDefault();
+        const step = ev.key === "ArrowDown" ? 1 : -1;
+        const next = Math.max(0, Math.min(entries.length - 1, selection.start + step));
+        const e = entries[next];
+        if (e) selectRange(e.ordinal, e.ordinal, { scroll: true });
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [entries, selection, selectRange]);
+
   const citation =
     selectedEntries.length && doc ? `${doc.title}, ${refRange(selectedEntries)}` : "";
   const selectedText = selectedEntries.map((e) => e.display_text).join(" ");
@@ -171,7 +265,6 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
 
   const showText = layout === "text" || layout === "split";
   const showPdf = layout === "pdf" || layout === "split";
-
   const tabs: Layout[] = ["text", "pdf", "split", "details"];
 
   return (
@@ -181,6 +274,59 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
           ← Documents
         </button>
         <strong className="viewer-title">{doc?.title ?? "…"}</strong>
+
+        {artifact && showText && (
+          <>
+            <button
+              type="button"
+              className={`secondary outline-toggle${outlineOpen ? " active" : ""}`}
+              aria-pressed={outlineOpen}
+              onClick={() => setOutlineOpen((v) => !v)}
+              title="Toggle outline"
+            >
+              ☰ Outline
+            </button>
+            <div className="search" role="search">
+              <input
+                ref={searchRef}
+                type="search"
+                placeholder="Search text  (/)"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") gotoMatch(matchIdx + (e.shiftKey ? -1 : 1));
+                }}
+                aria-label="Search specification text"
+              />
+              {query && (
+                <>
+                  <span className="search-count">
+                    {matches.length ? `${matchIdx + 1} / ${matches.length}` : "0"}
+                  </span>
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={!matches.length}
+                    onClick={() => gotoMatch(matchIdx - 1)}
+                    aria-label="Previous match"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={!matches.length}
+                    onClick={() => gotoMatch(matchIdx + 1)}
+                    aria-label="Next match"
+                  >
+                    ↓
+                  </button>
+                </>
+              )}
+            </div>
+          </>
+        )}
+
         <div className="tabs" role="tablist" aria-label="Layout">
           {tabs.map((t) => (
             <button
@@ -235,6 +381,25 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
 
       {artifact && layout !== "details" && (
         <div className={`panes ${layout}`}>
+          {showText && outlineOpen && (
+            <nav className="outline" aria-label="Outline">
+              {outline.length === 0 ? (
+                <p className="muted small">No sections detected.</p>
+              ) : (
+                outline.map((item) => (
+                  <button
+                    key={`${item.kind}-${item.ordinal}-${item.label}`}
+                    type="button"
+                    className={`outline-item ${item.kind}`}
+                    onClick={() => selectRange(item.ordinal, item.ordinal, { scroll: true })}
+                  >
+                    <span className="outline-label">{item.label}</span>
+                    <span className="outline-ref">{item.ref}</span>
+                  </button>
+                ))
+              )}
+            </nav>
+          )}
           {showText && (
             <section className="spec" aria-label="Specification text">
               {entries.map((e) => {
@@ -249,12 +414,13 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                 return (
                   <div
                     key={e.entry_id}
+                    id={`spec-L${e.ordinal}`}
                     className={`spec-line${sel ? " selected" : ""}`}
                     onClick={() => selectLine(e)}
                   >
                     <span className={`conf ${e.text_confidence}`} title={e.text_confidence} />
                     <span className="ref">{refShort(e.locator)}</span>
-                    <span className="line-text">{renderText(e, marks)}</span>
+                    <span className="line-text">{renderText(e, marks, query)}</span>
                   </div>
                 );
               })}
@@ -268,7 +434,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
               onPageChange={setPdfPage}
               highlightOrdinal={highlightOrdinal}
               onSelectLine={selectLine}
-              onSelectRange={(a, b) => setSelection({ start: a, end: b })}
+              onSelectRange={(a, b) => selectRange(a, b)}
             />
           )}
         </div>
@@ -286,6 +452,14 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
             </button>
             <button type="button" onClick={() => copy("both", `“${selectedText}” ${citation}`)}>
               Copy text + citation
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => copy("link", window.location.href)}
+              title="Copy a deep link to this line"
+            >
+              Copy link
             </button>
             {copied && <span className="copied">Copied {copied}</span>}
           </div>
