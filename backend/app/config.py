@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     # Global concurrency constant (§17.6) — not a scheduler.
     max_concurrent_extractions: int = 2
 
+    # HTTP hardening (§17, §19.6). Rate limit is best-effort per replica; 0 disables.
+    rate_limit_per_minute: int = 0
+    trust_forwarded_for: bool = False
+
     # Instance policy defaults (§9.3, §13.1)
     enrichment_enabled: bool = True
     default_retention_days: int = 90
