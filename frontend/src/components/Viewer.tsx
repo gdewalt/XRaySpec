@@ -429,7 +429,10 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   useEffect(() => {
     function onKey(ev: KeyboardEvent) {
       const inField = ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement;
-      if (ev.key === "/" && !inField) {
+      if (ev.key === "Escape" && chooser) {
+        ev.preventDefault();
+        setChooser(null);
+      } else if (ev.key === "/" && !inField) {
         ev.preventDefault();
         searchRef.current?.focus();
       } else if (ev.key === "Escape" && inField) {
@@ -445,7 +448,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [entries, selection, selectRange]);
+  }, [entries, selection, selectRange, chooser]);
 
   const selectedStartEntry = selection
     ? (entries.find((e) => e.ordinal === selection.start) ?? null)
@@ -807,7 +810,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
       )}
 
       {chooser && (
-        <div className="chooser" role="dialog" aria-label="Choose a callout">
+        <div className="chooser" role="dialog" aria-modal="true" aria-label="Choose a callout">
           <div className="chooser-head">
             <strong>Numeral {chooser.mention.value}</strong> appears on more than one drawing —
             choose which:
@@ -821,11 +824,12 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
             </button>
           </div>
           <div className="chooser-options">
-            {chooser.candidates.map((c) => (
+            {chooser.candidates.map((c, i) => (
               <button
                 key={c.callout_id}
                 type="button"
                 className="secondary"
+                autoFocus={i === 0}
                 onClick={() => {
                   navigateToCallout(c, [c.callout_id]);
                   persistOverride(chooser.mention, c.callout_id);
