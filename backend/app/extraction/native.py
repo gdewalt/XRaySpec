@@ -49,7 +49,9 @@ _GUTTER_X_SPREAD = 0.012  # a real gutter's numbers cluster within this of their
 _TOP_ZONE = 0.14  # column-number header lives in the top band of the page
 _HEADER_PAD = 0.012  # keep content this far below the header row
 _ROW_TOL = 0.01  # two tokens within this cy are on the same printed row
-_MIN_ANCHORS = 2  # a spec page needs at least this many centre gutter numbers
+_MIN_INTERP = 2  # a y->line map needs at least this many anchors to interpolate
+_MIN_SPEC_GUTTER = 3  # without a column pair, a spec page needs this many gutter numbers
+# (two stray multiples-of-five always fit a line, so two is not enough on their own)
 
 # Common OCR digit confusions in scanned gutter numbers (O->0, l/I->1, S->5, …).
 _OCR_DIGITS = str.maketrans("OolIiSsBZGg", "00111558266")
@@ -194,7 +196,7 @@ def _line_map(cands: list[tuple[Word, int]]) -> list[tuple[float, int]]:
     """A monotonic ``(y, line)`` map from gutter markers, cleaned to a regular
     arithmetic progression (the printed numbers step by a constant, usually 5)."""
     pairs = sorted(((w.cy, v) for w, v in cands), key=lambda p: p[0])
-    if len(pairs) <= 2:
+    if len(pairs) < 2:
         return pairs
 
     steps: dict[int, int] = {}
@@ -349,15 +351,16 @@ def extract_page(
     gutter = _filter_outliers(_collect_gutter(words, header_y))
     line_map = _line_map(gutter)
 
-    # A specification page has a real gutter (two or more centre line-numbers) or a
-    # printed column-number pair. A page with neither — a cover (which on grants
-    # shows a representative figure), bibliographic front matter, or a drawing sheet
-    # that slipped past drawing classification — is not numbered. A lone stray
-    # multiple-of-five is not a gutter.
-    if len(line_map) < _MIN_ANCHORS:
-        if columns_hdr is None:
-            return [], ordinal_start
-        line_map = _synth_map(header_y, config)  # spec page, gutter unreadable
+    # A specification page is confirmed by a printed column-number pair, or, lacking
+    # one, by a *strong* gutter (three or more centre line-numbers). Covers (which on
+    # grants show a representative figure), bibliographic front matter, and drawing
+    # sheets that slip past classification carry at most one or two stray
+    # multiples-of-five — which always fit a line — so they are not numbered.
+    strong = len(line_map) >= _MIN_SPEC_GUTTER
+    if columns_hdr is None and not strong:
+        return [], ordinal_start
+    if len(line_map) < _MIN_INTERP:
+        line_map = _synth_map(header_y, config)  # confirmed spec page, gutter unreadable
         gutter_x = 0.5
         gutter_lo = gutter_hi = -1.0  # nothing to exclude
     else:
