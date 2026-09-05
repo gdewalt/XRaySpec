@@ -49,6 +49,7 @@ _GUTTER_X_SPREAD = 0.012  # a real gutter's numbers cluster within this of their
 _TOP_ZONE = 0.14  # column-number header lives in the top band of the page
 _HEADER_PAD = 0.012  # keep content this far below the header row
 _ROW_TOL = 0.01  # two tokens within this cy are on the same printed row
+_MIN_ANCHORS = 2  # a spec page needs at least this many centre gutter numbers
 
 # Common OCR digit confusions in scanned gutter numbers (O->0, l/I->1, S->5, …).
 _OCR_DIGITS = str.maketrans("OolIiSsBZGg", "00111558266")
@@ -348,9 +349,14 @@ def extract_page(
     gutter = _filter_outliers(_collect_gutter(words, header_y))
     line_map = _line_map(gutter)
 
-    if not line_map:
+    # A specification page has a real gutter (two or more centre line-numbers) or a
+    # printed column-number pair. A page with neither — a cover (which on grants
+    # shows a representative figure), bibliographic front matter, or a drawing sheet
+    # that slipped past drawing classification — is not numbered. A lone stray
+    # multiple-of-five is not a gutter.
+    if len(line_map) < _MIN_ANCHORS:
         if columns_hdr is None:
-            return [], ordinal_start  # not a specification page
+            return [], ordinal_start
         line_map = _synth_map(header_y, config)  # spec page, gutter unreadable
         gutter_x = 0.5
         gutter_lo = gutter_hi = -1.0  # nothing to exclude
