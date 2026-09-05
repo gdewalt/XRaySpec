@@ -19,6 +19,7 @@ const artifact: ArtifactEntries = {
   mode: "native",
   disposition: "complete",
   page_count: 1,
+  warnings: [],
   entries: [
     {
       entry_id: "line_0",

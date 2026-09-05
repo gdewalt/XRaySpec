@@ -441,6 +441,9 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   const showText = layout === "text" || layout === "split";
   const showPdf = layout === "pdf" || layout === "split";
   const tabs: Layout[] = ["text", "pdf", "split", "details"];
+  const correctedCount = entries.filter((e) => e.display_text !== e.source_text).length;
+  const hasWarnings =
+    (artifact?.warnings.length ?? 0) > 0 || artifact?.disposition === "partial";
 
   return (
     <div className="viewer">
@@ -560,6 +563,15 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
         </p>
       )}
 
+      {artifact && hasWarnings && (
+        <div className="quality-banner" role="status">
+          <strong>
+            {artifact.disposition === "partial" ? "Partial extraction" : "Extracted with warnings"}
+          </strong>
+          {artifact.warnings.length > 0 && <span> — {artifact.warnings.join("; ")}</span>}
+        </div>
+      )}
+
       {artifact && layout === "details" && (
         <section className="panel">
           <h2>Details</h2>
@@ -580,7 +592,22 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
             <dd>{artifact.numeral_mentions.length}</dd>
             <dt>Drawing callouts</dt>
             <dd>{artifact.callout_occurrences.length}</dd>
+            <dt>Alignment-corrected lines</dt>
+            <dd>
+              {correctedCount}
+              {entries.length > 0 && ` (${Math.round((correctedCount / entries.length) * 100)}%)`}
+            </dd>
           </dl>
+          {artifact.warnings.length > 0 && (
+            <>
+              <h3 className="quality-head">Warnings</h3>
+              <ul className="warnings">
+                {artifact.warnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            </>
+          )}
         </section>
       )}
 
@@ -696,6 +723,11 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                       {noteCount > 0 && (
                         <span className="mark-note" title={`${noteCount} note(s)`}>
                           ●
+                        </span>
+                      )}
+                      {e.display_text !== e.source_text && (
+                        <span className="mark-corrected" title={`Aligned to: ${e.display_text}`}>
+                          ✎
                         </span>
                       )}
                     </span>

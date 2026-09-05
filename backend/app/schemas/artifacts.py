@@ -31,6 +31,7 @@ class ArtifactEntriesResponse(BaseModel):
     mode: str | None = None
     disposition: str | None = None
     page_count: int | None = None
+    warnings: list[str] = []
     entries: list[dict[str, Any]]
     figure_mentions: list[dict[str, Any]]
     numeral_mentions: list[dict[str, Any]]

@@ -595,6 +595,21 @@ mark.search-hit {
   color: var(--accent);
   font-size: 0.55rem;
 }
+.mark-corrected {
+  color: var(--ok-text);
+  font-size: 0.62rem;
+}
+.quality-banner {
+  padding: 0.5rem 0.8rem;
+  border-radius: 8px;
+  background: var(--err-bg);
+  color: var(--err-text);
+  font-size: 0.9rem;
+}
+.quality-head {
+  margin: 0.9rem 0 0.3rem;
+  font-size: 0.9rem;
+}
 .outline-head {
   margin: 0.5rem 0 0.15rem;
   font-size: 0.72rem;

@@ -137,6 +137,7 @@ export interface ArtifactEntries {
   mode: string | null;
   disposition: string | null;
   page_count: number | null;
+  warnings: string[];
   entries: EntryDto[];
   figure_mentions: FigureMentionDto[];
   numeral_mentions: NumeralMentionDto[];
