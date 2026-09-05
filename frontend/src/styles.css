@@ -540,6 +540,43 @@ mark.search-hit {
   flex: none;
 }
 
+/* --- export menu --- */
+.export-menu {
+  position: relative;
+}
+.export-pop {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  margin-top: 0.25rem;
+  display: none;
+  flex-direction: column;
+  gap: 0.15rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.3rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  z-index: 15;
+  min-width: 12rem;
+}
+.export-menu:hover .export-pop,
+.export-menu:focus-within .export-pop {
+  display: flex;
+}
+.export-pop button {
+  background: transparent;
+  color: var(--text);
+  border: none;
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  font-weight: 500;
+}
+.export-pop button:hover {
+  background: var(--badge-bg);
+}
+
 /* --- bookmarks + notes --- */
 .spec-line {
   grid-template-columns: 12px 1.6rem 4.5rem 1fr;

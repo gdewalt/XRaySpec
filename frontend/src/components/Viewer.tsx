@@ -30,6 +30,7 @@ import {
   scopedEntries,
   searchEntries,
 } from "../spec/navigation";
+import { exportPortable, exportText } from "../spec/export";
 import { PdfPane } from "./PdfPane";
 
 type Layout = "text" | "pdf" | "split" | "details";
@@ -510,6 +511,25 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
               )}
             </div>
           </>
+        )}
+
+        {artifact && (
+          <div className="export-menu">
+            <button type="button" className="secondary" aria-haspopup="true">
+              Export ▾
+            </button>
+            <div className="export-pop">
+              <button
+                type="button"
+                onClick={() => doc && exportPortable(doc, artifact, bookmarks, annotations)}
+              >
+                Portable save (.json)
+              </button>
+              <button type="button" onClick={() => doc && exportText(doc, artifact)}>
+                Plain text (.txt)
+              </button>
+            </div>
+          </div>
         )}
 
         <div className="tabs" role="tablist" aria-label="Layout">
