@@ -11,7 +11,7 @@ export type OutlineItem = {
   ordinal: number;
   label: string;
   ref: string;
-  kind: "heading" | "figure";
+  kind: "heading" | "figure" | "claim";
 };
 
 // A run of capitalized words (patent section headings are set in caps), 2-8 words,
@@ -74,6 +74,25 @@ export function claimsStartOrdinal(entries: EntryDto[]): number | null {
     if (CLAIMS_START.test(e.display_text.trim())) return e.ordinal;
   }
   return null;
+}
+
+const CLAIM_HEAD = /^(\d{1,3})\s*\.\s/;
+
+/** Outline items for each numbered claim (sequentially numbered from the claims
+ * section onward, which avoids matching stray "1." in prose). */
+export function detectClaims(entries: EntryDto[]): OutlineItem[] {
+  const start = claimsStartOrdinal(entries);
+  const items: OutlineItem[] = [];
+  let last = 0;
+  for (const e of entries) {
+    if (start !== null && e.ordinal < start) continue;
+    const m = CLAIM_HEAD.exec(e.display_text.trim());
+    if (m && Number(m[1]) === last + 1) {
+      last += 1;
+      items.push({ ordinal: e.ordinal, label: `Claim ${last}`, ref: refShort(e.locator), kind: "claim" });
+    }
+  }
+  return items;
 }
 
 /** Restrict entries to a search scope. Falls back to all when a scope is empty. */

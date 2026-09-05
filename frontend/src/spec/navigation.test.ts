@@ -4,6 +4,7 @@ import type { EntryDto } from "../api/types";
 import {
   buildViewHash,
   claimsStartOrdinal,
+  detectClaims,
   detectOutline,
   highlightSegments,
   parseViewHash,
@@ -87,6 +88,19 @@ describe("outline + scopes", () => {
   });
   it("finds where claims begin", () => {
     expect(claimsStartOrdinal(entries)).toBe(3);
+  });
+  it("lists sequentially numbered claims and ignores stray numbers", () => {
+    const withClaims = [
+      grant(0, 1, "The invention relates to 1. widgets in prose."),
+      grant(1, 5, "What is claimed is:"),
+      grant(2, 6, "1. A method comprising steps."),
+      grant(3, 9, "2. The method of claim 1 wherein."),
+      grant(4, 12, "5. A non-sequential number here."),
+      grant(5, 14, "3. The method of claim 2."),
+    ];
+    const items = detectClaims(withClaims);
+    expect(items.map((i) => i.label)).toEqual(["Claim 1", "Claim 2", "Claim 3"]);
+    expect(items[0].ref).toBe("1:6");
   });
   it("scopes to claims from that ordinal", () => {
     const sub = scopedEntries(entries, "claims", new Set());

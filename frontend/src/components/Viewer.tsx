@@ -24,6 +24,7 @@ import {
 import {
   type SearchScope,
   buildViewHash,
+  detectClaims,
   detectOutline,
   highlightSegments,
   parseViewHash,
@@ -221,6 +222,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
     }
     return detectOutline(entries, figFirst);
   }, [entries, artifact]);
+  const claims = useMemo(() => detectClaims(entries), [entries]);
 
   const ordByEntryId = useMemo(
     () => new Map(entries.map((e) => [e.entry_id, e.ordinal])),
@@ -704,11 +706,26 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                   })}
                 </>
               )}
-              {(bookmarks.length > 0 || annotations.length > 0) && outline.length > 0 && (
-                <h3 className="outline-head">Sections</h3>
+              {claims.length > 0 && (
+                <>
+                  <h3 className="outline-head">Claims ({claims.length})</h3>
+                  {claims.map((item) => (
+                    <button
+                      key={`claim-${item.ordinal}`}
+                      type="button"
+                      className="outline-item claim"
+                      onClick={() => selectRange(item.ordinal, item.ordinal, { scroll: true })}
+                    >
+                      <span className="outline-label">{item.label}</span>
+                      <span className="outline-ref">{item.ref}</span>
+                    </button>
+                  ))}
+                </>
               )}
+              {(bookmarks.length > 0 || annotations.length > 0 || claims.length > 0) &&
+                outline.length > 0 && <h3 className="outline-head">Sections</h3>}
               {outline.length === 0 ? (
-                bookmarks.length === 0 && annotations.length === 0 ? (
+                bookmarks.length === 0 && annotations.length === 0 && claims.length === 0 ? (
                   <p className="muted small">No sections detected.</p>
                 ) : null
               ) : (
