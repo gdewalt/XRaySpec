@@ -1,4 +1,12 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { api } from "../api/client";
 import type {
@@ -121,11 +129,25 @@ function renderText(
         key={`m${key++}`}
         className={mention ? `${m.cls} clickable` : m.cls}
         title={m.title}
+        role={mention ? "button" : undefined}
+        tabIndex={mention ? 0 : undefined}
+        aria-label={mention ? m.title : undefined}
         onClick={
           mention
             ? (e) => {
                 e.stopPropagation();
                 onMentionClick(mention);
+              }
+            : undefined
+        }
+        onKeyDown={
+          mention
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onMentionClick(mention);
+                }
               }
             : undefined
         }
@@ -295,6 +317,27 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
 
   const selectLine = useCallback((e: EntryDto) => selectRange(e.ordinal, e.ordinal), [selectRange]);
 
+  // Keyboard within the spec listbox: arrows/Home/End move (and reveal) the
+  // selected line, working from no selection too. preventDefault dedupes against
+  // the global arrow handler (which serves the click-then-arrow case).
+  const onSpecKey = useCallback(
+    (ev: ReactKeyboardEvent) => {
+      const n = entries.length;
+      if (!n) return;
+      const cur = selection ? selection.start : -1;
+      let target: number | null = null;
+      if (ev.key === "ArrowDown") target = Math.min(n - 1, cur + 1);
+      else if (ev.key === "ArrowUp") target = cur <= 0 ? 0 : cur - 1;
+      else if (ev.key === "Home") target = 0;
+      else if (ev.key === "End") target = n - 1;
+      else return;
+      ev.preventDefault();
+      const e = entries[target];
+      if (e) selectRange(e.ordinal, e.ordinal, { scroll: true });
+    },
+    [entries, selection, selectRange],
+  );
+
   // --- figure/callout cross-navigation ---
   const [highlightCallouts, setHighlightCallouts] = useState<Set<string>>(new Set());
   const [chooser, setChooser] = useState<{
@@ -428,6 +471,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   // Keyboard: '/' focuses search; arrows move the selected line; Esc clears search.
   useEffect(() => {
     function onKey(ev: KeyboardEvent) {
+      if (ev.defaultPrevented) return; // already handled (e.g. by the spec listbox)
       const inField = ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement;
       if (ev.key === "Escape" && chooser) {
         ev.preventDefault();
@@ -747,7 +791,14 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
             </nav>
           )}
           {showText && (
-            <section className="spec" aria-label="Specification text">
+            <section
+              className="spec"
+              role="listbox"
+              tabIndex={0}
+              aria-label="Specification text"
+              aria-activedescendant={selection ? `spec-L${selection.start}` : undefined}
+              onKeyDown={onSpecKey}
+            >
               {entries.map((e) => {
                 const marks = buildMarks(
                   e,
@@ -763,9 +814,14 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                     key={e.entry_id}
                     id={`spec-L${e.ordinal}`}
                     className={`spec-line${sel ? " selected" : ""}`}
+                    role="option"
+                    aria-selected={!!sel}
                     onClick={() => selectLine(e)}
                   >
-                    <span className={`conf ${e.text_confidence}`} title={e.text_confidence} />
+                    <span className={`conf ${e.text_confidence}`} aria-hidden="true" />
+                    {e.text_confidence !== "high" && (
+                      <span className="sr-only">{e.text_confidence} confidence. </span>
+                    )}
                     <span className="marks" aria-hidden="true">
                       {bookmarkByEntry.has(e.entry_id) && (
                         <span className="mark-bookmark" title="Bookmarked">

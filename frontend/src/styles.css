@@ -64,6 +64,10 @@ body {
   margin: 0 auto;
   padding: 1.5rem 1.25rem;
   display: grid;
+  /* Cap the implicit column at the container width so a wide child (e.g. the
+     toolbar or a long unbroken line) scrolls/ wraps inside instead of expanding
+     the track and forcing the whole page to scroll horizontally. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 1.25rem;
 }
 
@@ -328,6 +332,7 @@ table.docs th {
 .viewer-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.75rem;
   padding-bottom: 0.75rem;
   border-bottom: 1px solid var(--border);
@@ -443,6 +448,7 @@ table.docs th {
 }
 .cite-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.4rem;
   align-items: center;
   margin-left: auto;
