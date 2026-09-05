@@ -21,11 +21,13 @@ import {
   saveStyle,
 } from "../spec/citation";
 import {
+  type SearchScope,
   buildViewHash,
   detectOutline,
   highlightSegments,
   parseViewHash,
   refShort,
+  scopedEntries,
   searchEntries,
 } from "../spec/navigation";
 import { PdfPane } from "./PdfPane";
@@ -143,6 +145,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   const [pdfPage, setPdfPage] = useState(1);
   const [copied, setCopied] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [scope, setScope] = useState<SearchScope>("all");
   const [matchIdx, setMatchIdx] = useState(0);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [bookmarks, setBookmarks] = useState<BookmarkRead[]>([]);
@@ -348,8 +351,15 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
     }
   }, [entries, selectRange]);
 
-  const matches = useMemo(() => searchEntries(entries, query), [entries, query]);
-  useEffect(() => setMatchIdx(0), [query]);
+  const figureEntryIds = useMemo(
+    () => new Set((artifact?.figure_mentions ?? []).map((f) => f.entry_id)),
+    [artifact],
+  );
+  const matches = useMemo(
+    () => searchEntries(scopedEntries(entries, scope, figureEntryIds), query),
+    [entries, scope, figureEntryIds, query],
+  );
+  useEffect(() => setMatchIdx(0), [query, scope]);
 
   const gotoMatch = useCallback(
     (idx: number) => {
@@ -462,6 +472,17 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                 }}
                 aria-label="Search specification text"
               />
+              <select
+                className="search-scope"
+                value={scope}
+                onChange={(e) => setScope(e.target.value as SearchScope)}
+                aria-label="Search scope"
+                title="Limit search"
+              >
+                <option value="all">All</option>
+                <option value="claims">Claims</option>
+                <option value="figures">Figures</option>
+              </select>
               {query && (
                 <>
                   <span className="search-count">

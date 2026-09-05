@@ -64,6 +64,35 @@ export function searchEntries(entries: EntryDto[], query: string): number[] {
   return entries.filter((e) => e.display_text.toLowerCase().includes(q)).map((e) => e.ordinal);
 }
 
+export type SearchScope = "all" | "claims" | "figures";
+
+const CLAIMS_START = /^(claims?|what is claimed|i claim)\b/i;
+
+/** The ordinal where the claims section begins, or null if none is detected. */
+export function claimsStartOrdinal(entries: EntryDto[]): number | null {
+  for (const e of entries) {
+    if (CLAIMS_START.test(e.display_text.trim())) return e.ordinal;
+  }
+  return null;
+}
+
+/** Restrict entries to a search scope. Falls back to all when a scope is empty. */
+export function scopedEntries(
+  entries: EntryDto[],
+  scope: SearchScope,
+  figureEntryIds: Set<string>,
+): EntryDto[] {
+  if (scope === "figures") {
+    const sub = entries.filter((e) => figureEntryIds.has(e.entry_id));
+    return sub.length ? sub : entries;
+  }
+  if (scope === "claims") {
+    const start = claimsStartOrdinal(entries);
+    return start === null ? entries : entries.filter((e) => e.ordinal >= start);
+  }
+  return entries;
+}
+
 /** Split a line's text into segments around case-insensitive matches of `query`. */
 export function highlightSegments(text: string, query: string): { text: string; hit: boolean }[] {
   const q = query.trim();
