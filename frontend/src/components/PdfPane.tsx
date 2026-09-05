@@ -8,6 +8,21 @@ import type { CalloutDto, EntryDto } from "../api/types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
 
+/** Rotate a normalized [x0,y0,x1,y1] box by 0/90/180/270° to match the viewport. */
+function rotateBox(box: number[], rotation: number): [number, number, number, number] {
+  const rot = ([x, y]: number[]): [number, number] =>
+    rotation === 90
+      ? [1 - y, x]
+      : rotation === 180
+        ? [1 - x, 1 - y]
+        : rotation === 270
+          ? [y, 1 - x]
+          : [x, y];
+  const [ax, ay] = rot([box[0], box[1]]);
+  const [bx, by] = rot([box[2], box[3]]);
+  return [Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by)];
+}
+
 /**
  * PDF pane (DESIGN.md §16.4): renders a page with PDF.js and overlays a
  * selectable text layer positioned from each line's normalized box — so text can
@@ -44,6 +59,7 @@ export function PdfPane({
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [scale, setScale] = useState(1.3);
+  const [rotation, setRotation] = useState(0);
   const [size, setSize] = useState({ w: 0, h: 0 });
 
   useEffect(() => {
@@ -82,7 +98,7 @@ export function PdfPane({
     let cancelled = false;
     pdf.getPage(page).then(async (pg) => {
       if (cancelled) return;
-      const viewport = pg.getViewport({ scale });
+      const viewport = pg.getViewport({ scale, rotation });
       const canvas = canvasRef.current;
       if (!canvas) return;
       const ctx = canvas.getContext("2d");
@@ -101,7 +117,7 @@ export function PdfPane({
     return () => {
       cancelled = true;
     };
-  }, [pdf, page, scale]);
+  }, [pdf, page, scale, rotation]);
 
   function handleMouseUp() {
     const sel = window.getSelection();
@@ -141,6 +157,14 @@ export function PdfPane({
         <button type="button" className="secondary" onClick={() => setScale((s) => Math.min(3, s + 0.2))}>
           +
         </button>
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => setRotation((r) => (r + 90) % 360)}
+          title="Rotate 90°"
+        >
+          ⟳
+        </button>
       </div>
 
       {error && (
@@ -154,7 +178,7 @@ export function PdfPane({
           <canvas ref={canvasRef} />
           <div ref={overlayRef} className="pdf-overlay" onMouseUp={handleMouseUp}>
             {pageEntries.map((e) => {
-              const [x0, y0, x1, y1] = e.box as number[];
+              const [x0, y0, x1, y1] = rotateBox(e.box as number[], rotation);
               return (
                 <span
                   key={e.entry_id}
@@ -173,7 +197,7 @@ export function PdfPane({
               );
             })}
             {pageCallouts.map((c) => {
-              const [x0, y0, x1, y1] = c.box;
+              const [x0, y0, x1, y1] = rotateBox(c.box, rotation);
               const hit = highlightCallouts?.has(c.callout_id);
               return (
                 <button
