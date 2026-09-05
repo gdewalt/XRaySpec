@@ -12,6 +12,14 @@ import type {
   NumeralMentionDto,
 } from "../api/types";
 import {
+  type CiteStyle,
+  CITE_PRESETS,
+  formatCitation,
+  formatRef,
+  loadStyle,
+  saveStyle,
+} from "../spec/citation";
+import {
   buildViewHash,
   detectOutline,
   highlightSegments,
@@ -23,26 +31,6 @@ import { PdfPane } from "./PdfPane";
 
 type Layout = "text" | "pdf" | "split" | "details";
 type Selection = { start: number; end: number } | null;
-
-function refRange(entries: EntryDto[]): string {
-  if (entries.length === 0) return "";
-  const a = entries[0].locator;
-  const b = entries[entries.length - 1].locator;
-  if (a.kind === "grant" && b.kind === "grant") {
-    if (a.column === b.column) {
-      return a.printed_line === b.printed_line
-        ? `col. ${a.column}, l. ${a.printed_line}`
-        : `col. ${a.column}, ll. ${a.printed_line}–${b.printed_line}`;
-    }
-    return `col. ${a.column}, l. ${a.printed_line} – col. ${b.column}, l. ${b.printed_line}`;
-  }
-  if (a.paragraph && b.paragraph) {
-    return a.paragraph === b.paragraph
-      ? `¶ [${a.paragraph}]`
-      : `¶¶ [${a.paragraph}]–[${b.paragraph}]`;
-  }
-  return "";
-}
 
 type Mark = { start: number; end: number; cls: string; title: string };
 
@@ -135,7 +123,17 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   const [annotations, setAnnotations] = useState<AnnotationRead[]>([]);
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
+  const [citeStyle, setCiteStyle] = useState<CiteStyle>(loadStyle);
+  const [citeSettingsOpen, setCiteSettingsOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+
+  const updateStyle = useCallback((patch: Partial<CiteStyle>) => {
+    setCiteStyle((s) => {
+      const next = { ...s, ...patch };
+      saveStyle(next);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -344,7 +342,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   }, [noteDraft, selectedStartEntry, documentId]);
 
   const citation =
-    selectedEntries.length && doc ? `${doc.title}, ${refRange(selectedEntries)}` : "";
+    selectedEntries.length && doc ? formatCitation(selectedEntries, doc.title, citeStyle) : "";
   const selectedText = selectedEntries.map((e) => e.display_text).join(" ");
   const highlightOrdinal = selection ? selection.start : null;
   const selectedBookmarked = selectedStartEntry
@@ -623,6 +621,55 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
               ))}
             </ul>
           )}
+          {citeSettingsOpen && (
+            <div className="cite-settings">
+              <label>
+                Preset
+                <select
+                  onChange={(e) => {
+                    const p = CITE_PRESETS.find((x) => x.id === e.target.value);
+                    if (p) updateStyle(p.style);
+                  }}
+                >
+                  {CITE_PRESETS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={citeStyle.includeTitle}
+                  onChange={(e) => updateStyle({ includeTitle: e.target.checked })}
+                />
+                Include title
+              </label>
+              <label>
+                Column
+                <select
+                  value={citeStyle.columnWord}
+                  onChange={(e) => updateStyle({ columnWord: e.target.value as CiteStyle["columnWord"] })}
+                >
+                  <option value="col.">col.</option>
+                  <option value="column">column</option>
+                  <option value="c.">c.</option>
+                </select>
+              </label>
+              <label>
+                Line
+                <select
+                  value={citeStyle.lineWord}
+                  onChange={(e) => updateStyle({ lineWord: e.target.value as CiteStyle["lineWord"] })}
+                >
+                  <option value="l.">l. / ll.</option>
+                  <option value="line">line / lines</option>
+                </select>
+              </label>
+              <span className="cite-preview">{citation || formatRef(selectedEntries, citeStyle)}</span>
+            </div>
+          )}
           {noteOpen && (
             <div className="note-editor">
               <textarea
@@ -665,6 +712,14 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
               disabled={!selectedStartEntry}
             >
               Add note
+            </button>
+            <button
+              type="button"
+              className={`secondary${citeSettingsOpen ? " active" : ""}`}
+              onClick={() => setCiteSettingsOpen((v) => !v)}
+              title="Citation format"
+            >
+              ⚙ Format
             </button>
             <button type="button" onClick={() => copy("text", selectedText)}>
               Copy text

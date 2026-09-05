@@ -626,6 +626,34 @@ mark.search-hit {
   color: #d19a24;
   border-color: #d19a24;
 }
+.cite-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  flex-basis: 100%;
+  order: 1;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.cite-settings label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 500;
+  font-size: 0.85rem;
+}
+.cite-settings select {
+  padding: 0.25rem 0.4rem;
+}
+.cite-preview {
+  margin-left: auto;
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--accent);
+}
 
 /* --- modular panes + PDF --- */
 .panes {
