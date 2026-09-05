@@ -3,7 +3,9 @@
 
 import { getToken } from "../auth/session";
 import type {
+  AnnotationRead,
   ArtifactEntries,
+  BookmarkRead,
   DocumentList,
   DocumentRead,
   ImportAnalysis,
@@ -51,6 +53,25 @@ export const api = {
   getDocument: (id: string) => request<DocumentRead>(`/api/v1/documents/${id}`),
 
   getDocumentJob: (id: string) => request<JobRead>(`/api/v1/documents/${id}/job`),
+
+  listBookmarks: (docId: string) =>
+    request<BookmarkRead[]>(`/api/v1/documents/${docId}/bookmarks`),
+  createBookmark: (docId: string, entry_id: string, label?: string | null) =>
+    request<BookmarkRead>(
+      `/api/v1/documents/${docId}/bookmarks`,
+      jsonInit("POST", { entry_id, label: label ?? null }),
+    ),
+  deleteBookmark: (id: string) => request<void>(`/api/v1/bookmarks/${id}`, { method: "DELETE" }),
+
+  listAnnotations: (docId: string) =>
+    request<AnnotationRead[]>(`/api/v1/documents/${docId}/annotations`),
+  createAnnotation: (docId: string, target_entry_id: string, note: string) =>
+    request<AnnotationRead>(
+      `/api/v1/documents/${docId}/annotations`,
+      jsonInit("POST", { target_entry_id, note }),
+    ),
+  deleteAnnotation: (id: string) =>
+    request<void>(`/api/v1/annotations/${id}`, { method: "DELETE" }),
 
   getArtifactEntries: (artifactId: string) =>
     request<ArtifactEntries>(`/api/v1/artifacts/${artifactId}/entries`),

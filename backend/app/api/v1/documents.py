@@ -17,8 +17,9 @@ from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import select
 
 from ...config import get_settings
-from ...db.models import Bookmark, ExtractionJob, SourceDocument, UserDocument
+from ...db.models import Annotation, Bookmark, ExtractionJob, SourceDocument, UserDocument
 from ...patents import PatentParseError, parse_patent_identifier
+from ...schemas.annotations import AnnotationCreate, AnnotationRead
 from ...schemas.bookmarks import BookmarkCreate, BookmarkRead
 from ...schemas.documents import DocumentCreate, DocumentList, DocumentRead
 from ...schemas.jobs import JobRead
@@ -264,4 +265,49 @@ async def delete_bookmark(bookmark_id: str, user: CurrentUser, session: DbSessio
     if bookmark is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Bookmark not found")
     await session.delete(bookmark)
+    await session.commit()
+
+
+@router.get("/documents/{document_id}/annotations", response_model=list[AnnotationRead])
+async def list_annotations(
+    document_id: str, user: CurrentUser, session: DbSession
+) -> list[AnnotationRead]:
+    await _owned_document(session, user, document_id)
+    rows = await session.scalars(
+        select(Annotation)
+        .where(Annotation.document_id == document_id, Annotation.owner_id == user.id)
+        .order_by(Annotation.created_at.desc())
+    )
+    return [AnnotationRead.model_validate(a) for a in rows]
+
+
+@router.post(
+    "/documents/{document_id}/annotations",
+    response_model=AnnotationRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_annotation(
+    document_id: str, body: AnnotationCreate, user: CurrentUser, session: DbSession
+) -> AnnotationRead:
+    await _owned_document(session, user, document_id)
+    annotation = Annotation(
+        owner_id=user.id,
+        document_id=document_id,
+        target_entry_id=body.target_entry_id,
+        note=body.note,
+    )
+    session.add(annotation)
+    await session.commit()
+    await session.refresh(annotation)
+    return AnnotationRead.model_validate(annotation)
+
+
+@router.delete("/annotations/{annotation_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_annotation(annotation_id: str, user: CurrentUser, session: DbSession) -> None:
+    annotation = await session.scalar(
+        select(Annotation).where(Annotation.id == annotation_id, Annotation.owner_id == user.id)
+    )
+    if annotation is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Annotation not found")
+    await session.delete(annotation)
     await session.commit()

@@ -90,3 +90,40 @@ async def test_bookmark_authorization(client, make_token, auth):
     # Owner sees exactly their one bookmark.
     listed = await client.get(f"/api/v1/documents/{doc_id}/bookmarks", headers=auth(owner))
     assert [b["id"] for b in listed.json()] == [bookmark_id]
+
+
+async def test_annotation_authorization(client, make_token, auth):
+    owner = make_token("owner", "o@example.com")
+    intruder = make_token("intruder", "x@example.com")
+    doc_id = await _create_doc(client, auth, owner)
+
+    created = await client.post(
+        f"/api/v1/documents/{doc_id}/annotations",
+        headers=auth(owner),
+        json={"target_entry_id": "line_0000123", "note": "check this claim"},
+    )
+    assert created.status_code == 201
+    annotation_id = created.json()["id"]
+
+    # Intruder cannot create on, list, or delete against the owner's document/annotation.
+    assert (
+        await client.post(
+            f"/api/v1/documents/{doc_id}/annotations",
+            headers=auth(intruder),
+            json={"target_entry_id": "line_1", "note": "x"},
+        )
+    ).status_code == 404
+    assert (
+        await client.get(f"/api/v1/documents/{doc_id}/annotations", headers=auth(intruder))
+    ).status_code == 404
+    assert (
+        await client.delete(f"/api/v1/annotations/{annotation_id}", headers=auth(intruder))
+    ).status_code == 404
+
+    listed = await client.get(f"/api/v1/documents/{doc_id}/annotations", headers=auth(owner))
+    assert [a["id"] for a in listed.json()] == [annotation_id]
+
+    # Owner can delete their own annotation.
+    assert (
+        await client.delete(f"/api/v1/annotations/{annotation_id}", headers=auth(owner))
+    ).status_code == 204

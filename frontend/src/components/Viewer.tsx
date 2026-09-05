@@ -2,8 +2,10 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 
 import { api } from "../api/client";
 import type {
+  AnnotationRead,
   ArtifactEntries,
   AssociationDto,
+  BookmarkRead,
   DocumentRead,
   EntryDto,
   FigureMentionDto,
@@ -129,6 +131,10 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   const [query, setQuery] = useState("");
   const [matchIdx, setMatchIdx] = useState(0);
   const [outlineOpen, setOutlineOpen] = useState(false);
+  const [bookmarks, setBookmarks] = useState<BookmarkRead[]>([]);
+  const [annotations, setAnnotations] = useState<AnnotationRead[]>([]);
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [noteDraft, setNoteDraft] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -141,6 +147,14 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
         if (d.active_artifact_id) {
           const a = await api.getArtifactEntries(d.active_artifact_id);
           if (!cancelled) setArtifact(a);
+        }
+        const [bm, an] = await Promise.all([
+          api.listBookmarks(documentId),
+          api.listAnnotations(documentId),
+        ]);
+        if (!cancelled) {
+          setBookmarks(bm);
+          setAnnotations(an);
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -175,6 +189,60 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
     }
     return detectOutline(entries, figFirst);
   }, [entries, artifact]);
+
+  const ordByEntryId = useMemo(
+    () => new Map(entries.map((e) => [e.entry_id, e.ordinal])),
+    [entries],
+  );
+  const bookmarkByEntry = useMemo(
+    () => new Map(bookmarks.map((b) => [b.entry_id, b])),
+    [bookmarks],
+  );
+  const notesByEntry = useMemo(() => {
+    const m = new Map<string, AnnotationRead[]>();
+    for (const a of annotations) {
+      const arr = m.get(a.target_entry_id);
+      if (arr) arr.push(a);
+      else m.set(a.target_entry_id, [a]);
+    }
+    return m;
+  }, [annotations]);
+
+  const toggleBookmark = useCallback(
+    async (entry: EntryDto) => {
+      const existing = bookmarkByEntry.get(entry.entry_id);
+      try {
+        if (existing) {
+          await api.deleteBookmark(existing.id);
+          setBookmarks((bs) => bs.filter((b) => b.id !== existing.id));
+        } else {
+          const created = await api.createBookmark(documentId, entry.entry_id, refShort(entry.locator));
+          setBookmarks((bs) => [created, ...bs]);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [bookmarkByEntry, documentId],
+  );
+
+  const removeBookmark = useCallback(async (id: string) => {
+    try {
+      await api.deleteBookmark(id);
+      setBookmarks((bs) => bs.filter((b) => b.id !== id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  const removeAnnotation = useCallback(async (id: string) => {
+    try {
+      await api.deleteAnnotation(id);
+      setAnnotations((as) => as.filter((a) => a.id !== id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
 
   const scrollToOrdinal = useCallback((ordinal: number) => {
     document.getElementById(`spec-L${ordinal}`)?.scrollIntoView({ block: "center" });
@@ -258,10 +326,30 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
     return () => window.removeEventListener("keydown", onKey);
   }, [entries, selection, selectRange]);
 
+  const selectedStartEntry = selection
+    ? (entries.find((e) => e.ordinal === selection.start) ?? null)
+    : null;
+
+  const saveNote = useCallback(async () => {
+    const text = noteDraft.trim();
+    if (!text || !selectedStartEntry) return;
+    try {
+      const created = await api.createAnnotation(documentId, selectedStartEntry.entry_id, text);
+      setAnnotations((as) => [created, ...as]);
+      setNoteDraft("");
+      setNoteOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [noteDraft, selectedStartEntry, documentId]);
+
   const citation =
     selectedEntries.length && doc ? `${doc.title}, ${refRange(selectedEntries)}` : "";
   const selectedText = selectedEntries.map((e) => e.display_text).join(" ");
   const highlightOrdinal = selection ? selection.start : null;
+  const selectedBookmarked = selectedStartEntry
+    ? bookmarkByEntry.has(selectedStartEntry.entry_id)
+    : false;
 
   const showText = layout === "text" || layout === "split";
   const showPdf = layout === "pdf" || layout === "split";
@@ -383,8 +471,70 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
         <div className={`panes ${layout}`}>
           {showText && outlineOpen && (
             <nav className="outline" aria-label="Outline">
+              {bookmarks.length > 0 && (
+                <>
+                  <h3 className="outline-head">Bookmarks</h3>
+                  {bookmarks.map((b) => {
+                    const ord = ordByEntryId.get(b.entry_id);
+                    return (
+                      <div key={b.id} className="outline-item bookmark">
+                        <button
+                          type="button"
+                          className="outline-jump"
+                          disabled={ord === undefined}
+                          onClick={() => ord !== undefined && selectRange(ord, ord, { scroll: true })}
+                        >
+                          <span className="outline-label">★ {b.label ?? b.entry_id}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="link-btn"
+                          onClick={() => removeBookmark(b.id)}
+                          aria-label="Remove bookmark"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+              {annotations.length > 0 && (
+                <>
+                  <h3 className="outline-head">Notes</h3>
+                  {annotations.map((a) => {
+                    const ord = ordByEntryId.get(a.target_entry_id);
+                    return (
+                      <div key={a.id} className="outline-item note">
+                        <button
+                          type="button"
+                          className="outline-jump"
+                          disabled={ord === undefined}
+                          onClick={() => ord !== undefined && selectRange(ord, ord, { scroll: true })}
+                          title={a.note}
+                        >
+                          <span className="outline-label">● {a.note}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="link-btn"
+                          onClick={() => removeAnnotation(a.id)}
+                          aria-label="Delete note"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+              {(bookmarks.length > 0 || annotations.length > 0) && outline.length > 0 && (
+                <h3 className="outline-head">Sections</h3>
+              )}
               {outline.length === 0 ? (
-                <p className="muted small">No sections detected.</p>
+                bookmarks.length === 0 && annotations.length === 0 ? (
+                  <p className="muted small">No sections detected.</p>
+                ) : null
               ) : (
                 outline.map((item) => (
                   <button
@@ -411,6 +561,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                 );
                 const sel =
                   selection && e.ordinal >= selection.start && e.ordinal <= selection.end;
+                const noteCount = notesByEntry.get(e.entry_id)?.length ?? 0;
                 return (
                   <div
                     key={e.entry_id}
@@ -419,6 +570,18 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                     onClick={() => selectLine(e)}
                   >
                     <span className={`conf ${e.text_confidence}`} title={e.text_confidence} />
+                    <span className="marks" aria-hidden="true">
+                      {bookmarkByEntry.has(e.entry_id) && (
+                        <span className="mark-bookmark" title="Bookmarked">
+                          ★
+                        </span>
+                      )}
+                      {noteCount > 0 && (
+                        <span className="mark-note" title={`${noteCount} note(s)`}>
+                          ●
+                        </span>
+                      )}
+                    </span>
                     <span className="ref">{refShort(e.locator)}</span>
                     <span className="line-text">{renderText(e, marks, query)}</span>
                   </div>
@@ -443,7 +606,66 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
       {selectedEntries.length > 0 && (
         <div className="cite-bar" role="region" aria-label="Copy and cite">
           <span className="cite-ref">{citation}</span>
+          {selectedStartEntry && (notesByEntry.get(selectedStartEntry.entry_id)?.length ?? 0) > 0 && (
+            <ul className="cite-notes">
+              {notesByEntry.get(selectedStartEntry.entry_id)?.map((a) => (
+                <li key={a.id}>
+                  <span>{a.note}</span>
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() => removeAnnotation(a.id)}
+                    aria-label="Delete note"
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {noteOpen && (
+            <div className="note-editor">
+              <textarea
+                value={noteDraft}
+                onChange={(e) => setNoteDraft(e.target.value)}
+                placeholder="Add a note for this line…"
+                rows={2}
+                autoFocus
+              />
+              <button type="button" onClick={saveNote} disabled={!noteDraft.trim()}>
+                Save note
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => {
+                  setNoteOpen(false);
+                  setNoteDraft("");
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
           <div className="cite-actions">
+            {selectedStartEntry && (
+              <button
+                type="button"
+                className={`secondary${selectedBookmarked ? " active" : ""}`}
+                onClick={() => toggleBookmark(selectedStartEntry)}
+                title={selectedBookmarked ? "Remove bookmark" : "Bookmark this line"}
+              >
+                {selectedBookmarked ? "★ Bookmarked" : "☆ Bookmark"}
+              </button>
+            )}
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setNoteOpen((v) => !v)}
+              disabled={!selectedStartEntry}
+            >
+              Add note
+            </button>
             <button type="button" onClick={() => copy("text", selectedText)}>
               Copy text
             </button>

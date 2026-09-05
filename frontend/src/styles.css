@@ -536,6 +536,97 @@ mark.search-hit {
   flex: none;
 }
 
+/* --- bookmarks + notes --- */
+.spec-line {
+  grid-template-columns: 12px 1.6rem 4.5rem 1fr;
+}
+.spec-line .marks {
+  display: inline-flex;
+  gap: 1px;
+  align-items: center;
+  font-size: 0.7rem;
+  justify-content: flex-end;
+}
+.mark-bookmark {
+  color: #d19a24;
+}
+.mark-note {
+  color: var(--accent);
+  font-size: 0.55rem;
+}
+.outline-head {
+  margin: 0.5rem 0 0.15rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.outline-head:first-child {
+  margin-top: 0;
+}
+.outline-item.bookmark,
+.outline-item.note {
+  padding: 0;
+}
+.outline-jump {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  text-align: left;
+  padding: 0.3rem 0.45rem;
+  border-radius: 6px;
+  font-weight: 500;
+}
+.outline-jump:hover {
+  background: var(--badge-bg);
+}
+.link-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 0 0.4rem;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.link-btn:hover {
+  color: var(--danger);
+}
+.cite-notes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.15rem;
+  flex-basis: 100%;
+  order: 2;
+}
+.cite-notes li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+.note-editor {
+  display: flex;
+  gap: 0.4rem;
+  align-items: flex-start;
+  flex-basis: 100%;
+  order: 3;
+}
+.note-editor textarea {
+  flex: 1;
+  resize: vertical;
+  font: inherit;
+}
+.cite-actions button.active {
+  color: #d19a24;
+  border-color: #d19a24;
+}
+
 /* --- modular panes + PDF --- */
 .panes {
   display: flex;

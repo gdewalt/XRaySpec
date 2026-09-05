@@ -16,6 +16,23 @@ export interface DocumentList {
   items: DocumentRead[];
 }
 
+export interface BookmarkRead {
+  id: string;
+  document_id: string;
+  entry_id: string;
+  label: string | null;
+  color: string | null;
+  created_at: string;
+}
+
+export interface AnnotationRead {
+  id: string;
+  document_id: string;
+  target_entry_id: string;
+  note: string;
+  created_at: string;
+}
+
 export interface JobRead {
   id: string;
   document_id: string | null;
