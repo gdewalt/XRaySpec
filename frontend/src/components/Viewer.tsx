@@ -11,6 +11,7 @@ import type {
   EntryDto,
   FigureMentionDto,
   NumeralMentionDto,
+  OverrideRead,
 } from "../api/types";
 import {
   type CiteStyle,
@@ -151,6 +152,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [bookmarks, setBookmarks] = useState<BookmarkRead[]>([]);
   const [annotations, setAnnotations] = useState<AnnotationRead[]>([]);
+  const [overrides, setOverrides] = useState<OverrideRead[]>([]);
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
   const [citeStyle, setCiteStyle] = useState<CiteStyle>(loadStyle);
@@ -176,13 +178,15 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
           const a = await api.getArtifactEntries(d.active_artifact_id);
           if (!cancelled) setArtifact(a);
         }
-        const [bm, an] = await Promise.all([
+        const [bm, an, ov] = await Promise.all([
           api.listBookmarks(documentId),
           api.listAnnotations(documentId),
+          api.listOverrides(documentId),
         ]);
         if (!cancelled) {
           setBookmarks(bm);
           setAnnotations(an);
+          setOverrides(ov);
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -301,6 +305,25 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
     () => new Map((artifact?.callout_occurrences ?? []).map((c) => [c.callout_id, c])),
     [artifact],
   );
+  const overrideByKey = useMemo(
+    () => new Map(overrides.map((o) => [`${o.entry_id}:${o.span_start}:${o.span_end}`, o])),
+    [overrides],
+  );
+
+  const persistOverride = useCallback(
+    async (mention: NumeralMentionDto, calloutId: string | null) => {
+      try {
+        const saved = await api.upsertOverride(
+          documentId, mention.entry_id, mention.span[0], mention.span[1], calloutId,
+        );
+        const key = (o: OverrideRead) => `${o.entry_id}:${o.span_start}:${o.span_end}`;
+        setOverrides((os) => [...os.filter((o) => key(o) !== key(saved)), saved]);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [documentId],
+  );
 
   const navigateToCallout = useCallback((callout: CalloutDto, highlightIds: string[]) => {
     setLayout((l) => (l === "text" ? "split" : l));
@@ -311,7 +334,16 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   // Forward: text numeral → its drawing callout(s); ambiguous opens a chooser.
   const onMentionClick = useCallback(
     (mention: NumeralMentionDto) => {
-      const a = assocByKey.get(`${mention.entry_id}:${mention.span[0]}:${mention.span[1]}`);
+      const key = `${mention.entry_id}:${mention.span[0]}:${mention.span[1]}`;
+      // A saved override wins over the engine's association.
+      const ov = overrideByKey.get(key);
+      if (ov) {
+        const c = ov.callout_id ? calloutById.get(ov.callout_id) : undefined;
+        if (c) navigateToCallout(c, [c.callout_id]);
+        setChooser(null);
+        return;
+      }
+      const a = assocByKey.get(key);
       const ids = (a?.selected_callout_ids.length ? a.selected_callout_ids : a?.candidate_callout_ids) ?? [];
       const cos = ids.map((id) => calloutById.get(id)).filter((c): c is CalloutDto => !!c);
       if (cos.length === 0) return; // unresolved — nothing to point at
@@ -322,7 +354,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
         navigateToCallout(cos[0], cos.map((c) => c.callout_id));
       }
     },
-    [assocByKey, calloutById, navigateToCallout],
+    [overrideByKey, assocByKey, calloutById, navigateToCallout],
   );
 
   // Reverse: drawing callout → cycle through the text mentions of that numeral.
@@ -779,6 +811,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                 className="secondary"
                 onClick={() => {
                   navigateToCallout(c, [c.callout_id]);
+                  persistOverride(chooser.mention, c.callout_id);
                   setChooser(null);
                 }}
               >
@@ -786,6 +819,17 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                 {c.figure_id ? ` · FIG. ${c.figure_id}` : ""} · p.{c.page_index + 1}
               </button>
             ))}
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                persistOverride(chooser.mention, null);
+                setChooser(null);
+              }}
+              title="Record that none of these is correct"
+            >
+              None of these
+            </button>
           </div>
         </div>
       )}

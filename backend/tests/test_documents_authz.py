@@ -127,3 +127,42 @@ async def test_annotation_authorization(client, make_token, auth):
     assert (
         await client.delete(f"/api/v1/annotations/{annotation_id}", headers=auth(owner))
     ).status_code == 204
+
+
+async def test_override_authorization(client, make_token, auth):
+    owner = make_token("owner", "o@example.com")
+    intruder = make_token("intruder", "x@example.com")
+    doc_id = await _create_doc(client, auth, owner)
+
+    body = {"entry_id": "line_0000005", "span_start": 4, "span_end": 7, "callout_id": "callout_1"}
+    created = await client.put(
+        f"/api/v1/documents/{doc_id}/overrides", headers=auth(owner), json=body
+    )
+    assert created.status_code == 200
+    override_id = created.json()["id"]
+
+    # Upsert replaces the choice for the same mention (no duplicate row).
+    again = await client.put(
+        f"/api/v1/documents/{doc_id}/overrides",
+        headers=auth(owner),
+        json={**body, "callout_id": None},
+    )
+    assert again.status_code == 200 and again.json()["id"] == override_id
+    assert again.json()["callout_id"] is None
+
+    listed = await client.get(f"/api/v1/documents/{doc_id}/overrides", headers=auth(owner))
+    assert [o["id"] for o in listed.json()] == [override_id]
+
+    # Intruder cannot upsert, list, or delete.
+    assert (
+        await client.put(f"/api/v1/documents/{doc_id}/overrides", headers=auth(intruder), json=body)
+    ).status_code == 404
+    assert (
+        await client.get(f"/api/v1/documents/{doc_id}/overrides", headers=auth(intruder))
+    ).status_code == 404
+    assert (
+        await client.delete(f"/api/v1/overrides/{override_id}", headers=auth(intruder))
+    ).status_code == 404
+    assert (
+        await client.delete(f"/api/v1/overrides/{override_id}", headers=auth(owner))
+    ).status_code == 204

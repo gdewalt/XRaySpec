@@ -21,6 +21,7 @@ from ..db.models import (
     ExtractionArtifact,
     ExtractionJob,
     JobCheckpoint,
+    ReferenceLinkOverride,
     SourceDocument,
     UserDocument,
 )
@@ -39,6 +40,9 @@ async def purge_document(session: AsyncSession, store: ObjectStore, doc: UserDoc
     """
     await session.execute(delete(Bookmark).where(Bookmark.document_id == doc.id))
     await session.execute(delete(Annotation).where(Annotation.document_id == doc.id))
+    await session.execute(
+        delete(ReferenceLinkOverride).where(ReferenceLinkOverride.document_id == doc.id)
+    )
     await session.execute(delete(ExtractionJob).where(ExtractionJob.document_id == doc.id))
 
     source = await session.get(SourceDocument, doc.source_id)

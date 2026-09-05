@@ -33,6 +33,16 @@ export interface AnnotationRead {
   created_at: string;
 }
 
+export interface OverrideRead {
+  id: string;
+  document_id: string;
+  entry_id: string;
+  span_start: number;
+  span_end: number;
+  callout_id: string | null;
+  created_at: string;
+}
+
 export interface JobRead {
   id: string;
   document_id: string | null;

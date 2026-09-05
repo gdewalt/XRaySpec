@@ -17,12 +17,20 @@ from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import select
 
 from ...config import get_settings
-from ...db.models import Annotation, Bookmark, ExtractionJob, SourceDocument, UserDocument
+from ...db.models import (
+    Annotation,
+    Bookmark,
+    ExtractionJob,
+    ReferenceLinkOverride,
+    SourceDocument,
+    UserDocument,
+)
 from ...patents import PatentParseError, parse_patent_identifier
 from ...schemas.annotations import AnnotationCreate, AnnotationRead
 from ...schemas.bookmarks import BookmarkCreate, BookmarkRead
 from ...schemas.documents import DocumentCreate, DocumentList, DocumentRead
 from ...schemas.jobs import JobRead
+from ...schemas.overrides import OverrideRead, OverrideUpsert
 from ...services.audit import record_audit
 from ...services.deletion import purge_document
 from ..deps import CurrentUser, DbSession, Storage
@@ -310,4 +318,64 @@ async def delete_annotation(annotation_id: str, user: CurrentUser, session: DbSe
     if annotation is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Annotation not found")
     await session.delete(annotation)
+    await session.commit()
+
+
+@router.get("/documents/{document_id}/overrides", response_model=list[OverrideRead])
+async def list_overrides(
+    document_id: str, user: CurrentUser, session: DbSession
+) -> list[OverrideRead]:
+    await _owned_document(session, user, document_id)
+    rows = await session.scalars(
+        select(ReferenceLinkOverride).where(
+            ReferenceLinkOverride.document_id == document_id,
+            ReferenceLinkOverride.owner_id == user.id,
+        )
+    )
+    return [OverrideRead.model_validate(o) for o in rows]
+
+
+@router.put("/documents/{document_id}/overrides", response_model=OverrideRead)
+async def upsert_override(
+    document_id: str, body: OverrideUpsert, user: CurrentUser, session: DbSession
+) -> OverrideRead:
+    """Record (or replace) the user's choice for one mention's callout (§12.7)."""
+    await _owned_document(session, user, document_id)
+    existing = await session.scalar(
+        select(ReferenceLinkOverride).where(
+            ReferenceLinkOverride.document_id == document_id,
+            ReferenceLinkOverride.owner_id == user.id,
+            ReferenceLinkOverride.entry_id == body.entry_id,
+            ReferenceLinkOverride.span_start == body.span_start,
+            ReferenceLinkOverride.span_end == body.span_end,
+        )
+    )
+    if existing is not None:
+        existing.callout_id = body.callout_id
+        override = existing
+    else:
+        override = ReferenceLinkOverride(
+            owner_id=user.id,
+            document_id=document_id,
+            entry_id=body.entry_id,
+            span_start=body.span_start,
+            span_end=body.span_end,
+            callout_id=body.callout_id,
+        )
+        session.add(override)
+    await session.commit()
+    await session.refresh(override)
+    return OverrideRead.model_validate(override)
+
+
+@router.delete("/overrides/{override_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_override(override_id: str, user: CurrentUser, session: DbSession) -> None:
+    override = await session.scalar(
+        select(ReferenceLinkOverride).where(
+            ReferenceLinkOverride.id == override_id, ReferenceLinkOverride.owner_id == user.id
+        )
+    )
+    if override is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Override not found")
+    await session.delete(override)
     await session.commit()

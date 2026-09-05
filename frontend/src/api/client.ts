@@ -10,6 +10,7 @@ import type {
   DocumentRead,
   ImportAnalysis,
   JobRead,
+  OverrideRead,
   UploadCompleteResponse,
   UploadGrant,
 } from "./types";
@@ -72,6 +73,20 @@ export const api = {
     ),
   deleteAnnotation: (id: string) =>
     request<void>(`/api/v1/annotations/${id}`, { method: "DELETE" }),
+
+  listOverrides: (docId: string) =>
+    request<OverrideRead[]>(`/api/v1/documents/${docId}/overrides`),
+  upsertOverride: (
+    docId: string,
+    entry_id: string,
+    span_start: number,
+    span_end: number,
+    callout_id: string | null,
+  ) =>
+    request<OverrideRead>(
+      `/api/v1/documents/${docId}/overrides`,
+      jsonInit("PUT", { entry_id, span_start, span_end, callout_id }),
+    ),
 
   getArtifactEntries: (artifactId: string) =>
     request<ArtifactEntries>(`/api/v1/artifacts/${artifactId}/entries`),

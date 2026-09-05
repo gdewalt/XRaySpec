@@ -244,6 +244,29 @@ class Annotation(Base):
     created_at: Mapped[datetime] = _ts()
 
 
+class ReferenceLinkOverride(Base):
+    """A user's correction of a mention→callout association (DESIGN.md §7, §12.7).
+
+    Keyed by the mention (``entry_id`` + character span). ``callout_id`` is the
+    chosen drawing callout, or null to record "no correct callout" (mark the
+    mention unresolved). One override per mention; purged with the document."""
+
+    __tablename__ = "reference_link_overrides"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("rlo"))
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    document_id: Mapped[str] = mapped_column(ForeignKey("user_documents.id"), index=True)
+    entry_id: Mapped[str] = mapped_column(String)
+    span_start: Mapped[int] = mapped_column()
+    span_end: Mapped[int] = mapped_column()
+    callout_id: Mapped[str | None] = mapped_column(String, default=None)
+    created_at: Mapped[datetime] = _ts()
+
+    __table_args__ = (
+        UniqueConstraint("document_id", "entry_id", "span_start", "span_end", name="uq_override"),
+    )
+
+
 class AuditEvent(Base):
     """Content-free audit record (DESIGN.md §7, §18.3). ``details`` must never
     contain document text or other sensitive content."""
