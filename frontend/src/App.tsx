@@ -43,14 +43,36 @@ export function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>X-Ray Spec</h1>
-        {token && (
-          <button type="button" className="secondary" onClick={() => setToken(null)}>
-            Sign out
-          </button>
-        )}
+        <button
+          type="button"
+          className="brand"
+          onClick={token ? back : undefined}
+          aria-label={token ? "Return to documents" : "X-Ray Spec"}
+        >
+          <span className="brand-mark" aria-hidden="true">
+            <span />
+          </span>
+          <span className="brand-copy">
+            <strong>X-Ray Spec</strong>
+            <small>Patent evidence workspace</small>
+          </span>
+        </button>
+        <div className="header-actions">
+          {token && view.mode === "viewer" && (
+            <button type="button" className="secondary header-back" onClick={back}>
+              <span aria-hidden="true">←</span> Documents
+            </button>
+          )}
+          {token && (
+            <button type="button" className="quiet-button" onClick={() => setToken(null)}>
+              Sign out
+            </button>
+          )}
+        </div>
       </header>
-      <main className="container">{body}</main>
+      <main className={`container${view.mode === "viewer" && token ? " viewer-container" : ""}`}>
+        {body}
+      </main>
     </div>
   );
 }

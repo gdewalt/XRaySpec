@@ -43,19 +43,32 @@ function FetchForm({ onChanged }: { onChanged: () => void }) {
 
   return (
     <form className="form" onSubmit={submit}>
-      <label htmlFor="fetch-id">US patent identifier</label>
-      <input
-        id="fetch-id"
-        value={identifier}
-        onChange={(e) => setIdentifier(e.target.value)}
-        placeholder="US 12,262,260 B2  or  US 2024/0123456 A1"
-        required
-      />
-      <label htmlFor="fetch-title">Title (optional)</label>
-      <input id="fetch-title" value={title} onChange={(e) => setTitle(e.target.value)} />
-      <button type="submit" disabled={busy || !identifier.trim()}>
-        {busy ? "Queuing…" : "Fetch patent"}
-      </button>
+      <div className="field">
+        <label htmlFor="fetch-id">US patent or publication number</label>
+        <input
+          id="fetch-id"
+          value={identifier}
+          onChange={(e) => setIdentifier(e.target.value)}
+          placeholder="e.g. US 12,262,260 B2"
+          required
+          autoComplete="off"
+        />
+        <span className="field-hint">Grant and application publication numbers are supported.</span>
+      </div>
+      <div className="field">
+        <label htmlFor="fetch-title">Display title <span className="optional">Optional</span></label>
+        <input
+          id="fetch-title"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Uses the patent title when left blank"
+        />
+      </div>
+      <div className="form-actions">
+        <button type="submit" disabled={busy || !identifier.trim()}>
+          {busy ? "Queuing…" : "Fetch patent"} <span aria-hidden="true">→</span>
+        </button>
+      </div>
       <Status msg={msg} />
     </form>
   );
@@ -87,20 +100,34 @@ function UploadForm({ onChanged }: { onChanged: () => void }) {
 
   return (
     <form className="form" onSubmit={submit}>
-      <label htmlFor="upload-file">PDF file</label>
-      <input
-        id="upload-file"
-        type="file"
-        accept="application/pdf,.pdf"
-        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-        required
-      />
-      <label htmlFor="upload-title">Title (optional)</label>
-      <input id="upload-title" value={title} onChange={(e) => setTitle(e.target.value)} />
-      <button type="submit" disabled={busy || !file}>
-        {busy ? "Uploading…" : "Upload PDF"}
-      </button>
-      <p className="muted small">Direct upload requires configured object storage.</p>
+      <div className="field">
+        <label htmlFor="upload-file">Source PDF</label>
+        <label className={`file-drop${file ? " has-file" : ""}`} htmlFor="upload-file">
+          <span className="file-icon" aria-hidden="true">PDF</span>
+          <span>
+            <strong>{file ? file.name : "Choose a patent PDF"}</strong>
+            <small>{file ? `${(file.size / 1024 / 1024).toFixed(1)} MB selected` : "PDF files up to 100 MB"}</small>
+          </span>
+          <span className="file-action">Browse</span>
+        </label>
+        <input
+          className="visually-hidden-input"
+          id="upload-file"
+          type="file"
+          accept="application/pdf,.pdf"
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          required
+        />
+      </div>
+      <div className="field">
+        <label htmlFor="upload-title">Display title <span className="optional">Optional</span></label>
+        <input id="upload-title" value={title} onChange={(e) => setTitle(e.target.value)} />
+      </div>
+      <div className="form-actions">
+        <button type="submit" disabled={busy || !file}>
+          {busy ? "Uploading…" : "Upload and process"} <span aria-hidden="true">→</span>
+        </button>
+      </div>
       <Status msg={msg} />
     </form>
   );
@@ -147,8 +174,15 @@ function ImportForm({ onChanged }: { onChanged: () => void }) {
 
   return (
     <div className="form">
-      <label htmlFor="import-file">Portable save (.patent-viewer.json)</label>
-      <input id="import-file" type="file" accept="application/json,.json" onChange={onFile} />
+      <div className="field">
+        <label htmlFor="import-file">Portable save</label>
+        <label className="file-drop" htmlFor="import-file">
+          <span className="file-icon json" aria-hidden="true">JSON</span>
+          <span><strong>Choose a portable save</strong><small>.patent-viewer.json files</small></span>
+          <span className="file-action">Browse</span>
+        </label>
+        <input className="visually-hidden-input" id="import-file" type="file" accept="application/json,.json" onChange={onFile} />
+      </div>
       {analysis && (
         <div className="analysis">
           <p>
@@ -189,9 +223,9 @@ function ImportForm({ onChanged }: { onChanged: () => void }) {
 }
 
 const TABS = [
-  { id: "fetch", label: "Fetch patent" },
-  { id: "upload", label: "Upload PDF" },
-  { id: "import", label: "Import save" },
+  { id: "fetch", label: "Patent number", icon: "⌕" },
+  { id: "upload", label: "Upload PDF", icon: "↑" },
+  { id: "import", label: "Import save", icon: "↙" },
 ] as const;
 
 type Tab = (typeof TABS)[number]["id"];
@@ -199,8 +233,12 @@ type Tab = (typeof TABS)[number]["id"];
 export function IngestPanel({ onChanged }: { onChanged: () => void }) {
   const [tab, setTab] = useState<Tab>("fetch");
   return (
-    <section className="panel" aria-labelledby="ingest-h">
-      <h2 id="ingest-h">Add a document</h2>
+    <section className="panel ingest-panel" aria-labelledby="ingest-h">
+      <div className="panel-heading-copy">
+        <p className="eyebrow">Add evidence</p>
+        <h2 id="ingest-h">Add a document</h2>
+        <p>Start from a public identifier, your own source PDF, or a previous export.</p>
+      </div>
       <div role="tablist" aria-label="Ingestion method" className="tabs">
         {TABS.map((t) => (
           <button
@@ -213,11 +251,12 @@ export function IngestPanel({ onChanged }: { onChanged: () => void }) {
             onClick={() => setTab(t.id)}
             type="button"
           >
+            <span className="tab-icon" aria-hidden="true">{t.icon}</span>
             {t.label}
           </button>
         ))}
       </div>
-      <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
+      <div className="tab-panel" role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
         {tab === "fetch" && <FetchForm onChanged={onChanged} />}
         {tab === "upload" && <UploadForm onChanged={onChanged} />}
         {tab === "import" && <ImportForm onChanged={onChanged} />}

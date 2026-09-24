@@ -21,7 +21,12 @@ function formatDate(iso: string | null): string {
 }
 
 function StateBadge({ state }: { state: string }) {
-  return <span className={`badge state-${state}`}>{state.replace(/_/g, " ")}</span>;
+  return (
+    <span className={`badge state-${state}`}>
+      <span className="badge-dot" aria-hidden="true" />
+      {state.replace(/_/g, " ")}
+    </span>
+  );
 }
 
 export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void }) {
@@ -64,14 +69,45 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
     }
   }
 
+  const total = docs?.length ?? 0;
+  const ready = docs?.filter((d) => d.state === "ready" || d.state === "text_only").length ?? 0;
+  const working = docs?.filter((d) => ACTIVE_STATES.has(d.state)).length ?? 0;
+
   return (
-    <>
+    <div className="dashboard">
+      <section className="dashboard-intro" aria-labelledby="workspace-h">
+        <div>
+          <p className="eyebrow">Workspace</p>
+          <h1 id="workspace-h">Your patent library</h1>
+          <p className="intro-copy">
+            Read specifications beside the source PDF and keep every citation tied to evidence.
+          </p>
+        </div>
+        <dl className="library-stats" aria-label="Library summary">
+          <div>
+            <dt>Documents</dt>
+            <dd>{total}</dd>
+          </div>
+          <div>
+            <dt>Ready</dt>
+            <dd>{ready}</dd>
+          </div>
+          <div>
+            <dt>In progress</dt>
+            <dd>{working}</dd>
+          </div>
+        </dl>
+      </section>
       <IngestPanel onChanged={load} />
-      <section className="panel" aria-labelledby="docs-h">
+      <section className="panel documents-panel" aria-labelledby="docs-h">
         <div className="panel-head">
-          <h2 id="docs-h">Documents</h2>
-          <button type="button" className="secondary" onClick={load}>
-            Refresh
+          <div>
+            <p className="eyebrow">Library</p>
+            <h2 id="docs-h">Documents</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={load} aria-label="Refresh documents">
+            <span aria-hidden="true">↻</span>
+            <span>Refresh</span>
           </button>
         </div>
         {error && (
@@ -80,49 +116,71 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
           </p>
         )}
         {docs === null ? (
-          <p className="muted">Loading…</p>
+          <div className="loading-state" role="status">
+            <span className="spinner" aria-hidden="true" /> Loading your library…
+          </div>
         ) : docs.length === 0 ? (
-          <p className="muted">No documents yet. Add one above.</p>
+          <div className="empty-state">
+            <div className="empty-illustration" aria-hidden="true">
+              <span>§</span>
+            </div>
+            <h3>Your library is empty</h3>
+            <p>Add a US patent number, upload a PDF, or restore a portable save to begin.</p>
+          </div>
         ) : (
-          <table className="docs">
-            <caption className="sr-only">Your documents</caption>
-            <thead>
-              <tr>
-                <th scope="col">Title</th>
-                <th scope="col">Status</th>
-                <th scope="col">Created</th>
-                <th scope="col">Last opened</th>
-                <th scope="col">
-                  <span className="sr-only">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {docs.map((d) => (
-                <tr key={d.id}>
-                  <td>{d.title}</td>
-                  <td>
+          <div className="document-list">
+            {docs.map((d) => {
+              const canOpen = d.state === "ready" || d.state === "text_only";
+              return (
+                <article className="document-row" key={d.id}>
+                  <button
+                    type="button"
+                    className="document-main"
+                    onClick={() => onOpen(d.id)}
+                    disabled={!canOpen}
+                    aria-label={`${canOpen ? "Open" : "View status for"} ${d.title}`}
+                  >
+                    <span className="document-icon" aria-hidden="true">US</span>
+                    <span className="document-copy">
+                      <strong>{d.title}</strong>
+                      <span className="document-meta">
+                        Added {formatDate(d.created_at)}
+                        <span aria-hidden="true">·</span>
+                        {d.last_opened_at ? `Opened ${formatDate(d.last_opened_at)}` : "Not opened yet"}
+                      </span>
+                    </span>
+                  </button>
+                  <div className="document-status">
                     <StateBadge state={d.state} />
                     {ACTIVE_STATES.has(d.state) && d.state !== "deleting" && (
                       <JobProgress documentId={d.id} onComplete={load} />
                     )}
-                  </td>
-                  <td>{formatDate(d.created_at)}</td>
-                  <td>{formatDate(d.last_opened_at)}</td>
-                  <td className="row-actions">
-                    <button type="button" className="secondary" onClick={() => onOpen(d.id)}>
-                      Open
+                  </div>
+                  <div className="row-actions">
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => onOpen(d.id)}
+                      disabled={!canOpen}
+                    >
+                      Open <span aria-hidden="true">→</span>
                     </button>
-                    <button type="button" className="danger" onClick={() => remove(d)}>
-                      Delete
+                    <button
+                      type="button"
+                      className="menu-button"
+                      onClick={() => remove(d)}
+                      aria-label={`Delete ${d.title}`}
+                      title="Delete document"
+                    >
+                      <span aria-hidden="true">•••</span>
                     </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
         )}
       </section>
-    </>
+    </div>
   );
 }
