@@ -71,6 +71,8 @@ export const api = {
       `/api/v1/documents/${docId}/annotations`,
       jsonInit("POST", { target_entry_id, note }),
     ),
+  updateAnnotation: (id: string, note: string) =>
+    request<AnnotationRead>(`/api/v1/annotations/${id}`, jsonInit("PATCH", { note })),
   deleteAnnotation: (id: string) =>
     request<void>(`/api/v1/annotations/${id}`, { method: "DELETE" }),
 

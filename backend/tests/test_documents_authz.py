@@ -105,7 +105,7 @@ async def test_annotation_authorization(client, make_token, auth):
     assert created.status_code == 201
     annotation_id = created.json()["id"]
 
-    # Intruder cannot create on, list, or delete against the owner's document/annotation.
+    # Intruder cannot create on, list, update, or delete the owner's annotation.
     assert (
         await client.post(
             f"/api/v1/documents/{doc_id}/annotations",
@@ -117,8 +117,23 @@ async def test_annotation_authorization(client, make_token, auth):
         await client.get(f"/api/v1/documents/{doc_id}/annotations", headers=auth(intruder))
     ).status_code == 404
     assert (
+        await client.patch(
+            f"/api/v1/annotations/{annotation_id}",
+            headers=auth(intruder),
+            json={"note": "tampered"},
+        )
+    ).status_code == 404
+    assert (
         await client.delete(f"/api/v1/annotations/{annotation_id}", headers=auth(intruder))
     ).status_code == 404
+
+    updated = await client.patch(
+        f"/api/v1/annotations/{annotation_id}",
+        headers=auth(owner),
+        json={"note": "reviewed claim"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["note"] == "reviewed claim"
 
     listed = await client.get(f"/api/v1/documents/{doc_id}/annotations", headers=auth(owner))
     assert [a["id"] for a in listed.json()] == [annotation_id]

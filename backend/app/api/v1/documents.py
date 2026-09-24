@@ -26,7 +26,7 @@ from ...db.models import (
     UserDocument,
 )
 from ...patents import PatentParseError, parse_patent_identifier
-from ...schemas.annotations import AnnotationCreate, AnnotationRead
+from ...schemas.annotations import AnnotationCreate, AnnotationRead, AnnotationUpdate
 from ...schemas.bookmarks import BookmarkCreate, BookmarkRead
 from ...schemas.documents import DocumentCreate, DocumentList, DocumentRead
 from ...schemas.jobs import JobRead
@@ -319,6 +319,21 @@ async def delete_annotation(annotation_id: str, user: CurrentUser, session: DbSe
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Annotation not found")
     await session.delete(annotation)
     await session.commit()
+
+
+@router.patch("/annotations/{annotation_id}", response_model=AnnotationRead)
+async def update_annotation(
+    annotation_id: str, body: AnnotationUpdate, user: CurrentUser, session: DbSession
+) -> AnnotationRead:
+    annotation = await session.scalar(
+        select(Annotation).where(Annotation.id == annotation_id, Annotation.owner_id == user.id)
+    )
+    if annotation is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Annotation not found")
+    annotation.note = body.note
+    await session.commit()
+    await session.refresh(annotation)
+    return AnnotationRead.model_validate(annotation)
 
 
 @router.get("/documents/{document_id}/overrides", response_model=list[OverrideRead])

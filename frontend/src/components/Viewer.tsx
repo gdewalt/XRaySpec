@@ -178,6 +178,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   const [overrides, setOverrides] = useState<OverrideRead[]>([]);
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
+  const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const [citeStyle, setCiteStyle] = useState<CiteStyle>(loadStyle);
   const [citeSettingsOpen, setCiteSettingsOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -298,6 +299,12 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
+  }, []);
+
+  const beginEditAnnotation = useCallback((annotation: AnnotationRead) => {
+    setEditingAnnotationId(annotation.id);
+    setNoteDraft(annotation.note);
+    setNoteOpen(true);
   }, []);
 
   const scrollToOrdinal = useCallback((ordinal: number) => {
@@ -500,16 +507,22 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
 
   const saveNote = useCallback(async () => {
     const text = noteDraft.trim();
-    if (!text || !selectedStartEntry) return;
+    if (!text || (!editingAnnotationId && !selectedStartEntry)) return;
     try {
-      const created = await api.createAnnotation(documentId, selectedStartEntry.entry_id, text);
-      setAnnotations((as) => [created, ...as]);
+      if (editingAnnotationId) {
+        const updated = await api.updateAnnotation(editingAnnotationId, text);
+        setAnnotations((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+      } else if (selectedStartEntry) {
+        const created = await api.createAnnotation(documentId, selectedStartEntry.entry_id, text);
+        setAnnotations((items) => [created, ...items]);
+      }
       setNoteDraft("");
       setNoteOpen(false);
+      setEditingAnnotationId(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [noteDraft, selectedStartEntry, documentId]);
+  }, [noteDraft, selectedStartEntry, documentId, editingAnnotationId]);
 
   const citation =
     selectedEntries.length && doc ? formatCitation(selectedEntries, doc.title, citeStyle) : "";
@@ -743,6 +756,17 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                         <button
                           type="button"
                           className="link-btn"
+                          onClick={() => {
+                            if (ord !== undefined) selectRange(ord, ord, { scroll: true });
+                            beginEditAnnotation(a);
+                          }}
+                          aria-label="Edit note"
+                        >
+                          ✎
+                        </button>
+                        <button
+                          type="button"
+                          className="link-btn"
                           onClick={() => removeAnnotation(a.id)}
                           aria-label="Delete note"
                         >
@@ -922,6 +946,14 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                   <button
                     type="button"
                     className="link-btn"
+                    onClick={() => beginEditAnnotation(a)}
+                    aria-label="Edit note"
+                  >
+                    ✎
+                  </button>
+                  <button
+                    type="button"
+                    className="link-btn"
                     onClick={() => removeAnnotation(a.id)}
                     aria-label="Delete note"
                   >
@@ -985,12 +1017,12 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
               <textarea
                 value={noteDraft}
                 onChange={(e) => setNoteDraft(e.target.value)}
-                placeholder="Add a note for this line…"
+                placeholder={editingAnnotationId ? "Edit this note…" : "Add a note for this line…"}
                 rows={2}
                 autoFocus
               />
               <button type="button" onClick={saveNote} disabled={!noteDraft.trim()}>
-                Save note
+                {editingAnnotationId ? "Save changes" : "Save note"}
               </button>
               <button
                 type="button"
@@ -998,6 +1030,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                 onClick={() => {
                   setNoteOpen(false);
                   setNoteDraft("");
+                  setEditingAnnotationId(null);
                 }}
               >
                 Cancel
@@ -1018,7 +1051,11 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
             <button
               type="button"
               className="secondary"
-              onClick={() => setNoteOpen((v) => !v)}
+              onClick={() => {
+                setEditingAnnotationId(null);
+                setNoteDraft("");
+                setNoteOpen((v) => !v);
+              }}
               disabled={!selectedStartEntry}
             >
               Add note

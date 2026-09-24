@@ -12,6 +12,10 @@ class AnnotationCreate(BaseModel):
     note: str = Field(min_length=1, max_length=4000)
 
 
+class AnnotationUpdate(BaseModel):
+    note: str = Field(min_length=1, max_length=4000)
+
+
 class AnnotationRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
