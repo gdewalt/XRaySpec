@@ -1,14 +1,31 @@
 import { type FormEvent, useState } from "react";
 
-import { setToken } from "../auth/session";
+import { productionAuthConfigured, sendMagicLink, setToken } from "../auth/session";
 
 export function Login() {
+  const productionAuth = productionAuthConfigured();
   const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
 
-  function submit(e: FormEvent) {
+  async function submit(e: FormEvent) {
     e.preventDefault();
-    const t = value.trim();
-    if (t) setToken(t);
+    const input = value.trim();
+    if (!input) return;
+    if (!productionAuth) {
+      setToken(input);
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      await sendMagicLink(input);
+      setMessage("Check your email for a secure sign-in link.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -31,26 +48,43 @@ export function Login() {
         <p className="eyebrow">Private workspace</p>
         <h2 id="login-h">Sign in to continue</h2>
         <p className="muted">
-          Production uses secure Supabase sign-in. During local development, use a bearer token.
+          {productionAuth
+            ? "Enter an approved email address. We’ll send you a secure sign-in link."
+            : "Local development mode: paste a bearer token to continue."}
         </p>
         <form className="form" onSubmit={submit}>
           <div className="field">
-            <label htmlFor="token">Development token</label>
-            <textarea
-              id="token"
-              rows={4}
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              placeholder="eyJhbGciOi…"
-              spellCheck={false}
-              autoComplete="off"
-            />
+            <label htmlFor="credential">
+              {productionAuth ? "Email address" : "Development token"}
+            </label>
+            {productionAuth ? (
+              <input
+                id="credential"
+                type="email"
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                autoComplete="email"
+                required
+              />
+            ) : (
+              <textarea
+                id="credential"
+                rows={4}
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                placeholder="eyJhbGciOi…"
+                spellCheck={false}
+                autoComplete="off"
+              />
+            )}
           </div>
-          <button type="submit" disabled={!value.trim()}>
-            Enter workspace <span aria-hidden="true">→</span>
+          <button type="submit" disabled={busy || !value.trim()}>
+            {busy ? "Sending…" : productionAuth ? "Email sign-in link" : "Enter workspace"}
+            {!busy && <span aria-hidden="true"> →</span>}
           </button>
+          {message && <p className="status" role="status">{message}</p>}
         </form>
-        <p className="privacy-note"><span aria-hidden="true">●</span> Stored only in this browser</p>
+        <p className="privacy-note"><span aria-hidden="true">●</span> Private, allowlisted access</p>
       </section>
     </div>
   );

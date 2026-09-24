@@ -9,6 +9,7 @@ export default defineConfig({
       "/api": "http://localhost:8000",
       "/live": "http://localhost:8000",
       "/ready": "http://localhost:8000",
+      "/runtime-config.js": "http://localhost:8000",
     },
   },
 });

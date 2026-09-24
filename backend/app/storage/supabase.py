@@ -22,7 +22,10 @@ class SupabaseObjectStore:
     def __init__(self, project_url: str, service_key: str, bucket: str) -> None:
         self._base = f"{project_url.rstrip('/')}/storage/v1"
         self._bucket = bucket
-        self._auth = {"Authorization": f"Bearer {service_key}"}
+        self._auth = {
+            "Authorization": f"Bearer {service_key}",
+            "apikey": service_key,
+        }
 
     async def presign_upload(
         self,

@@ -7,6 +7,7 @@ predicate before results are revealed (see ``app.api.v1.documents``).
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from functools import lru_cache
 from typing import Annotated
@@ -59,7 +60,12 @@ async def current_user(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing bearer token")
 
     settings = get_settings()
-    auth = verify_bearer_token(authorization.split(" ", 1)[1], settings.supabase_jwt_secret)
+    auth = await asyncio.to_thread(
+        verify_bearer_token,
+        authorization.split(" ", 1)[1],
+        settings.supabase_jwt_secret,
+        project_url=settings.supabase_project_url,
+    )
 
     if settings.allowed_emails:
         allowed = {e.lower() for e in settings.allowed_emails}

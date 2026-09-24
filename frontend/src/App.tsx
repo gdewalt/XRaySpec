@@ -1,6 +1,6 @@
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
-import { getToken, setToken, subscribe } from "./auth/session";
+import { getToken, initializeAuth, signOut, subscribe } from "./auth/session";
 import { DocumentsView } from "./components/DocumentsView";
 import { Login } from "./components/Login";
 import { Viewer } from "./components/Viewer";
@@ -21,6 +21,10 @@ function initialView(): View {
 export function App() {
   const token = useSyncExternalStore(subscribe, getToken);
   const [view, setView] = useState<View>(initialView);
+
+  useEffect(() => {
+    void initializeAuth();
+  }, []);
 
   const open = (documentId: string) => {
     history.replaceState(null, "", `#doc=${documentId}`);
@@ -64,7 +68,7 @@ export function App() {
             </button>
           )}
           {token && (
-            <button type="button" className="quiet-button" onClick={() => setToken(null)}>
+            <button type="button" className="quiet-button" onClick={() => void signOut()}>
               Sign out
             </button>
           )}

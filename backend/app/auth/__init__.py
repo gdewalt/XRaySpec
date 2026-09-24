@@ -14,6 +14,7 @@ unchanged.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 
 import jwt
 from fastapi import HTTPException, status
@@ -32,23 +33,36 @@ def verify_bearer_token(
     secret: str,
     *,
     audience: str = "authenticated",
+    project_url: str = "",
 ) -> AuthenticatedUser:
     """Verify a Supabase JWT (HS256) and return the authenticated user.
 
     Raises 401 on any verification failure (bad signature, expired, wrong
     audience, missing subject).
     """
-    if not secret:
-        raise HTTPException(
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-            "Auth is not configured (missing JWT secret).",
-        )
     try:
-        claims = jwt.decode(token, secret, algorithms=["HS256"], audience=audience)
-    except jwt.InvalidTokenError as exc:
+        algorithm = jwt.get_unverified_header(token).get("alg")
+        if algorithm == "HS256":
+            if not secret:
+                raise HTTPException(
+                    status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    "Auth is not configured (missing JWT secret).",
+                )
+            claims = jwt.decode(token, secret, algorithms=["HS256"], audience=audience)
+        elif algorithm in {"ES256", "RS256"} and project_url:
+            signing_key = _jwks_client(project_url).get_signing_key_from_jwt(token).key
+            claims = jwt.decode(token, signing_key, algorithms=[algorithm], audience=audience)
+        else:
+            raise jwt.InvalidAlgorithmError("unsupported JWT signing algorithm")
+    except jwt.PyJWTError as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired token") from exc
 
     subject = claims.get("sub")
     if not subject:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token missing subject")
     return AuthenticatedUser(subject=subject, email=claims.get("email"))
+
+
+@lru_cache
+def _jwks_client(project_url: str) -> jwt.PyJWKClient:
+    return jwt.PyJWKClient(f"{project_url.rstrip('/')}/auth/v1/.well-known/jwks.json")

@@ -8,8 +8,10 @@ versioned API router.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI, Response, status
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from .api.deps import DbSession, Storage
@@ -82,3 +84,30 @@ async def ready(response: Response, session: DbSession, store: Storage) -> dict[
 
 
 app.include_router(api_router, prefix="/api/v1")
+
+
+@app.get("/runtime-config.js", include_in_schema=False)
+async def runtime_config() -> Response:
+    """Public browser configuration. The anon key is intentionally public;
+    service-role and JWT-signing secrets are never included."""
+    import json
+
+    payload = {
+        "supabaseUrl": _settings.supabase_project_url,
+        "supabaseAnonKey": _settings.supabase_anon_key,
+        "environment": _settings.environment,
+    }
+    return Response(
+        content=f"window.__XRAY_CONFIG__ = {json.dumps(payload)};",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+if _settings.frontend_dist_dir:
+    frontend_dir = Path(_settings.frontend_dist_dir)
+    if frontend_dir.is_dir():
+        # Registered last so API, health, docs, and runtime config keep priority.
+        app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
+    else:
+        logger.warning("frontend distribution directory does not exist: %s", frontend_dir)

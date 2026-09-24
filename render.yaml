@@ -1,0 +1,72 @@
+envVarGroups:
+  - name: xray-production
+    envVars:
+      - key: XRAY_ENVIRONMENT
+        value: production
+      - key: XRAY_STORAGE_BACKEND
+        value: supabase
+      - key: XRAY_STORAGE_BUCKET
+        value: xray-sources
+      - key: XRAY_MAX_CONCURRENT_EXTRACTIONS
+        value: "1"
+      - key: XRAY_ENRICHMENT_ENABLED
+        value: "true"
+      - key: XRAY_DEFAULT_RETENTION_DAYS
+        value: "90"
+      - key: XRAY_RATE_LIMIT_PER_MINUTE
+        value: "120"
+      - key: XRAY_TRUST_FORWARDED_FOR
+        value: "true"
+
+services:
+  - type: web
+    name: xray-spec
+    runtime: docker
+    plan: 0.5c-512mb
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /ready
+    preDeployCommand: cd /app/backend && alembic upgrade head
+    autoDeployTrigger: off
+    numInstances: 1
+    envVars:
+      - fromGroup: xray-production
+      - key: XRAY_DATABASE_URL
+        sync: false
+      - key: XRAY_SUPABASE_PROJECT_URL
+        sync: false
+      - key: XRAY_SUPABASE_ANON_KEY
+        sync: false
+      - key: XRAY_SUPABASE_JWT_SECRET
+        sync: false
+      - key: XRAY_SUPABASE_SERVICE_KEY
+        sync: false
+      - key: XRAY_ALLOWED_EMAILS
+        sync: false
+
+  - type: worker
+    name: xray-spec-worker
+    runtime: docker
+    plan: 1c-2g
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: cd /app/backend && python -m app.worker.run
+    autoDeployTrigger: off
+    numInstances: 1
+    maxShutdownDelaySeconds: 300
+    envVars:
+      - fromGroup: xray-production
+      - key: XRAY_DATABASE_URL
+        sync: false
+      - key: XRAY_SUPABASE_PROJECT_URL
+        sync: false
+      - key: XRAY_SUPABASE_ANON_KEY
+        sync: false
+      - key: XRAY_SUPABASE_JWT_SECRET
+        sync: false
+      - key: XRAY_SUPABASE_SERVICE_KEY
+        sync: false
+      - key: XRAY_ALLOWED_EMAILS
+        sync: false

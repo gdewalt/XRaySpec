@@ -30,3 +30,14 @@ async def test_security_headers_on_real_app(client):
     assert "default-src 'none'" in res.headers["content-security-policy"]
     # Dev/test environment: HSTS must not be asserted over plain HTTP.
     assert "strict-transport-security" not in res.headers
+
+
+async def test_runtime_config_is_javascript_and_exposes_no_server_secrets(client):
+    res = await client.get("/runtime-config.js")
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("application/javascript")
+    assert res.headers["cache-control"] == "no-store"
+    assert "supabaseUrl" in res.text
+    assert "supabaseAnonKey" in res.text
+    assert "service" not in res.text.lower()
+    assert "jwt" not in res.text.lower()

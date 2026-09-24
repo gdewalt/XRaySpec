@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     # Supabase Auth — JWT verification (DESIGN.md §17.1). Never a client-direct/RLS path.
     supabase_jwt_secret: str = Field(default="", description="Supabase JWT signing secret")
     supabase_project_url: str = ""
+    # Public browser credential, exposed only through /runtime-config.js.
+    supabase_anon_key: str = ""
 
     # Object storage (Supabase Storage or external S3-compatible; §23 #1 open).
     storage_backend: str = "supabase"  # "supabase" | "local" (dev) | "memory" (tests)
@@ -60,6 +62,9 @@ class Settings(BaseSettings):
     # Instance policy defaults (§9.3, §13.1)
     enrichment_enabled: bool = True
     default_retention_days: int = 90
+
+    # When set, FastAPI serves the built React app at the same origin as the API.
+    frontend_dist_dir: str = ""
 
 
 @lru_cache
