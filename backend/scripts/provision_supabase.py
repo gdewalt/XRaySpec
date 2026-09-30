@@ -25,6 +25,17 @@ async def main() -> None:
         "Content-Type": "application/json",
     }
     bucket = settings.storage_bucket
+    bucket_options = {
+        "public": False,
+        "file_size_limit": settings.max_upload_bytes,
+        "allowed_mime_types": [
+            "application/pdf",
+            "application/gzip",
+            "application/json",
+            "application/octet-stream",
+        ],
+    }
+
     async with httpx.AsyncClient(timeout=30) as client:
         existing = await client.get(f"{base}/bucket/{bucket}", headers=headers)
         if existing.status_code == 404:
@@ -34,14 +45,7 @@ async def main() -> None:
                 json={
                     "id": bucket,
                     "name": bucket,
-                    "public": False,
-                    "file_size_limit": settings.max_upload_bytes,
-                    "allowed_mime_types": [
-                        "application/pdf",
-                        "application/gzip",
-                        "application/json",
-                        "application/octet-stream",
-                    ],
+                    **bucket_options,
                 },
             )
             created.raise_for_status()
@@ -51,7 +55,11 @@ async def main() -> None:
             info = existing.json()
             if info.get("public"):
                 raise SystemExit(f"Bucket {bucket!r} exists but is public; make it private.")
-            print(f"Private bucket already exists: {bucket}")
+            updated = await client.put(
+                f"{base}/bucket/{bucket}", headers=headers, json=bucket_options
+            )
+            updated.raise_for_status()
+            print(f"Updated private bucket configuration: {bucket}")
 
 
 if __name__ == "__main__":

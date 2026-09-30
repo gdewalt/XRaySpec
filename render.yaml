@@ -7,6 +7,11 @@ envVarGroups:
         value: supabase
       - key: XRAY_STORAGE_BUCKET
         value: xray-sources
+      # Match the current Supabase bucket ceiling (50 MiB).
+      - key: XRAY_MAX_UPLOAD_BYTES
+        value: "52428800"
+      - key: XRAY_FETCH_MAX_PDF_BYTES
+        value: "52428800"
       - key: XRAY_MAX_CONCURRENT_EXTRACTIONS
         value: "1"
       - key: XRAY_ENRICHMENT_ENABLED
@@ -38,8 +43,6 @@ services:
         sync: false
       - key: XRAY_SUPABASE_ANON_KEY
         sync: false
-      - key: XRAY_SUPABASE_JWT_SECRET
-        sync: false
       - key: XRAY_SUPABASE_SERVICE_KEY
         sync: false
       - key: XRAY_ALLOWED_EMAILS
@@ -63,8 +66,6 @@ services:
       - key: XRAY_SUPABASE_PROJECT_URL
         sync: false
       - key: XRAY_SUPABASE_ANON_KEY
-        sync: false
-      - key: XRAY_SUPABASE_JWT_SECRET
         sync: false
       - key: XRAY_SUPABASE_SERVICE_KEY
         sync: false
