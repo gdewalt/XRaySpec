@@ -1,0 +1,19 @@
+entrypoint = "backend/app/main.py"
+modules = ["python-3.11", "nodejs-20"]
+run = ["bash", "scripts/replit-run.sh"]
+hidden = [".git", "frontend/node_modules", "frontend/dist", "backend/.venv"]
+
+[nix]
+channel = "stable-24_05"
+
+[gitHubImport]
+requiredFiles = [".replit", "replit.nix"]
+
+[deployment]
+build = ["bash", "scripts/replit-build.sh"]
+run = ["bash", "scripts/replit-run.sh"]
+
+[[ports]]
+localPort = 3000
+externalPort = 80
+
