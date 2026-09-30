@@ -96,14 +96,3 @@ npm run dev
 ```
 
 Copy `backend/.env.example` to `backend/.env` and fill in Supabase credentials before running against a database.
-
-## Production deployment
-
-The repository includes a Replit Reserved VM configuration that builds the
-React SPA, serves it from FastAPI on the single public port, runs Alembic
-migrations, and supervises the API and extraction worker. Supabase provides
-Postgres, Auth, and private object storage.
-
-See **[REPLIT_DEPLOYMENT.md](REPLIT_DEPLOYMENT.md)** for the required Supabase
-setup, Replit secrets, deployment commands, verification steps, and current
-security limitations.
