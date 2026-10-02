@@ -5,7 +5,8 @@ Two concerns, kept independent so each is testable in isolation:
 * :class:`SecurityHeadersMiddleware` stamps a strict, static set of response
   headers on every response. The web tier is a JSON + binary-PDF API (the SPA is
   built and served separately), so the CSP locks the API origin down to
-  ``default-src 'none'`` — nothing should ever be executed or embedded from it.
+  ``default-src 'none'`` with explicit allowances for the bundled frontend and
+  Supabase API connections.
 * :class:`RateLimitMiddleware` is a best-effort, per-process fixed-window limiter
   that protects a single instance from runaway or abusive callers. It is *not* a
   distributed quota (replicas are stateless — §20); disabled by default and
@@ -44,7 +45,11 @@ class SecurityHeadersMiddleware:
             (b"permissions-policy", b"geolocation=(), microphone=(), camera=(), payment=()"),
             (
                 b"content-security-policy",
-                b"default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+                b"default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                b"img-src 'self' data: blob:; font-src 'self' data:; "
+                b"connect-src 'self' https://*.supabase.co wss://*.supabase.co; "
+                b"worker-src 'self' blob:; frame-src 'self' blob:; manifest-src 'self'; "
+                b"object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
             ),
         ]
         if enable_hsts:
