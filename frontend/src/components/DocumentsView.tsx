@@ -3,6 +3,7 @@ import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react
 import { ApiError, api } from "../api/client";
 import type { DocumentRead, WorkspaceRead } from "../api/types";
 import { setToken } from "../auth/session";
+import { Icon } from "./Icon";
 import { IngestPanel } from "./IngestPanel";
 import { JobProgress } from "./JobProgress";
 
@@ -17,7 +18,9 @@ const ACTIVE_STATES = new Set([
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
+  return Number.isNaN(d.getTime())
+    ? "—"
+    : d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
 function StateBadge({ state }: { state: string }) {
@@ -59,7 +62,7 @@ function PatentRow({
         disabled={!canOpen}
         aria-label={(canOpen ? "Open " : "View status for ") + doc.title}
       >
-        <span className="document-icon" aria-hidden="true">US</span>
+        <span className="document-icon" aria-hidden="true"><Icon name="file-text" size={21} /></span>
         <span className="document-copy">
           <strong>{doc.title}</strong>
           <span className="document-meta">
@@ -77,7 +80,7 @@ function PatentRow({
       </div>
       <div className="row-actions">
         <label className="move-control">
-          <span className="sr-only">Move {doc.title} to workspace</span>
+          <span className="move-label"><Icon name="folder" size={15} /> Workspace</span>
           <select
             value={doc.workspace_id ?? ""}
             onChange={(event) => onMove(doc, event.target.value || null)}
@@ -98,16 +101,16 @@ function PatentRow({
           onClick={() => onOpen(doc.id)}
           disabled={!canOpen}
         >
-          Open <span aria-hidden="true">→</span>
+          Open <Icon name="arrow-up-right" size={16} />
         </button>
         <button
           type="button"
-          className="menu-button"
+          className="icon-button danger-icon"
           onClick={() => onRemove(doc)}
           aria-label={"Delete " + doc.title}
           title="Delete patent"
         >
-          <span aria-hidden="true">•••</span>
+          <Icon name="trash" size={17} />
         </button>
       </div>
     </article>
@@ -228,10 +231,10 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
     <div className="dashboard">
       <section className="dashboard-intro" aria-labelledby="workspace-h">
         <div>
-          <p className="eyebrow">Workspace</p>
-          <h1 id="workspace-h">Your patent library</h1>
+          <p className="eyebrow">Patent library</p>
+          <h1 id="workspace-h">Your research workspace</h1>
           <p className="intro-copy">
-            Read specifications beside the source PDF and organize related patents into workspaces.
+            Organize related patents, verify source material, and preserve citation-ready evidence.
           </p>
         </div>
         <dl className="library-stats" aria-label="Library summary">
@@ -244,7 +247,7 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
             <dd>{ready}</dd>
           </div>
           <div>
-            <dt>In progress</dt>
+            <dt>Processing</dt>
             <dd>{working}</dd>
           </div>
         </dl>
@@ -253,25 +256,33 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
       <section className="panel documents-panel" aria-labelledby="docs-h">
         <div className="panel-head">
           <div>
-            <p className="eyebrow">Library</p>
+            <p className="eyebrow">Collection</p>
             <h2 id="docs-h">Patents</h2>
+            <p>Grouped by workspace for faster review.</p>
           </div>
           <button type="button" className="icon-button" onClick={load} aria-label="Refresh patents">
-            <span aria-hidden="true">↻</span>
+            <Icon name="refresh" size={17} />
             <span>Refresh</span>
           </button>
         </div>
         <form className="workspace-create" onSubmit={createWorkspace}>
-          <label htmlFor="workspace-name">Create a workspace</label>
-          <div>
+          <div className="workspace-create-copy">
+            <span className="workspace-create-icon" aria-hidden="true"><Icon name="folder" /></span>
+            <span>
+              <label htmlFor="workspace-name">New workspace</label>
+              <small>Group patents by matter, technology, or review.</small>
+            </span>
+          </div>
+          <div className="workspace-create-fields">
             <input
               id="workspace-name"
               value={workspaceName}
               onChange={(event) => setWorkspaceName(event.target.value)}
-              placeholder="e.g. Battery cooling systems"
+              placeholder="Workspace name"
               maxLength={120}
             />
             <button type="submit" disabled={creatingWorkspace || !workspaceName.trim()}>
+              <Icon name="plus" size={17} />
               {creatingWorkspace ? "Creating…" : "Create"}
             </button>
           </div>
@@ -287,10 +298,8 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
           </div>
         ) : docs.length === 0 && workspaces.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-illustration" aria-hidden="true">
-              <span>§</span>
-            </div>
-            <h3>Your library is empty</h3>
+            <div className="empty-illustration" aria-hidden="true"><Icon name="library" size={30} /></div>
+            <h3>No patents yet</h3>
             <p>Add a US patent number, upload a PDF, or create a workspace to begin.</p>
           </div>
         ) : (
@@ -307,10 +316,12 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
                     aria-expanded={!isCollapsed}
                     aria-controls={regionId}
                   >
-                    <span className={"workspace-chevron" + (isCollapsed ? "" : " expanded")} aria-hidden="true">
-                      ›
-                    </span>
-                    <span className="workspace-folder" aria-hidden="true">▰</span>
+                    <Icon
+                      name="chevron-right"
+                      size={17}
+                      className={"workspace-chevron" + (isCollapsed ? "" : " expanded")}
+                    />
+                    <span className="workspace-folder" aria-hidden="true"><Icon name="folder" size={17} /></span>
                     <span className="workspace-name">{group.name}</span>
                     <span className="workspace-count">
                       {group.documents.length} {group.documents.length === 1 ? "patent" : "patents"}
