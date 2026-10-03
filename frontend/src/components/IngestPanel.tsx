@@ -1,7 +1,8 @@
-import { type ChangeEvent, type FormEvent, useState } from "react";
+import { type ChangeEvent, type FormEvent, type KeyboardEvent, useState } from "react";
 
 import { api, uploadPdf } from "../api/client";
 import type { ImportAnalysis } from "../api/types";
+import { Icon, type IconName } from "./Icon";
 
 type Msg = { kind: "ok" | "err"; text: string } | null;
 
@@ -66,7 +67,7 @@ function FetchForm({ onChanged }: { onChanged: () => void }) {
       </div>
       <div className="form-actions">
         <button type="submit" disabled={busy || !identifier.trim()}>
-          {busy ? "Queuing…" : "Fetch patent"} <span aria-hidden="true">→</span>
+          <Icon name="search" size={17} /> {busy ? "Queuing…" : "Fetch patent"}
         </button>
       </div>
       <Status msg={msg} />
@@ -103,10 +104,10 @@ function UploadForm({ onChanged }: { onChanged: () => void }) {
       <div className="field">
         <label htmlFor="upload-file">Source PDF</label>
         <label className={`file-drop${file ? " has-file" : ""}`} htmlFor="upload-file">
-          <span className="file-icon" aria-hidden="true">PDF</span>
+          <span className="file-icon" aria-hidden="true"><Icon name="file" size={22} /></span>
           <span>
             <strong>{file ? file.name : "Choose a patent PDF"}</strong>
-            <small>{file ? `${(file.size / 1024 / 1024).toFixed(1)} MB selected` : "PDF files up to 100 MB"}</small>
+            <small>{file ? `${(file.size / 1024 / 1024).toFixed(1)} MB selected` : "PDF files up to 50 MB"}</small>
           </span>
           <span className="file-action">Browse</span>
         </label>
@@ -125,7 +126,7 @@ function UploadForm({ onChanged }: { onChanged: () => void }) {
       </div>
       <div className="form-actions">
         <button type="submit" disabled={busy || !file}>
-          {busy ? "Uploading…" : "Upload and process"} <span aria-hidden="true">→</span>
+          <Icon name="upload" size={17} /> {busy ? "Uploading…" : "Upload and process"}
         </button>
       </div>
       <Status msg={msg} />
@@ -177,7 +178,7 @@ function ImportForm({ onChanged }: { onChanged: () => void }) {
       <div className="field">
         <label htmlFor="import-file">Portable save</label>
         <label className="file-drop" htmlFor="import-file">
-          <span className="file-icon json" aria-hidden="true">JSON</span>
+          <span className="file-icon json" aria-hidden="true"><Icon name="import" size={22} /></span>
           <span><strong>Choose a portable save</strong><small>.patent-viewer.json files</small></span>
           <span className="file-action">Browse</span>
         </label>
@@ -213,7 +214,7 @@ function ImportForm({ onChanged }: { onChanged: () => void }) {
             onClick={commit}
             disabled={busy || (analysis.needs_migration && !confirm)}
           >
-            {busy ? "Importing…" : "Commit import"}
+            <Icon name="check" size={17} /> {busy ? "Importing…" : "Import save"}
           </button>
         </div>
       )}
@@ -222,37 +223,59 @@ function ImportForm({ onChanged }: { onChanged: () => void }) {
   );
 }
 
-const TABS = [
-  { id: "fetch", label: "Patent number", icon: "⌕" },
-  { id: "upload", label: "Upload PDF", icon: "↑" },
-  { id: "import", label: "Import save", icon: "↙" },
-] as const;
+const TABS: ReadonlyArray<{
+  id: "fetch" | "upload" | "import";
+  label: string;
+  icon: IconName;
+}> = [
+  { id: "fetch", label: "Patent number", icon: "search" },
+  { id: "upload", label: "Upload PDF", icon: "upload" },
+  { id: "import", label: "Import", icon: "import" },
+];
 
 type Tab = (typeof TABS)[number]["id"];
 
 export function IngestPanel({ onChanged }: { onChanged: () => void }) {
   const [tab, setTab] = useState<Tab>("fetch");
+
+  function navigateTabs(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const nextIndex =
+      event.key === "Home" ? 0 :
+      event.key === "End" ? TABS.length - 1 :
+      (index + (event.key === "ArrowRight" ? 1 : -1) + TABS.length) % TABS.length;
+    const next = TABS[nextIndex];
+    setTab(next.id);
+    document.getElementById(`tab-${next.id}`)?.focus();
+  }
+
   return (
     <section className="panel ingest-panel" aria-labelledby="ingest-h">
       <div className="panel-heading-copy">
-        <p className="eyebrow">Add evidence</p>
-        <h2 id="ingest-h">Add a document</h2>
-        <p>Start from a public identifier, your own source PDF, or a previous export.</p>
+        <span className="panel-heading-icon" aria-hidden="true"><Icon name="plus" size={20} /></span>
+        <div>
+          <p className="eyebrow">Add evidence</p>
+          <h2 id="ingest-h">Add a patent</h2>
+          <p>Start with a public identifier, source PDF, or portable save.</p>
+        </div>
       </div>
       <div role="tablist" aria-label="Ingestion method" className="tabs">
-        {TABS.map((t) => (
+        {TABS.map((item, index) => (
           <button
-            key={t.id}
+            key={item.id}
             role="tab"
-            id={`tab-${t.id}`}
-            aria-selected={tab === t.id}
-            aria-controls={`panel-${t.id}`}
-            className={`tab${tab === t.id ? " active" : ""}`}
-            onClick={() => setTab(t.id)}
+            id={`tab-${item.id}`}
+            aria-selected={tab === item.id}
+            aria-controls={`panel-${item.id}`}
+            tabIndex={tab === item.id ? 0 : -1}
+            className={`tab${tab === item.id ? " active" : ""}`}
+            onClick={() => setTab(item.id)}
+            onKeyDown={(event) => navigateTabs(event, index)}
             type="button"
           >
-            <span className="tab-icon" aria-hidden="true">{t.icon}</span>
-            {t.label}
+            <Icon name={item.icon} size={16} />
+            {item.label}
           </button>
         ))}
       </div>
