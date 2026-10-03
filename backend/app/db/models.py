@@ -79,6 +79,21 @@ class ExtractionArtifact(Base):
     created_at: Mapped[datetime] = _ts()
 
 
+class Workspace(Base):
+    """An owner-scoped patent grouping in the library."""
+
+    __tablename__ = "workspaces"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("wsp"))
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = _ts()
+
+    __table_args__ = (
+        UniqueConstraint("owner_id", "name", name="uq_workspace_owner_name"),
+    )
+
+
 class UserDocument(Base):
     """The user-facing document (DESIGN.md §7). Points at one source and its
     currently active artifact."""
@@ -88,6 +103,9 @@ class UserDocument(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("doc"))
     owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     source_id: Mapped[str] = mapped_column(ForeignKey("source_documents.id"), index=True)
+    workspace_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workspaces.id"), index=True, default=None
+    )
     title: Mapped[str] = mapped_column(String)
     active_artifact_id: Mapped[str | None] = mapped_column(
         ForeignKey("extraction_artifacts.id"), default=None

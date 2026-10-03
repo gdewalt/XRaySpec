@@ -1528,3 +1528,118 @@ mark.mention.clickable:hover {
     transition-duration: 0.01ms !important;
   }
 }
+
+
+/* --- patent workspaces --- */
+.workspace-create {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0 1.4rem 1.2rem;
+  border-bottom: 1px solid var(--border);
+}
+.workspace-create > div {
+  display: flex;
+  gap: 0.5rem;
+}
+.workspace-create input {
+  min-width: 0;
+}
+.workspace-create button {
+  flex: none;
+}
+.library-error {
+  margin: 1rem 1.4rem;
+}
+.workspace-list {
+  display: grid;
+}
+.workspace-group + .workspace-group {
+  border-top: 1px solid var(--border);
+}
+.workspace-toggle {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.8rem 1.15rem;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface-subtle);
+  color: var(--text);
+  text-align: left;
+}
+.workspace-toggle:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+.workspace-chevron {
+  color: var(--muted);
+  font-size: 1.25rem;
+  line-height: 1;
+  transform: rotate(0deg);
+  transition: transform 150ms ease;
+}
+.workspace-chevron.expanded {
+  transform: rotate(90deg);
+}
+.workspace-folder {
+  color: var(--accent);
+  font-size: 0.88rem;
+}
+.workspace-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-count {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 550;
+}
+.workspace-group .document-list {
+  border-top: 1px solid var(--border);
+}
+.workspace-empty {
+  margin: 0;
+  padding: 1rem 1.4rem;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+.move-control select {
+  max-width: 150px;
+  padding: 0.42rem 1.7rem 0.42rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+}
+.move-control select:focus {
+  border-color: var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  outline-offset: 1px;
+}
+
+@media (max-width: 680px) {
+  .workspace-create {
+    padding-inline: 0.9rem;
+  }
+  .workspace-create > div {
+    align-items: stretch;
+  }
+  .workspace-toggle {
+    padding-inline: 0.9rem;
+  }
+  .move-control {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+  .move-control select {
+    max-width: none;
+    width: 100%;
+  }
+  .row-actions {
+    flex-wrap: wrap;
+  }
+}

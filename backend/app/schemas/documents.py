@@ -24,6 +24,7 @@ class DocumentRead(BaseModel):
 
     id: str
     title: str
+    workspace_id: str | None = None
     state: str
     active_artifact_id: str | None = None
     last_opened_at: datetime | None = None

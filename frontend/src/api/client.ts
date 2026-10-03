@@ -13,6 +13,8 @@ import type {
   OverrideRead,
   UploadCompleteResponse,
   UploadGrant,
+  WorkspaceList,
+  WorkspaceRead,
 } from "./types";
 
 export class ApiError extends Error {
@@ -50,6 +52,15 @@ const jsonInit = (method: string, body: unknown): RequestInit => ({
 
 export const api = {
   listDocuments: () => request<DocumentList>("/api/v1/documents"),
+
+  listWorkspaces: () => request<WorkspaceList>("/api/v1/workspaces"),
+  createWorkspace: (name: string) =>
+    request<WorkspaceRead>("/api/v1/workspaces", jsonInit("POST", { name })),
+  moveDocument: (documentId: string, workspace_id: string | null) =>
+    request<DocumentRead>(
+      `/api/v1/documents/${documentId}/workspace`,
+      jsonInit("PATCH", { workspace_id }),
+    ),
 
   getDocument: (id: string) => request<DocumentRead>(`/api/v1/documents/${id}`),
 

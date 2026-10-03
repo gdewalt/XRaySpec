@@ -5,6 +5,7 @@
 export interface DocumentRead {
   id: string;
   title: string;
+  workspace_id: string | null;
   state: string;
   active_artifact_id: string | null;
   last_opened_at: string | null;
@@ -14,6 +15,16 @@ export interface DocumentRead {
 
 export interface DocumentList {
   items: DocumentRead[];
+}
+
+export interface WorkspaceRead {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
+export interface WorkspaceList {
+  items: WorkspaceRead[];
 }
 
 export interface BookmarkRead {
