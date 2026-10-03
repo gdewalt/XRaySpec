@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { getToken, initializeAuth, signOut, subscribe } from "./auth/session";
 import { DocumentsView } from "./components/DocumentsView";
+import { Icon } from "./components/Icon";
 import { Login } from "./components/Login";
 import { Viewer } from "./components/Viewer";
 import { parseViewHash } from "./spec/navigation";
@@ -13,11 +14,6 @@ function initialView(): View {
   return documentId ? { mode: "viewer", documentId } : { mode: "list" };
 }
 
-/**
- * App shell (DESIGN.md §16.1). Gates on a bearer-token session; routes between the
- * Documents list and the reading Viewer. Routing state is mirrored in the URL hash
- * (`#doc=<id>&line=<n>`) so a copied link reopens the document at that line.
- */
 export function App() {
   const token = useSyncExternalStore(subscribe, getToken);
   const [view, setView] = useState<View>(initialView);
@@ -35,41 +31,50 @@ export function App() {
     setView({ mode: "list" });
   };
 
-  let body;
-  if (!token) {
-    body = <Login />;
-  } else if (view.mode === "viewer") {
-    body = <Viewer documentId={view.documentId} onBack={back} />;
-  } else {
-    body = <DocumentsView onOpen={open} />;
-  }
+  const body = !token ? (
+    <Login />
+  ) : view.mode === "viewer" ? (
+    <Viewer documentId={view.documentId} onBack={back} />
+  ) : (
+    <DocumentsView onOpen={open} />
+  );
 
   return (
     <div className="app">
       <header className="app-header">
-        <button
-          type="button"
-          className="brand"
-          onClick={token ? back : undefined}
-          aria-label={token ? "Return to documents" : "X-Ray Spec"}
-        >
-          <span className="brand-mark" aria-hidden="true">
-            <span />
-          </span>
-          <span className="brand-copy">
-            <strong>X-Ray Spec</strong>
-            <small>Patent evidence workspace</small>
-          </span>
-        </button>
+        <div className="header-product">
+          <button
+            type="button"
+            className="brand"
+            onClick={token ? back : undefined}
+            aria-label={token ? "Open patent library" : "X-Ray Spec"}
+          >
+            <span className="brand-mark" aria-hidden="true"><Icon name="scan" size={22} /></span>
+            <span className="brand-copy">
+              <strong>X-Ray Spec</strong>
+              <small>Patent evidence workspace</small>
+            </span>
+          </button>
+          {token && (
+            <>
+              <span className="header-divider" aria-hidden="true" />
+              <span className="header-context">
+                {view.mode === "viewer" ? "Document viewer" : "Library"}
+              </span>
+            </>
+          )}
+        </div>
         <div className="header-actions">
           {token && view.mode === "viewer" && (
             <button type="button" className="secondary header-back" onClick={back}>
-              <span aria-hidden="true">←</span> Documents
+              <Icon name="arrow-left" size={17} />
+              <span>Library</span>
             </button>
           )}
           {token && (
-            <button type="button" className="quiet-button" onClick={() => void signOut()}>
-              Sign out
+            <button type="button" className="quiet-button sign-out" onClick={() => void signOut()}>
+              <Icon name="log-out" size={17} />
+              <span>Sign out</span>
             </button>
           )}
         </div>
