@@ -394,7 +394,9 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   );
 
   const navigateToCallout = useCallback((callout: CalloutDto, highlightIds: string[]) => {
-    setLayout((l) => (l === "text" ? "split" : l));
+    setLayout((current) =>
+      current === "text" ? "split" : current === "details" ? "pdf" : current,
+    );
     setSelectionSource("pdf");
     setPdfPage(callout.page_index + 1);
     setHighlightCallouts(new Set(highlightIds));
@@ -409,7 +411,9 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
         .filter((callout) => callout.figure_id && wanted.has(normalize(callout.figure_id)))
         .sort((a, b) => a.page_index - b.page_index);
       if (matches.length === 0) return;
-      setLayout((current) => (current === "text" ? "split" : current));
+      setLayout((current) =>
+        current === "text" ? "split" : current === "details" ? "pdf" : current,
+      );
       setSelectionSource("pdf");
       setPdfPage(matches[0].page_index + 1);
       setHighlightCallouts(new Set(matches.map((callout) => callout.callout_id)));
@@ -451,7 +455,9 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
       const cur = mentionCycle.current;
       const idx = cur && cur.value === c.value ? (cur.idx + 1) % ms.length : 0;
       mentionCycle.current = { value: c.value, idx };
-      setLayout((l) => (l === "pdf" ? "split" : l));
+      setLayout((current) =>
+        current === "pdf" ? "split" : current === "details" ? "text" : current,
+      );
       setHighlightCallouts(new Set([c.callout_id]));
       const ord = ordByEntryId.get(ms[idx].entry_id);
       if (ord !== undefined) selectRange(ord, ord, { scroll: true });
@@ -570,13 +576,23 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
 
   const showText = layout === "text" || layout === "split";
   const showPdf = layout === "pdf" || layout === "split";
-  const tabs: Layout[] = ["text", "pdf", "split", "details"];
-  const tabIcons: Record<Layout, string> = {
-    text: "≡",
-    pdf: "▣",
-    split: "◫",
-    details: "ⓘ",
-  };
+  const paneButtons = [
+    { id: "text" as const, label: "Text", icon: "≡" },
+    { id: "pdf" as const, label: "PDF", icon: "▣" },
+  ];
+
+  function togglePane(pane: "text" | "pdf") {
+    setLayout((current) => {
+      if (current === "details") return pane;
+      if (pane === "text") {
+        if (current === "text") return current;
+        return current === "pdf" ? "split" : "pdf";
+      }
+      if (current === "pdf") return current;
+      return current === "text" ? "split" : "text";
+    });
+    setSelectionSource(pane);
+  }
   const correctedCount = entries.filter((e) => e.display_text !== e.source_text).length;
   const hasWarnings =
     (artifact?.warnings.length ?? 0) > 0 || artifact?.disposition === "partial";
@@ -587,7 +603,16 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
     if (!nativeSelection || nativeSelection.isCollapsed || !container) return;
     const range = nativeSelection.getRangeAt(0);
     if (!container.contains(range.commonAncestorContainer)) return;
-    const text = nativeSelection.toString().trim();
+    const fragment = range.cloneContents();
+    const copySurface = document.createElement("div");
+    copySurface.appendChild(fragment);
+    const selectedLines = Array.from(copySurface.querySelectorAll<HTMLElement>(".line-text"))
+      .map((line) => line.textContent?.trim() ?? "")
+      .filter(Boolean);
+    copySurface.querySelectorAll("[data-copy-exclude]").forEach((node) => node.remove());
+    const text = (
+      selectedLines.length > 0 ? selectedLines.join("\n") : copySurface.textContent ?? ""
+    ).trim();
     if (!text) return;
     setSelectionSource("text");
     setTextSelection(text);
@@ -632,23 +657,32 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
               <span className="viewer-tab-icon" aria-hidden="true">☷</span>
               Outline
             </button>
-            <div className="tabs" role="tablist" aria-label="View">
-              {tabs.map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  role="tab"
-                  aria-selected={layout === tab}
-                  className={`tab${layout === tab ? " active" : ""}`}
-                  onClick={() => {
-                    setLayout(tab);
-                    if (tab === "text" || tab === "pdf") setSelectionSource(tab);
-                  }}
-                >
-                  <span className="viewer-tab-icon" aria-hidden="true">{tabIcons[tab]}</span>
-                  {tab === "pdf" ? "PDF" : tab[0].toUpperCase() + tab.slice(1)}
-                </button>
-              ))}
+            <div className="tabs viewer-pane-controls" role="group" aria-label="Visible panes">
+              {paneButtons.map((pane) => {
+                const active = pane.id === "text" ? showText : showPdf;
+                return (
+                  <button
+                    key={pane.id}
+                    type="button"
+                    aria-pressed={active}
+                    className={`tab${active ? " active" : ""}`}
+                    onClick={() => togglePane(pane.id)}
+                    title={active ? `Hide ${pane.label.toLowerCase()} pane` : `Show ${pane.label.toLowerCase()} pane`}
+                  >
+                    <span className="viewer-tab-icon" aria-hidden="true">{pane.icon}</span>
+                    {pane.label}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                aria-pressed={layout === "details"}
+                className={`tab${layout === "details" ? " active" : ""}`}
+                onClick={() => setLayout((current) => current === "details" ? "text" : "details")}
+              >
+                <span className="viewer-tab-icon" aria-hidden="true">ⓘ</span>
+                Details
+              </button>
             </div>
           </div>
         )}
@@ -940,19 +974,17 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                       if (!nativeSelection || nativeSelection.isCollapsed) selectLine(e);
                     }}
                   >
-                    <span className="marks" aria-hidden="true">
-                      {bookmarkByEntry.has(e.entry_id) && (
-                        <span className="mark-bookmark" title="Bookmarked">
-                          ★
-                        </span>
-                      )}
-                      {noteCount > 0 && (
-                        <span className="mark-note" title={`${noteCount} note(s)`}>
-                          ●
-                        </span>
-                      )}
+                    <span className="spec-gutter" data-copy-exclude="true" aria-hidden="true">
+                      <span className="marks">
+                        {bookmarkByEntry.has(e.entry_id) && (
+                          <span className="mark-bookmark" title="Bookmarked">★</span>
+                        )}
+                        {noteCount > 0 && (
+                          <span className="mark-note" title={`${noteCount} note(s)`}>●</span>
+                        )}
+                      </span>
+                      <span className="ref">{refShort(e.locator)}</span>
                     </span>
-                    <span className="ref">{refShort(e.locator)}</span>
                     <span className="line-text">
                       {renderText(e, marks, query, onMentionClick, navigateToFigure)}
                     </span>
