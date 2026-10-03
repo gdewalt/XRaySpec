@@ -17,7 +17,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
@@ -191,7 +191,7 @@ class ExtractionJob(Base):
     completed_units: Mapped[int] = mapped_column(default=0)
     total_units: Mapped[int | None] = mapped_column(default=None)
     unit: Mapped[str | None] = mapped_column(String, default=None)
-    overall_fraction: Mapped[float | None] = mapped_column(default=None)
+    overall_fraction: Mapped[float | None] = mapped_column(Float, default=None)
     indeterminate: Mapped[bool] = mapped_column(default=True)
 
     # Durable, monotonically increasing progress sequence (§10.2). Bumped on every
