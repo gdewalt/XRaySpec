@@ -649,7 +649,9 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
               className={`tab outline-toggle${outlineOpen && showText ? " active" : ""}`}
               aria-pressed={outlineOpen && showText}
               onClick={() => {
-                if (!showText) setLayout("text");
+                if (!showText) {
+                  setLayout((current) => current === "pdf" ? "split" : "text");
+                }
                 setOutlineOpen((value) => !value);
               }}
               title="Toggle outline"
@@ -667,7 +669,13 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                     aria-pressed={active}
                     className={`tab${active ? " active" : ""}`}
                     onClick={() => togglePane(pane.id)}
-                    title={active ? `Hide ${pane.label.toLowerCase()} pane` : `Show ${pane.label.toLowerCase()} pane`}
+                    title={
+                      active && layout === "split"
+                        ? `Hide ${pane.label.toLowerCase()} pane`
+                        : active
+                          ? `${pane.label} pane is visible`
+                          : `Show ${pane.label.toLowerCase()} pane`
+                    }
                   >
                     <span className="viewer-tab-icon" aria-hidden="true">{pane.icon}</span>
                     {pane.label}
@@ -944,7 +952,10 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
               aria-label="Specification text"
               aria-activedescendant={selection ? `spec-L${selection.start}` : undefined}
               onKeyDown={onSpecKey}
-              onPointerDown={() => setSelectionSource("text")}
+              onPointerDown={() => {
+                setSelectionSource("text");
+                setTextSelection("");
+              }}
               onMouseUp={handleTextMouseUp}
             >
               {entries.map((e, index) => {
@@ -1038,7 +1049,10 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
               onSelectLine={selectLine}
               onSelectRange={(a, b) => selectRange(a, b)}
               onSelectCallout={onSelectCallout}
-              onActivate={() => setSelectionSource("pdf")}
+              onActivate={() => {
+                setSelectionSource("pdf");
+                setPdfSelection("");
+              }}
               onSelectionText={(text) => {
                 setSelectionSource("pdf");
                 setPdfSelection(text);
