@@ -52,6 +52,7 @@ function PatentRow({
   onJobComplete,
 }: PatentRowProps) {
   const canOpen = doc.state === "ready" || doc.state === "text_only";
+  const [menuOpen, setMenuOpen] = useState(false);
 
   return (
     <article className="document-row">
@@ -79,22 +80,6 @@ function PatentRow({
         )}
       </div>
       <div className="row-actions">
-        <label className="move-control">
-          <span className="move-label"><Icon name="folder" size={15} /> Workspace</span>
-          <select
-            value={doc.workspace_id ?? ""}
-            onChange={(event) => onMove(doc, event.target.value || null)}
-            disabled={moving}
-            aria-label={"Move " + doc.title + " to workspace"}
-          >
-            <option value="">Unfiled</option>
-            {workspaces.map((workspace) => (
-              <option value={workspace.id} key={workspace.id}>
-                {workspace.name}
-              </option>
-            ))}
-          </select>
-        </label>
         <button
           type="button"
           className="secondary"
@@ -103,15 +88,68 @@ function PatentRow({
         >
           Open <Icon name="arrow-up-right" size={16} />
         </button>
-        <button
-          type="button"
-          className="icon-button danger-icon"
-          onClick={() => onRemove(doc)}
-          aria-label={"Delete " + doc.title}
-          title="Delete patent"
+        <div
+          className="document-menu"
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setMenuOpen(false);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              setMenuOpen(false);
+            }
+          }}
         >
-          <Icon name="trash" size={17} />
-        </button>
+          <button
+            type="button"
+            className="icon-button menu-button"
+            aria-label={"More actions for " + doc.title}
+            aria-expanded={menuOpen}
+            aria-controls={"document-actions-" + doc.id}
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            <Icon name="more-horizontal" size={19} />
+          </button>
+          {menuOpen && (
+            <div
+              id={"document-actions-" + doc.id}
+              className="document-menu-popover"
+              role="group"
+              aria-label={"Actions for " + doc.title}
+            >
+              <label className="document-menu-move">
+                <span><Icon name="folder" size={16} /> Move to folder</span>
+                <select
+                  value={doc.workspace_id ?? ""}
+                  onChange={(event) => {
+                    onMove(doc, event.target.value || null);
+                    setMenuOpen(false);
+                  }}
+                  disabled={moving}
+                  aria-label={"Move " + doc.title + " to folder"}
+                >
+                  <option value="">Unfiled</option>
+                  {workspaces.map((workspace) => (
+                    <option value={workspace.id} key={workspace.id}>
+                      {workspace.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="document-menu-action danger-icon"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onRemove(doc);
+                }}
+              >
+                <Icon name="trash" size={16} />
+                Delete patent
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </article>
   );

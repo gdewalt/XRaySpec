@@ -3,7 +3,7 @@ import type { SVGProps } from "react";
 export type IconName =
   | "arrow-left" | "arrow-up-right" | "bookmark" | "check" | "chevron-right"
   | "columns" | "file" | "file-text" | "folder" | "import" | "library"
-  | "lock" | "log-out" | "plus" | "refresh" | "scan" | "search"
+  | "lock" | "log-out" | "more-horizontal" | "plus" | "refresh" | "scan" | "search"
   | "text" | "trash" | "upload";
 
 const PATHS: Record<IconName, string[]> = {
@@ -20,6 +20,7 @@ const PATHS: Record<IconName, string[]> = {
   library: ["M4 19V5", "M9 19V5", "M14 19V5", "M19 19V5", "M2 5h20", "M2 19h20"],
   lock: ["M6 10h12v10H6z", "M8 10V7a4 4 0 0 1 8 0v3"],
   "log-out": ["M10 17l5-5-5-5", "M15 12H3", "M15 4h5v16h-5"],
+  "more-horizontal": ["M5 12h.01", "M12 12h.01", "M19 12h.01"],
   plus: ["M12 5v14", "M5 12h14"],
   refresh: ["M20 7v5h-5", "M4 17v-5h5", "M18.5 9A7 7 0 0 0 6 6.5L4 9", "M5.5 15A7 7 0 0 0 18 17.5l2-2.5"],
   scan: ["M4 8V4h4", "M16 4h4v4", "M20 16v4h-4", "M8 20H4v-4", "M8 12h8"],
