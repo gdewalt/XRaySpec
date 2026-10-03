@@ -2339,3 +2339,72 @@ mark.search-hit { background: #ffdf8a; color: #422600; }
 @media (pointer: coarse) {
   button, .tab, .outline-item, .outline-jump { min-height: 44px; }
 }
+
+
+/* --- independent viewer panes and clean text selection --- */
+.viewer-pane-controls .tab[aria-pressed="true"] {
+  border-color: var(--border);
+  background: var(--surface);
+  color: #173d9d;
+  box-shadow: var(--shadow-sm);
+}
+.viewer-pane-controls .tab[aria-pressed="false"] {
+  border-color: transparent;
+  background: transparent;
+  color: #3f4b60;
+  box-shadow: none;
+}
+.viewer-pane-controls .tab[aria-pressed="false"]:hover {
+  background: rgba(255,255,255,.72);
+  color: var(--text);
+}
+.spec-line {
+  grid-template-columns: 5.95rem minmax(0,1fr);
+  gap: .65rem;
+}
+.spec-gutter {
+  display: grid;
+  grid-template-columns: 1.2rem 4.25rem;
+  gap: .45rem;
+  align-items: baseline;
+  padding-right: .55rem;
+  border-right: 1px solid var(--border);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.spec-gutter .marks {
+  display: inline-flex;
+  justify-content: flex-end;
+  gap: .1rem;
+  min-width: 0;
+  color: #78420a;
+  font-family: Inter, ui-sans-serif, sans-serif;
+  font-size: .68rem;
+}
+.spec-gutter .mark-note { color: #173d9d; }
+.spec-gutter .ref {
+  color: var(--muted);
+  font-family: Inter, ui-sans-serif, sans-serif;
+  font-size: .72rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.line-text {
+  min-width: 0;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+@media (max-width: 700px) {
+  .spec-line {
+    grid-template-columns: 4.65rem minmax(0,1fr);
+    gap: .4rem;
+  }
+  .spec-gutter {
+    grid-template-columns: .75rem 3.4rem;
+    gap: .25rem;
+    padding-right: .25rem;
+  }
+  .spec-gutter .ref { font-size: .65rem; }
+}
