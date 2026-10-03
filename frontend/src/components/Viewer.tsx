@@ -1,4 +1,5 @@
 import {
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   useCallback,
@@ -52,6 +53,7 @@ type Mark = {
   cls: string;
   title: string;
   mention?: NumeralMentionDto;
+  figure?: FigureMentionDto;
 };
 
 function groupByEntry<T extends { entry_id: string }>(items: T[]): Map<string, T[]> {
@@ -76,7 +78,8 @@ function buildMarks(
       start: f.span[0],
       end: f.span[1],
       cls: "mention figure",
-      title: `Figure reference → ${f.figure_ids.join(", ")}`,
+      title: `Figure reference → ${f.figure_ids.join(", ")} (click to view)`,
+      figure: f,
     });
   }
   for (const n of nums) {
@@ -115,6 +118,7 @@ function renderText(
   marks: Mark[],
   query: string,
   onMentionClick: (m: NumeralMentionDto) => void,
+  onFigureClick: (m: FigureMentionDto) => void,
 ): ReactNode {
   const text = entry.source_text;
   const nodes: ReactNode[] = [];
@@ -124,29 +128,35 @@ function renderText(
     if (m.start < pos) continue;
     if (m.start > pos) nodes.push(...renderPlain(text.slice(pos, m.start), query, `p${key++}`));
     const mention = m.mention;
+    const figure = m.figure;
+    const clickable = !!mention || !!figure;
+    const activate = () => {
+      if (mention) onMentionClick(mention);
+      else if (figure) onFigureClick(figure);
+    };
     nodes.push(
       <mark
         key={`m${key++}`}
-        className={mention ? `${m.cls} clickable` : m.cls}
+        className={clickable ? `${m.cls} clickable` : m.cls}
         title={m.title}
-        role={mention ? "button" : undefined}
-        tabIndex={mention ? 0 : undefined}
-        aria-label={mention ? m.title : undefined}
+        role={clickable ? "button" : undefined}
+        tabIndex={clickable ? 0 : undefined}
+        aria-label={clickable ? m.title : undefined}
         onClick={
-          mention
+          clickable
             ? (e) => {
                 e.stopPropagation();
-                onMentionClick(mention);
+                activate();
               }
             : undefined
         }
         onKeyDown={
-          mention
+          clickable
             ? (e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
                   e.stopPropagation();
-                  onMentionClick(mention);
+                  activate();
                 }
               }
             : undefined
@@ -167,6 +177,10 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   const [error, setError] = useState<string | null>(null);
   const [layout, setLayout] = useState<Layout>("text");
   const [selection, setSelection] = useState<Selection>(null);
+  const [selectionSource, setSelectionSource] = useState<"text" | "pdf">("text");
+  const [textSelection, setTextSelection] = useState("");
+  const [pdfSelection, setPdfSelection] = useState("");
+  const [splitPercent, setSplitPercent] = useState(42);
   const [pdfPage, setPdfPage] = useState(1);
   const [copied, setCopied] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -182,6 +196,8 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   const [citeStyle, setCiteStyle] = useState<CiteStyle>(loadStyle);
   const [citeSettingsOpen, setCiteSettingsOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const panesRef = useRef<HTMLDivElement>(null);
+  const specRef = useRef<HTMLElement>(null);
 
   const updateStyle = useCallback((patch: Partial<CiteStyle>) => {
     setCiteStyle((s) => {
@@ -379,9 +395,27 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
 
   const navigateToCallout = useCallback((callout: CalloutDto, highlightIds: string[]) => {
     setLayout((l) => (l === "text" ? "split" : l));
+    setSelectionSource("pdf");
     setPdfPage(callout.page_index + 1);
     setHighlightCallouts(new Set(highlightIds));
   }, []);
+
+  const navigateToFigure = useCallback(
+    (mention: FigureMentionDto) => {
+      const normalize = (value: string) =>
+        value.replace(/^fig(?:ure)?\.?\s*/i, "").replace(/\s+/g, "").toUpperCase();
+      const wanted = new Set(mention.figure_ids.map(normalize));
+      const matches = (artifact?.callout_occurrences ?? [])
+        .filter((callout) => callout.figure_id && wanted.has(normalize(callout.figure_id)))
+        .sort((a, b) => a.page_index - b.page_index);
+      if (matches.length === 0) return;
+      setLayout((current) => (current === "text" ? "split" : current));
+      setSelectionSource("pdf");
+      setPdfPage(matches[0].page_index + 1);
+      setHighlightCallouts(new Set(matches.map((callout) => callout.callout_id)));
+    },
+    [artifact],
+  );
 
   // Forward: text numeral → its drawing callout(s); ambiguous opens a chooser.
   const onMentionClick = useCallback(
@@ -527,6 +561,8 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   const citation =
     selectedEntries.length && doc ? formatCitation(selectedEntries, doc.title, citeStyle) : "";
   const selectedText = selectedEntries.map((e) => e.display_text).join(" ");
+  const activeSelectionText =
+    (selectionSource === "pdf" ? pdfSelection : textSelection).trim() || selectedText;
   const highlightOrdinal = selection ? selection.start : null;
   const selectedBookmarked = selectedStartEntry
     ? bookmarkByEntry.has(selectedStartEntry.entry_id)
@@ -535,9 +571,43 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   const showText = layout === "text" || layout === "split";
   const showPdf = layout === "pdf" || layout === "split";
   const tabs: Layout[] = ["text", "pdf", "split", "details"];
+  const tabIcons: Record<Layout, string> = {
+    text: "≡",
+    pdf: "▣",
+    split: "◫",
+    details: "ⓘ",
+  };
   const correctedCount = entries.filter((e) => e.display_text !== e.source_text).length;
   const hasWarnings =
     (artifact?.warnings.length ?? 0) > 0 || artifact?.disposition === "partial";
+
+  const handleTextMouseUp = useCallback(() => {
+    const nativeSelection = window.getSelection();
+    const container = specRef.current;
+    if (!nativeSelection || nativeSelection.isCollapsed || !container) return;
+    const range = nativeSelection.getRangeAt(0);
+    if (!container.contains(range.commonAncestorContainer)) return;
+    const text = nativeSelection.toString().trim();
+    if (!text) return;
+    setSelectionSource("text");
+    setTextSelection(text);
+    const covered = Array.from(container.querySelectorAll<HTMLElement>(".spec-line"))
+      .filter((line) => range.intersectsNode(line))
+      .map((line) => Number(line.dataset.ordinal))
+      .filter((ordinal) => !Number.isNaN(ordinal));
+    if (covered.length > 0) selectRange(Math.min(...covered), Math.max(...covered));
+  }, [selectRange]);
+
+  const resizeSplit = useCallback((clientX: number) => {
+    const container = panesRef.current;
+    const textPane = specRef.current;
+    const pdfPane = container?.querySelector<HTMLElement>(".pdf-pane");
+    if (!textPane || !pdfPane) return;
+    const left = textPane.getBoundingClientRect().left;
+    const right = pdfPane.getBoundingClientRect().right;
+    if (right <= left) return;
+    setSplitPercent(Math.max(24, Math.min(76, ((clientX - left) / (right - left)) * 100)));
+  }, []);
 
   return (
     <div className="viewer">
@@ -547,17 +617,44 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
         </button>
         <strong className="viewer-title">{doc?.title ?? "…"}</strong>
 
-        {artifact && showText && (
-          <>
+        {artifact && (
+          <div className="viewer-mode-nav" aria-label="Viewer navigation">
             <button
               type="button"
-              className={`secondary outline-toggle${outlineOpen ? " active" : ""}`}
-              aria-pressed={outlineOpen}
-              onClick={() => setOutlineOpen((v) => !v)}
+              className={`tab outline-toggle${outlineOpen && showText ? " active" : ""}`}
+              aria-pressed={outlineOpen && showText}
+              onClick={() => {
+                if (!showText) setLayout("text");
+                setOutlineOpen((value) => !value);
+              }}
               title="Toggle outline"
             >
-              ☰ Outline
+              <span className="viewer-tab-icon" aria-hidden="true">☷</span>
+              Outline
             </button>
+            <div className="tabs" role="tablist" aria-label="View">
+              {tabs.map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  role="tab"
+                  aria-selected={layout === tab}
+                  className={`tab${layout === tab ? " active" : ""}`}
+                  onClick={() => {
+                    setLayout(tab);
+                    if (tab === "text" || tab === "pdf") setSelectionSource(tab);
+                  }}
+                >
+                  <span className="viewer-tab-icon" aria-hidden="true">{tabIcons[tab]}</span>
+                  {tab === "pdf" ? "PDF" : tab[0].toUpperCase() + tab.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {artifact && showText && (
+          <>
             <div className="search" role="search">
               <input
                 ref={searchRef}
@@ -629,20 +726,6 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
           </div>
         )}
 
-        <div className="tabs" role="tablist" aria-label="Layout">
-          {tabs.map((t) => (
-            <button
-              key={t}
-              type="button"
-              role="tab"
-              aria-selected={layout === t}
-              className={`tab${layout === t ? " active" : ""}`}
-              onClick={() => setLayout(t)}
-            >
-              {t === "pdf" ? "PDF" : t[0].toUpperCase() + t.slice(1)}
-            </button>
-          ))}
-        </div>
       </div>
 
       {error && (
@@ -706,7 +789,11 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
       )}
 
       {artifact && layout !== "details" && (
-        <div className={`panes ${layout}`}>
+        <div
+          ref={panesRef}
+          className={`panes ${layout}`}
+          style={{ "--split-percent": `${splitPercent}%` } as CSSProperties}
+        >
           {showText && outlineOpen && (
             <nav className="outline" aria-label="Outline">
               {bookmarks.length > 0 && (
@@ -816,14 +903,17 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
           )}
           {showText && (
             <section
+              ref={specRef}
               className="spec"
               role="listbox"
               tabIndex={0}
               aria-label="Specification text"
               aria-activedescendant={selection ? `spec-L${selection.start}` : undefined}
               onKeyDown={onSpecKey}
+              onPointerDown={() => setSelectionSource("text")}
+              onMouseUp={handleTextMouseUp}
             >
-              {entries.map((e) => {
+              {entries.map((e, index) => {
                 const marks = buildMarks(
                   e,
                   figsByEntry.get(e.entry_id) ?? [],
@@ -833,19 +923,23 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                 const sel =
                   selection && e.ordinal >= selection.start && e.ordinal <= selection.end;
                 const noteCount = notesByEntry.get(e.entry_id)?.length ?? 0;
+                const previous = entries[index - 1];
+                const paragraphStart =
+                  !!e.locator.paragraph &&
+                  e.locator.paragraph !== previous?.locator.paragraph;
                 return (
                   <div
                     key={e.entry_id}
                     id={`spec-L${e.ordinal}`}
-                    className={`spec-line${sel ? " selected" : ""}`}
+                    data-ordinal={e.ordinal}
+                    className={`spec-line${sel ? " selected" : ""}${paragraphStart ? " paragraph-start" : ""}`}
                     role="option"
                     aria-selected={!!sel}
-                    onClick={() => selectLine(e)}
+                    onClick={() => {
+                      const nativeSelection = window.getSelection();
+                      if (!nativeSelection || nativeSelection.isCollapsed) selectLine(e);
+                    }}
                   >
-                    <span className={`conf ${e.text_confidence}`} aria-hidden="true" />
-                    {e.text_confidence !== "high" && (
-                      <span className="sr-only">{e.text_confidence} confidence. </span>
-                    )}
                     <span className="marks" aria-hidden="true">
                       {bookmarkByEntry.has(e.entry_id) && (
                         <span className="mark-bookmark" title="Bookmarked">
@@ -857,20 +951,48 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                           ●
                         </span>
                       )}
-                      {e.display_text !== e.source_text && (
-                        <span className="mark-corrected" title={`Aligned to: ${e.display_text}`}>
-                          ✎
-                        </span>
-                      )}
                     </span>
                     <span className="ref">{refShort(e.locator)}</span>
                     <span className="line-text">
-                      {renderText(e, marks, query, onMentionClick)}
+                      {renderText(e, marks, query, onMentionClick, navigateToFigure)}
                     </span>
                   </div>
                 );
               })}
             </section>
+          )}
+          {showText && showPdf && (
+            <div
+              className="pane-resizer"
+              role="separator"
+              aria-label="Resize text and PDF panes"
+              aria-orientation="vertical"
+              aria-valuemin={24}
+              aria-valuemax={76}
+              aria-valuenow={Math.round(splitPercent)}
+              tabIndex={0}
+              onPointerDown={(event) => {
+                event.currentTarget.setPointerCapture(event.pointerId);
+                resizeSplit(event.clientX);
+              }}
+              onPointerMove={(event) => {
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  resizeSplit(event.clientX);
+                }
+              }}
+              onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowLeft") {
+                  event.preventDefault();
+                  setSplitPercent((value) => Math.max(24, value - 2));
+                } else if (event.key === "ArrowRight") {
+                  event.preventDefault();
+                  setSplitPercent((value) => Math.min(76, value + 2));
+                }
+              }}
+            >
+              <span aria-hidden="true" />
+            </div>
           )}
           {showPdf && (
             <PdfPane
@@ -884,6 +1006,11 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
               onSelectLine={selectLine}
               onSelectRange={(a, b) => selectRange(a, b)}
               onSelectCallout={onSelectCallout}
+              onActivate={() => setSelectionSource("pdf")}
+              onSelectionText={(text) => {
+                setSelectionSource("pdf");
+                setPdfSelection(text);
+              }}
             />
           )}
         </div>
@@ -1068,14 +1195,14 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
             >
               ⚙ Format
             </button>
-            <button type="button" onClick={() => copy("text", selectedText)}>
-              Copy text
+            <button type="button" onClick={() => copy("selection", activeSelectionText)}>
+              Copy selection
             </button>
             <button type="button" onClick={() => copy("cite", citation)}>
               Copy citation
             </button>
-            <button type="button" onClick={() => copy("both", `“${selectedText}” ${citation}`)}>
-              Copy text + citation
+            <button type="button" onClick={() => copy("both", `“${activeSelectionText}” ${citation}`)}>
+              Copy selection + citation
             </button>
             <button
               type="button"

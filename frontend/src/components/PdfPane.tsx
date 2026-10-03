@@ -3,8 +3,8 @@ import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import workerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { useEffect, useRef, useState } from "react";
 
-import { getToken } from "../auth/session";
 import type { CalloutDto, EntryDto } from "../api/types";
+import { getToken } from "../auth/session";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
 
@@ -23,12 +23,122 @@ function rotateBox(box: number[], rotation: number): [number, number, number, nu
   return [Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by)];
 }
 
+function ContinuousPdfPage({
+  pdf,
+  pageNumber,
+  entries,
+  callouts,
+  scale,
+  rotation,
+  highlightOrdinal,
+  highlightCallouts,
+  onSelectLine,
+  onSelectCallout,
+  registerPage,
+}: {
+  pdf: PDFDocumentProxy;
+  pageNumber: number;
+  entries: EntryDto[];
+  callouts: CalloutDto[];
+  scale: number;
+  rotation: number;
+  highlightOrdinal: number | null;
+  highlightCallouts?: Set<string>;
+  onSelectLine: (entry: EntryDto) => void;
+  onSelectCallout?: (callout: CalloutDto) => void;
+  registerPage: (page: number, element: HTMLDivElement | null) => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const renderRef = useRef<RenderTask | null>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    let cancelled = false;
+    void pdf.getPage(pageNumber).then(async (pdfPage) => {
+      if (cancelled) return;
+      const viewport = pdfPage.getViewport({ scale, rotation });
+      const canvas = canvasRef.current;
+      const context = canvas?.getContext("2d");
+      if (!canvas || !context) return;
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      setSize({ width: viewport.width, height: viewport.height });
+      renderRef.current?.cancel();
+      renderRef.current = pdfPage.render({ canvasContext: context, viewport });
+      try {
+        await renderRef.current.promise;
+      } catch {
+        // A newer scale or rotation may cancel the in-flight render.
+      }
+    });
+    return () => {
+      cancelled = true;
+      renderRef.current?.cancel();
+    };
+  }, [pdf, pageNumber, scale, rotation]);
+
+  return (
+    <div
+      ref={(element) => registerPage(pageNumber, element)}
+      className="pdf-page-wrap"
+      data-page={pageNumber}
+      aria-label={`PDF page ${pageNumber}`}
+    >
+      <div
+        className="pdf-page"
+        style={{ width: size.width || undefined, height: size.height || undefined }}
+      >
+        <canvas ref={canvasRef} />
+        <div className="pdf-overlay">
+          {entries.map((entry) => {
+            const [x0, y0, x1, y1] = rotateBox(entry.box as number[], rotation);
+            return (
+              <span
+                key={entry.entry_id}
+                className={`pdf-line${highlightOrdinal === entry.ordinal ? " hit" : ""}`}
+                data-ordinal={entry.ordinal}
+                style={{
+                  left: `${x0 * 100}%`,
+                  top: `${y0 * 100}%`,
+                  width: `${(x1 - x0) * 100}%`,
+                  height: `${(y1 - y0) * 100}%`,
+                }}
+                onClick={() => onSelectLine(entry)}
+              >
+                {entry.source_text}
+              </span>
+            );
+          })}
+          {callouts.map((callout) => {
+            const [x0, y0, x1, y1] = rotateBox(callout.box, rotation);
+            const hit = highlightCallouts?.has(callout.callout_id);
+            return (
+              <button
+                key={callout.callout_id}
+                type="button"
+                className={`pdf-callout${hit ? " hit" : ""}`}
+                style={{
+                  left: `${x0 * 100}%`,
+                  top: `${y0 * 100}%`,
+                  width: `${(x1 - x0) * 100}%`,
+                  height: `${(y1 - y0) * 100}%`,
+                }}
+                title={`Callout ${callout.value}${callout.figure_id ? ` (FIG. ${callout.figure_id})` : ""}`}
+                onClick={() => onSelectCallout?.(callout)}
+              >
+                <span className="pdf-callout-tag">{callout.value}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /**
- * PDF pane (DESIGN.md §16.4): renders a page with PDF.js and overlays a
- * selectable text layer positioned from each line's normalized box — so text can
- * be selected on the page (even for scanned patents, whose text comes from the
- * artifact) and copied with a citation. Clicking a line selects it; dragging a
- * selection resolves to the covered lines.
+ * Continuous PDF pane. Every page is rendered in one scrollable surface while
+ * preserving selectable extracted text and drawing-callout navigation.
  */
 export function PdfPane({
   documentId,
@@ -41,29 +151,32 @@ export function PdfPane({
   onSelectLine,
   onSelectRange,
   onSelectCallout,
+  onActivate,
+  onSelectionText,
 }: {
   documentId: string;
   entries: EntryDto[];
   callouts?: CalloutDto[];
   page: number;
-  onPageChange: (p: number) => void;
+  onPageChange: (page: number) => void;
   highlightOrdinal: number | null;
   highlightCallouts?: Set<string>;
-  onSelectLine: (e: EntryDto) => void;
+  onSelectLine: (entry: EntryDto) => void;
   onSelectRange: (startOrdinal: number, endOrdinal: number) => void;
-  onSelectCallout?: (c: CalloutDto) => void;
+  onSelectCallout?: (callout: CalloutDto) => void;
+  onActivate?: () => void;
+  onSelectionText?: (text: string) => void;
 }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const overlayRef = useRef<HTMLDivElement>(null);
-  const renderRef = useRef<RenderTask | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const pageRefs = useRef(new Map<number, HTMLDivElement>());
+  const visiblePageRef = useRef(1);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [scale, setScale] = useState(1.3);
+  const [scale, setScale] = useState(1.15);
   const [rotation, setRotation] = useState(0);
-  const [size, setSize] = useState({ w: 0, h: 0 });
 
   useEffect(() => {
-    let doc: PDFDocumentProxy | null = null;
+    let loadedDocument: PDFDocumentProxy | null = null;
     let cancelled = false;
     setError(null);
     const task = pdfjsLib.getDocument({
@@ -71,100 +184,103 @@ export function PdfPane({
       httpHeaders: { Authorization: `Bearer ${getToken() ?? ""}` },
     });
     task.promise.then(
-      (d) => {
+      (document) => {
         if (cancelled) {
-          d.destroy();
+          void document.destroy();
           return;
         }
-        doc = d;
-        setPdf(d);
+        loadedDocument = document;
+        setPdf(document);
       },
-      // The cleanup below destroys the loading task; its promise then rejects
-      // with "Worker was destroyed". Ignore rejections once cancelled so a
-      // torn-down load (e.g. React StrictMode's double mount) shows no banner.
-      (err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      (reason) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
       },
     );
     return () => {
       cancelled = true;
-      task.destroy();
-      doc?.destroy();
+      void task.destroy();
+      void loadedDocument?.destroy();
     };
   }, [documentId]);
 
   useEffect(() => {
-    if (!pdf) return;
-    let cancelled = false;
-    pdf.getPage(page).then(async (pg) => {
-      if (cancelled) return;
-      const viewport = pg.getViewport({ scale, rotation });
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      setSize({ w: viewport.width, h: viewport.height });
-      renderRef.current?.cancel();
-      renderRef.current = pg.render({ canvasContext: ctx, viewport });
-      try {
-        await renderRef.current.promise;
-      } catch {
-        /* render cancelled */
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [pdf, page, scale, rotation]);
+    if (!pdf || page === visiblePageRef.current) return;
+    pageRefs.current.get(page)?.scrollIntoView({ block: "start" });
+  }, [page, pdf]);
 
-  function handleMouseUp() {
-    const sel = window.getSelection();
-    if (!sel || sel.isCollapsed || !overlayRef.current) return;
-    const range = sel.getRangeAt(0);
-    const covered = Array.from(overlayRef.current.querySelectorAll<HTMLElement>(".pdf-line"))
-      .filter((s) => range.intersectsNode(s))
-      .map((s) => Number(s.dataset.ordinal))
-      .filter((n) => !Number.isNaN(n));
-    if (covered.length) onSelectRange(Math.min(...covered), Math.max(...covered));
+  function registerPage(pageNumber: number, element: HTMLDivElement | null) {
+    if (element) pageRefs.current.set(pageNumber, element);
+    else pageRefs.current.delete(pageNumber);
   }
 
-  const pageEntries = entries.filter((e) => e.page_index === page - 1 && e.box);
-  const pageCallouts = callouts.filter((c) => c.page_index === page - 1 && c.box?.length === 4);
+  function handleScroll() {
+    const container = scrollRef.current;
+    if (!container) return;
+    const containerTop = container.getBoundingClientRect().top;
+    let nearestPage = visiblePageRef.current;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const [pageNumber, element] of pageRefs.current) {
+      const distance = Math.abs(element.getBoundingClientRect().top - containerTop - 8);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestPage = pageNumber;
+      }
+    }
+    if (nearestPage !== visiblePageRef.current) {
+      visiblePageRef.current = nearestPage;
+      onPageChange(nearestPage);
+    }
+  }
+
+  function handleMouseUp() {
+    const nativeSelection = window.getSelection();
+    const container = scrollRef.current;
+    if (!nativeSelection || nativeSelection.isCollapsed || !container) return;
+    const range = nativeSelection.getRangeAt(0);
+    if (!container.contains(range.commonAncestorContainer)) return;
+    const text = nativeSelection.toString().trim();
+    if (text) onSelectionText?.(text);
+    const covered = Array.from(container.querySelectorAll<HTMLElement>(".pdf-line"))
+      .filter((line) => range.intersectsNode(line))
+      .map((line) => Number(line.dataset.ordinal))
+      .filter((ordinal) => !Number.isNaN(ordinal));
+    if (covered.length > 0) onSelectRange(Math.min(...covered), Math.max(...covered));
+  }
+
   const pageCount = pdf?.numPages ?? 0;
 
   return (
-    <div className="pdf-pane">
+    <div className="pdf-pane" onPointerDown={onActivate}>
       <div className="pdf-controls">
-        <button type="button" className="secondary" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>
-          ‹
-        </button>
         <span className="pdf-pageno">
-          {page} / {pageCount || "…"}
+          Page {page} of {pageCount || "…"}
         </span>
         <button
           type="button"
           className="secondary"
-          disabled={pageCount > 0 && page >= pageCount}
-          onClick={() => onPageChange(page + 1)}
+          onClick={() => setScale((value) => Math.max(0.5, value - 0.15))}
+          aria-label="Zoom out"
         >
-          ›
-        </button>
-        <button type="button" className="secondary" onClick={() => setScale((s) => Math.max(0.5, s - 0.2))}>
           −
         </button>
-        <button type="button" className="secondary" onClick={() => setScale((s) => Math.min(3, s + 0.2))}>
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => setScale((value) => Math.min(3, value + 0.15))}
+          aria-label="Zoom in"
+        >
           +
         </button>
         <button
           type="button"
           className="secondary"
-          onClick={() => setRotation((r) => (r + 90) % 360)}
+          onClick={() => setRotation((value) => (value + 90) % 360)}
           title="Rotate 90°"
+          aria-label="Rotate PDF 90 degrees"
         >
           ⟳
         </button>
+        <span className="pdf-scroll-hint">Scroll to move between pages</span>
       </div>
 
       {error && (
@@ -173,51 +289,32 @@ export function PdfPane({
         </p>
       )}
 
-      <div className="pdf-scroll">
-        <div className="pdf-page" style={{ width: size.w || undefined, height: size.h || undefined }}>
-          <canvas ref={canvasRef} />
-          <div ref={overlayRef} className="pdf-overlay" onMouseUp={handleMouseUp}>
-            {pageEntries.map((e) => {
-              const [x0, y0, x1, y1] = rotateBox(e.box as number[], rotation);
+      <div ref={scrollRef} className="pdf-scroll" onScroll={handleScroll} onMouseUp={handleMouseUp}>
+        <div className="pdf-pages">
+          {pdf &&
+            Array.from({ length: pdf.numPages }, (_, index) => {
+              const pageNumber = index + 1;
               return (
-                <span
-                  key={e.entry_id}
-                  className={`pdf-line${highlightOrdinal === e.ordinal ? " hit" : ""}`}
-                  data-ordinal={e.ordinal}
-                  style={{
-                    left: `${x0 * 100}%`,
-                    top: `${y0 * 100}%`,
-                    width: `${(x1 - x0) * 100}%`,
-                    height: `${(y1 - y0) * 100}%`,
-                  }}
-                  onClick={() => onSelectLine(e)}
-                >
-                  {e.source_text}
-                </span>
+                <ContinuousPdfPage
+                  key={pageNumber}
+                  pdf={pdf}
+                  pageNumber={pageNumber}
+                  entries={entries.filter(
+                    (entry) => entry.page_index === index && entry.box?.length === 4,
+                  )}
+                  callouts={callouts.filter(
+                    (callout) => callout.page_index === index && callout.box?.length === 4,
+                  )}
+                  scale={scale}
+                  rotation={rotation}
+                  highlightOrdinal={highlightOrdinal}
+                  highlightCallouts={highlightCallouts}
+                  onSelectLine={onSelectLine}
+                  onSelectCallout={onSelectCallout}
+                  registerPage={registerPage}
+                />
               );
             })}
-            {pageCallouts.map((c) => {
-              const [x0, y0, x1, y1] = rotateBox(c.box, rotation);
-              const hit = highlightCallouts?.has(c.callout_id);
-              return (
-                <button
-                  key={c.callout_id}
-                  type="button"
-                  className={`pdf-callout${hit ? " hit" : ""}`}
-                  style={{
-                    left: `${x0 * 100}%`,
-                    top: `${y0 * 100}%`,
-                    width: `${(x1 - x0) * 100}%`,
-                    height: `${(y1 - y0) * 100}%`,
-                  }}
-                  title={`Callout ${c.value}${c.figure_id ? ` (FIG. ${c.figure_id})` : ""}`}
-                  onClick={() => onSelectCallout?.(c)}
-                >
-                  <span className="pdf-callout-tag">{c.value}</span>
-                </button>
-              );
-            })}
-          </div>
         </div>
       </div>
     </div>

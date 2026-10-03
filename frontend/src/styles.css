@@ -1643,3 +1643,149 @@ mark.mention.clickable:hover {
     flex-wrap: wrap;
   }
 }
+
+
+/* --- streamlined continuous viewer --- */
+.viewer-mode-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  flex-wrap: nowrap;
+}
+.viewer-mode-nav .tabs {
+  display: flex;
+  grid-template-columns: none;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.viewer-mode-nav .tab {
+  flex: none;
+  gap: 0.3rem;
+  padding: 0.4rem 0.52rem;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+.viewer-tab-icon {
+  color: var(--accent);
+  font-size: 0.9rem;
+  line-height: 1;
+}
+.panes.text {
+  justify-content: center;
+}
+.panes.text .spec {
+  flex: 0 1 54rem;
+  width: min(100%, 54rem);
+}
+.panes.split {
+  gap: 0;
+}
+.panes.split .spec {
+  flex: 0 1 var(--split-percent, 42%);
+}
+.panes.split .pdf-pane {
+  flex: 1 1 0;
+}
+.pane-resizer {
+  position: relative;
+  flex: 0 0 12px;
+  align-self: stretch;
+  min-height: calc(100vh - 230px);
+  cursor: col-resize;
+  touch-action: none;
+}
+.pane-resizer::before {
+  content: "";
+  position: absolute;
+  inset: 0 5px;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background 150ms ease, inset 150ms ease;
+}
+.pane-resizer:hover::before,
+.pane-resizer:focus-visible::before {
+  inset-inline: 4px;
+  background: var(--accent);
+}
+.pane-resizer span {
+  position: sticky;
+  top: 50%;
+  display: block;
+}
+.spec-line {
+  grid-template-columns: 1.6rem 4.5rem minmax(0, 1fr);
+}
+.spec-line.paragraph-start:not(:first-child) {
+  margin-top: 0.45rem;
+}
+.pdf-pageno {
+  min-width: 8.5rem;
+  text-align: left;
+}
+.pdf-scroll-hint {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+.pdf-pages {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+  min-width: min-content;
+}
+.pdf-page-wrap {
+  display: grid;
+  justify-content: center;
+  scroll-margin-top: 0.75rem;
+}
+.pdf-page {
+  margin: 0 auto;
+  background: white;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.28);
+}
+.pdf-page-wrap::after {
+  content: "Page " attr(data-page);
+  justify-self: center;
+  margin-top: 0.35rem;
+  color: #c8ccd2;
+  font-size: 0.72rem;
+}
+
+@media (max-width: 980px) {
+  .viewer-title {
+    flex-basis: calc(100% - 10rem);
+  }
+  .viewer-mode-nav {
+    order: 2;
+    width: 100%;
+    overflow-x: auto;
+    padding-bottom: 0.15rem;
+  }
+  .search {
+    order: 3;
+  }
+  .export-menu {
+    order: 3;
+    margin-left: auto;
+  }
+}
+
+@media (max-width: 760px) {
+  .panes.split {
+    display: grid;
+  }
+  .panes.split .spec,
+  .panes.split .pdf-pane {
+    width: 100%;
+    max-height: none;
+  }
+  .pane-resizer {
+    display: none;
+  }
+  .pdf-scroll-hint {
+    display: none;
+  }
+}
