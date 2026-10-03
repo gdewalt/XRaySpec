@@ -327,10 +327,16 @@ def _emit_column(
             }
             if index > 0 else set()
         )
-        ocr_break = bool(index > 0 and current_keys and previous_keys and current_keys != previous_keys)
+        ocr_break = bool(
+            index > 0 and current_keys and previous_keys and current_keys != previous_keys
+        )
         vertical_gap = ln.cy - content[index - 1][0].cy if index > 0 else 0.0
         indented = min(w.x0 for w in body) - common_left >= 0.018
-        spaced = bool(index > 0 and typical_gap > 0 and vertical_gap >= max(0.018, typical_gap * 1.6))
+        spaced = bool(
+            index > 0
+            and typical_gap > 0
+            and vertical_gap >= max(0.018, typical_gap * 1.6)
+        )
         paragraph_start = ocr_break or indented or spaced
 
         printed = _interp(line_map, ln.cy)

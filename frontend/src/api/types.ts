@@ -170,7 +170,7 @@ export interface ArtifactEntries {
   entries: EntryDto[];
   figure_mentions: FigureMentionDto[];
   numeral_mentions: NumeralMentionDto[];
-  figure_occurrences: FigureOccurrenceDto[];
+  figure_occurrences?: FigureOccurrenceDto[];
   mention_associations: AssociationDto[];
   callout_occurrences: CalloutDto[];
 }
