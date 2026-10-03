@@ -22,11 +22,15 @@ def test_words_from_tsv_parses_word_level():
         "top": [0, 100, 100],
         "width": [0, 80, 30],
         "height": [0, 20, 20],
+        "block_num": [0, 2, 2],
+        "par_num": [0, 3, 3],
+        "line_num": [0, 1, 1],
     }
     words = words_from_tsv(data, width=1000, height=500, min_confidence=0)
     assert [w.text for w in words] == ["housing", "104"]
     assert words[0].x0 == 0.05 and words[0].y0 == 0.2
     assert words[0].confidence == 95.0
+    assert (words[0].block_num, words[0].paragraph_num, words[0].line_num) == (2, 3, 1)
 
 
 def test_words_from_tsv_respects_min_confidence():
@@ -85,3 +89,36 @@ def test_hybrid_mode_when_pages_mixed():
     )
     assert art.mode == "hybrid"
     assert art.quality["ocr_pages"] == 1
+
+
+def test_ocr_paragraph_hierarchy_marks_breaks():
+    words = [
+        Word("1", 0.28, 0.045, 0.30, 0.062, confidence=95.0),
+        Word("2", 0.70, 0.045, 0.72, 0.062, confidence=95.0),
+    ]
+    for i in range(10):
+        cy = 0.11 + 0.025 * i
+        paragraph = 1 if i < 5 else 2
+        words += [
+            Word(
+                "line", 0.12, cy - 0.008, 0.20, cy + 0.008,
+                confidence=90.0, block_num=1, paragraph_num=paragraph, line_num=i + 1,
+            ),
+            Word(
+                str(i), 0.22, cy - 0.008, 0.25, cy + 0.008,
+                confidence=90.0, block_num=1, paragraph_num=paragraph, line_num=i + 1,
+            ),
+            Word(
+                "right", 0.55, cy - 0.008, 0.66, cy + 0.008,
+                confidence=90.0, block_num=2, paragraph_num=1, line_num=i + 1,
+            ),
+        ]
+        if (i + 1) % 5 == 0:
+            words.append(Word(str(i + 1), 0.49, cy - 0.008, 0.51, cy + 0.008, 99.0))
+
+    art = extract_from_pages(
+        [Page(0, words)], DEFAULT_CONFIG, source_sha256="x", page_methods=["ocr"]
+    )
+    left = [entry for entry in art.entries if entry.locator.column == 1]
+    assert left[0].paragraph_start is False
+    assert left[5].paragraph_start is True

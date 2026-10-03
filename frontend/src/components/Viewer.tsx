@@ -19,6 +19,7 @@ import type {
   DocumentRead,
   EntryDto,
   FigureMentionDto,
+  FigureOccurrenceDto,
   NumeralMentionDto,
   OverrideRead,
 } from "../api/types";
@@ -363,6 +364,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
 
   // --- figure/callout cross-navigation ---
   const [highlightCallouts, setHighlightCallouts] = useState<Set<string>>(new Set());
+  const [focusedFigure, setFocusedFigure] = useState<FigureOccurrenceDto | null>(null);
   const [chooser, setChooser] = useState<{
     mention: NumeralMentionDto;
     candidates: CalloutDto[];
@@ -399,6 +401,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
     );
     setSelectionSource("pdf");
     setPdfPage(callout.page_index + 1);
+    setFocusedFigure(null);
     setHighlightCallouts(new Set(highlightIds));
   }, []);
 
@@ -407,16 +410,21 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
       const normalize = (value: string) =>
         value.replace(/^fig(?:ure)?\.?\s*/i, "").replace(/\s+/g, "").toUpperCase();
       const wanted = new Set(mention.figure_ids.map(normalize));
-      const matches = (artifact?.callout_occurrences ?? [])
+      const figures = (artifact?.figure_occurrences ?? [])
+        .filter((figure) => wanted.has(normalize(figure.figure_id)))
+        .sort((a, b) => a.page_index - b.page_index);
+      const legacyCallouts = (artifact?.callout_occurrences ?? [])
         .filter((callout) => callout.figure_id && wanted.has(normalize(callout.figure_id)))
         .sort((a, b) => a.page_index - b.page_index);
-      if (matches.length === 0) return;
+      const targetPage = figures[0]?.page_index ?? legacyCallouts[0]?.page_index;
+      if (targetPage === undefined) return;
       setLayout((current) =>
         current === "text" ? "split" : current === "details" ? "pdf" : current,
       );
       setSelectionSource("pdf");
-      setPdfPage(matches[0].page_index + 1);
-      setHighlightCallouts(new Set(matches.map((callout) => callout.callout_id)));
+      setPdfPage(targetPage + 1);
+      setFocusedFigure(figures[0] ? { ...figures[0] } : null);
+      setHighlightCallouts(new Set(legacyCallouts.map((callout) => callout.callout_id)));
     },
     [artifact],
   );
@@ -458,6 +466,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
       setLayout((current) =>
         current === "pdf" ? "split" : current === "details" ? "text" : current,
       );
+      setFocusedFigure(null);
       setHighlightCallouts(new Set([c.callout_id]));
       const ord = ordByEntryId.get(ms[idx].entry_id);
       if (ord !== undefined) selectRange(ord, ord, { scroll: true });
@@ -970,8 +979,9 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                 const noteCount = notesByEntry.get(e.entry_id)?.length ?? 0;
                 const previous = entries[index - 1];
                 const paragraphStart =
-                  !!e.locator.paragraph &&
-                  e.locator.paragraph !== previous?.locator.paragraph;
+                  e.paragraph_start === true ||
+                  (!!e.locator.paragraph &&
+                    e.locator.paragraph !== previous?.locator.paragraph);
                 return (
                   <div
                     key={e.entry_id}
@@ -1042,6 +1052,8 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
               documentId={documentId}
               entries={entries}
               callouts={artifact.callout_occurrences}
+              figures={artifact.figure_occurrences}
+              focusedFigure={focusedFigure}
               page={pdfPage}
               onPageChange={setPdfPage}
               highlightOrdinal={highlightOrdinal}

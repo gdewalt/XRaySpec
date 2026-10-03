@@ -89,6 +89,7 @@ def extract_application_page(
                 ),
                 text_confidence="high" if method == "native" else "medium",
                 reference_confidence=ref_conf,
+                paragraph_start=marker is not None,
             )
         )
         ordinal += 1

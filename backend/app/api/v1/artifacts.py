@@ -54,6 +54,7 @@ async def get_artifact_entries(
         entries=data.get("entries", []),
         figure_mentions=data.get("figure_mentions", []),
         numeral_mentions=data.get("numeral_mentions", []),
+        figure_occurrences=data.get("figure_occurrences", []),
         mention_associations=data.get("mention_associations", []),
         callout_occurrences=data.get("callout_occurrences", []),
     )

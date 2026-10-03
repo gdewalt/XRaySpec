@@ -25,10 +25,17 @@ from __future__ import annotations
 
 import re
 
-from .artifact import CalloutOccurrence, Entry, FigureMention, MentionAssociation, NumeralMention
+from .artifact import (
+    CalloutOccurrence,
+    Entry,
+    FigureMention,
+    FigureOccurrence,
+    MentionAssociation,
+    NumeralMention,
+)
 from .figures import _FIG_REF, _expand_figure_expr
 from .model import Word
-from .native import _clamp_box
+from .native import _clamp_box, group_lines
 
 _CALLOUT = re.compile(r"^\d{2,4}[A-Za-z]?$")
 _NUMERICISH = re.compile(r"^\d{1,4}[A-Za-z]?$")
@@ -55,6 +62,52 @@ def detect_page_figure(words: list[Word]) -> str | None:
     for m in _FIG_REF.finditer(text):
         ids.update(_expand_figure_expr(m.group(1)))
     return next(iter(ids)) if len(ids) == 1 else None
+
+
+def detect_figure_occurrences(words: list[Word], page_index: int) -> list[FigureOccurrence]:
+    """Locate every FIG label on a drawing sheet, including multi-figure sheets."""
+    occurrences: list[FigureOccurrence] = []
+    seen: set[tuple[str, int, int, int, int]] = set()
+    for line in group_lines(words):
+        pieces: list[str] = []
+        spans: list[tuple[int, int, Word]] = []
+        cursor = 0
+        for word in line.words:
+            if pieces:
+                cursor += 1
+            start = cursor
+            pieces.append(word.text)
+            cursor += len(word.text)
+            spans.append((start, cursor, word))
+        text = " ".join(pieces)
+        for match in _FIG_REF.finditer(text):
+            matched_words = [
+                word for start, end, word in spans
+                if start < match.end() and end > match.start()
+            ]
+            if not matched_words:
+                continue
+            for figure_id in _expand_figure_expr(match.group(1)):
+                box = _clamp_box(
+                    min(w.x0 for w in matched_words),
+                    min(w.y0 for w in matched_words),
+                    max(w.x1 for w in matched_words),
+                    max(w.y1 for w in matched_words),
+                )
+                key = (figure_id, *[round(value * 10000) for value in box])
+                if key in seen:
+                    continue
+                seen.add(key)
+                confidences = [w.confidence for w in matched_words if w.confidence is not None]
+                occurrences.append(
+                    FigureOccurrence(
+                        figure_id=figure_id,
+                        page_index=page_index,
+                        box=box,
+                        confidence=(sum(confidences) / len(confidences)) if confidences else None,
+                    )
+                )
+    return occurrences
 
 
 def detect_callouts(

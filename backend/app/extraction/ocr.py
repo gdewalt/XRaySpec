@@ -52,6 +52,9 @@ def words_from_tsv(
                 x1=(left + w) / width,
                 y1=(top + h) / height,
                 confidence=conf,
+                block_num=int(data["block_num"][i]) if "block_num" in data else None,
+                paragraph_num=int(data["par_num"][i]) if "par_num" in data else None,
+                line_num=int(data["line_num"][i]) if "line_num" in data else None,
             )
         )
     return words

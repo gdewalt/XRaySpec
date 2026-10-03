@@ -12,6 +12,7 @@ from app.extraction.artifact import (
 from app.extraction.callouts import (
     associate_mentions,
     detect_callouts,
+    detect_figure_occurrences,
     detect_page_figure,
     is_drawing_page,
 )
@@ -108,3 +109,15 @@ def test_context_narrows_ambiguity_to_verified():
     assoc = associate_mentions([_numeral("104", "line_0000001")], callouts, figs, entries)
     assert assoc[0].status == "verified"
     assert assoc[0].selected_callout_ids == ["callout_a"]
+
+
+def test_detects_each_figure_on_multi_figure_sheet():
+    words = [
+        Word("FIG.", 0.10, 0.10, 0.16, 0.12, confidence=92.0),
+        Word("3", 0.17, 0.10, 0.19, 0.12, confidence=94.0),
+        Word("FIG.", 0.58, 0.10, 0.64, 0.12, confidence=91.0),
+        Word("4A", 0.65, 0.10, 0.69, 0.12, confidence=93.0),
+    ]
+    figures = detect_figure_occurrences(words, page_index=7)
+    assert [(figure.figure_id, figure.page_index) for figure in figures] == [("3", 7), ("4A", 7)]
+    assert figures[0].box[2] < figures[1].box[0]

@@ -55,6 +55,7 @@ class Entry:
     text_confidence: Confidence = "high"
     reference_confidence: Confidence = "high"
     section: str | None = None
+    paragraph_start: bool = False
     warnings: list[str] = field(default_factory=list)
 
     def ref(self) -> str:
@@ -80,6 +81,17 @@ class NumeralMention:
     value: str  # normalized numeral, e.g. "104" or "104A"
     component_label: str | None
     span: tuple[int, int]  # half-open char offsets in source_text
+
+
+@dataclass(frozen=True, slots=True)
+class FigureOccurrence:
+    """A figure label located on a drawing page, used for direct PDF navigation."""
+
+    figure_id: str
+    page_index: int
+    box: Box
+    confidence: float | None = None
+    method: str = "sparse_ocr"
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +134,7 @@ class Artifact:
     entries: list[Entry] = field(default_factory=list)
     figure_mentions: list[FigureMention] = field(default_factory=list)
     numeral_mentions: list[NumeralMention] = field(default_factory=list)
+    figure_occurrences: list[FigureOccurrence] = field(default_factory=list)
     callout_occurrences: list[CalloutOccurrence] = field(default_factory=list)
     mention_associations: list[MentionAssociation] = field(default_factory=list)
     quality: dict[str, object] = field(default_factory=dict)

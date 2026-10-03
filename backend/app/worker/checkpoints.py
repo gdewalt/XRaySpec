@@ -20,7 +20,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import JobCheckpoint
-from ..extraction.artifact import Box, CalloutOccurrence
+from ..extraction.artifact import Box, CalloutOccurrence, FigureOccurrence
 from ..extraction.config import ExtractionConfig
 from ..extraction.core import PageResult
 from ..extraction.model import Word
@@ -37,11 +37,40 @@ def resume_cache_key(
 
 
 def _word_to_list(w: Word) -> list:
-    return [w.text, w.x0, w.y0, w.x1, w.y1, w.confidence]
+    return [
+        w.text, w.x0, w.y0, w.x1, w.y1, w.confidence,
+        w.block_num, w.paragraph_num, w.line_num,
+    ]
 
 
 def _word_from_list(v: list) -> Word:
-    return Word(text=v[0], x0=v[1], y0=v[2], x1=v[3], y1=v[4], confidence=v[5])
+    return Word(
+        text=v[0], x0=v[1], y0=v[2], x1=v[3], y1=v[4], confidence=v[5],
+        block_num=v[6] if len(v) > 6 else None,
+        paragraph_num=v[7] if len(v) > 7 else None,
+        line_num=v[8] if len(v) > 8 else None,
+    )
+
+
+def _figure_to_dict(f: FigureOccurrence) -> dict:
+    return {
+        "figure_id": f.figure_id,
+        "page_index": f.page_index,
+        "box": list(f.box),
+        "confidence": f.confidence,
+        "method": f.method,
+    }
+
+
+def _figure_from_dict(d: dict) -> FigureOccurrence:
+    box: Box = tuple(d["box"])  # type: ignore[assignment]
+    return FigureOccurrence(
+        figure_id=d["figure_id"],
+        page_index=d["page_index"],
+        box=box,
+        confidence=d.get("confidence"),
+        method=d.get("method", "sparse_ocr"),
+    )
 
 
 def _callout_to_dict(c: CalloutOccurrence) -> dict:
@@ -75,6 +104,7 @@ def page_result_to_payload(r: PageResult) -> dict:
         "method": r.method,
         "is_drawing": r.is_drawing,
         "words": [_word_to_list(w) for w in r.words],
+        "figures": [_figure_to_dict(f) for f in r.figures],
         "callouts": [_callout_to_dict(c) for c in r.callouts],
     }
 
@@ -85,6 +115,7 @@ def page_result_from_payload(d: dict) -> PageResult:
         method=d["method"],
         is_drawing=d["is_drawing"],
         words=tuple(_word_from_list(w) for w in d.get("words", [])),
+        figures=tuple(_figure_from_dict(f) for f in d.get("figures", [])),
         callouts=tuple(_callout_from_dict(c) for c in d.get("callouts", [])),
     )
 

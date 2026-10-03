@@ -118,6 +118,7 @@ export interface EntryDto {
   display_text: string;
   text_confidence: string;
   reference_confidence: string;
+  paragraph_start?: boolean;
 }
 
 export interface FigureMentionDto {
@@ -143,6 +144,13 @@ export interface AssociationDto {
   candidate_callout_ids: string[];
 }
 
+export interface FigureOccurrenceDto {
+  figure_id: string;
+  page_index: number;
+  box: number[];
+  confidence: number | null;
+}
+
 export interface CalloutDto {
   callout_id: string;
   value: string;
@@ -162,6 +170,7 @@ export interface ArtifactEntries {
   entries: EntryDto[];
   figure_mentions: FigureMentionDto[];
   numeral_mentions: NumeralMentionDto[];
+  figure_occurrences: FigureOccurrenceDto[];
   mention_associations: AssociationDto[];
   callout_occurrences: CalloutDto[];
 }

@@ -930,6 +930,19 @@ mark.search-hit {
   background: color-mix(in srgb, #d19a24 35%, transparent);
   outline: 1px solid #d19a24;
 }
+.pdf-figure-target {
+  position: absolute;
+  pointer-events: none;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  scroll-margin: 8rem;
+}
+.pdf-figure-target.hit {
+  border-color: #c27a00;
+  background: rgba(255, 193, 7, 0.22);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.92), 0 0 0 5px #c27a00;
+}
+
 .pdf-callout {
   position: absolute;
   padding: 0;

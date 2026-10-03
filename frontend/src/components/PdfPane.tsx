@@ -3,7 +3,7 @@ import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import workerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { useEffect, useRef, useState } from "react";
 
-import type { CalloutDto, EntryDto } from "../api/types";
+import type { CalloutDto, EntryDto, FigureOccurrenceDto } from "../api/types";
 import { getToken } from "../auth/session";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
@@ -28,6 +28,8 @@ function ContinuousPdfPage({
   pageNumber,
   entries,
   callouts,
+  figures,
+  focusedFigure,
   scale,
   rotation,
   highlightOrdinal,
@@ -40,6 +42,8 @@ function ContinuousPdfPage({
   pageNumber: number;
   entries: EntryDto[];
   callouts: CalloutDto[];
+  figures: FigureOccurrenceDto[];
+  focusedFigure?: FigureOccurrenceDto | null;
   scale: number;
   rotation: number;
   highlightOrdinal: number | null;
@@ -130,6 +134,27 @@ function ContinuousPdfPage({
               </button>
             );
           })}
+          {figures.map((figure, index) => {
+            const [x0, y0, x1, y1] = rotateBox(figure.box, rotation);
+            const hit =
+              focusedFigure?.figure_id === figure.figure_id &&
+              focusedFigure.page_index === figure.page_index &&
+              focusedFigure.box.every((value, boxIndex) => value === figure.box[boxIndex]);
+            return (
+              <span
+                key={`${figure.figure_id}-${index}`}
+                className={`pdf-figure-target${hit ? " hit" : ""}`}
+                data-figure-id={figure.figure_id}
+                style={{
+                  left: `${x0 * 100}%`,
+                  top: `${y0 * 100}%`,
+                  width: `${(x1 - x0) * 100}%`,
+                  height: `${(y1 - y0) * 100}%`,
+                }}
+                aria-hidden="true"
+              />
+            );
+          })}
         </div>
       </div>
     </div>
@@ -144,6 +169,8 @@ export function PdfPane({
   documentId,
   entries,
   callouts = [],
+  figures = [],
+  focusedFigure,
   page,
   onPageChange,
   highlightOrdinal,
@@ -157,6 +184,8 @@ export function PdfPane({
   documentId: string;
   entries: EntryDto[];
   callouts?: CalloutDto[];
+  figures?: FigureOccurrenceDto[];
+  focusedFigure?: FigureOccurrenceDto | null;
   page: number;
   onPageChange: (page: number) => void;
   highlightOrdinal: number | null;
@@ -204,9 +233,21 @@ export function PdfPane({
   }, [documentId]);
 
   useEffect(() => {
-    if (!pdf || page === visiblePageRef.current) return;
-    pageRefs.current.get(page)?.scrollIntoView({ block: "start" });
-  }, [page, pdf]);
+    if (!pdf) return;
+    const pageElement = pageRefs.current.get(page);
+    if (!pageElement) return;
+    const frame = window.requestAnimationFrame(() => {
+      const figureTarget = focusedFigure
+        ? Array.from(pageElement.querySelectorAll<HTMLElement>(".pdf-figure-target")).find(
+            (element) => element.dataset.figureId === focusedFigure.figure_id,
+          )
+        : null;
+      (figureTarget ?? pageElement).scrollIntoView({
+        block: figureTarget ? "center" : "start",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [page, pdf, focusedFigure]);
 
   function registerPage(pageNumber: number, element: HTMLDivElement | null) {
     if (element) pageRefs.current.set(pageNumber, element);
@@ -305,6 +346,10 @@ export function PdfPane({
                   callouts={callouts.filter(
                     (callout) => callout.page_index === index && callout.box?.length === 4,
                   )}
+                  figures={figures.filter(
+                    (figure) => figure.page_index === index && figure.box?.length === 4,
+                  )}
+                  focusedFigure={focusedFigure}
                   scale={scale}
                   rotation={rotation}
                   highlightOrdinal={highlightOrdinal}

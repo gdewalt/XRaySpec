@@ -21,6 +21,10 @@ class Word:
     x1: float
     y1: float
     confidence: float | None = None  # OCR word confidence (0–100); None for native
+    # Tesseract layout hierarchy. Native PDF words leave these unset.
+    block_num: int | None = None
+    paragraph_num: int | None = None
+    line_num: int | None = None
 
     @property
     def cx(self) -> float:

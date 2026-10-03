@@ -18,8 +18,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from .applications import count_paragraph_markers, extract_application_page
-from .artifact import Artifact, CalloutOccurrence
-from .callouts import associate_mentions, detect_callouts, detect_page_figure, is_drawing_page
+from .artifact import Artifact, CalloutOccurrence, FigureOccurrence
+from .callouts import (
+    associate_mentions,
+    detect_callouts,
+    detect_figure_occurrences,
+    detect_page_figure,
+    is_drawing_page,
+)
 from .config import ExtractionConfig
 from .figures import detect_figure_references, detect_reference_numerals
 from .model import Page, Word
@@ -39,6 +45,7 @@ class PageResult:
     method: str  # "native" | "ocr"
     is_drawing: bool
     words: tuple[Word, ...] = ()  # specification words (empty for a drawing page)
+    figures: tuple[FigureOccurrence, ...] = ()  # every FIG label on a drawing page
     callouts: tuple[CalloutOccurrence, ...] = ()  # drawing callouts (empty for a spec page)
 
 
@@ -75,8 +82,9 @@ def route_page(
         if method == "ocr" and can_ocr:
             draw_words = ocr_fn(pdf_bytes, page.index, config, psm=config.ocr_sparse_psm)
         figure_id = detect_page_figure(draw_words)
+        figures = tuple(detect_figure_occurrences(draw_words, page.index))
         callouts = tuple(detect_callouts(draw_words, page.index, figure_id))
-        return PageResult(page.index, method, True, callouts=callouts)
+        return PageResult(page.index, method, True, figures=figures, callouts=callouts)
     return PageResult(page.index, method, False, words=tuple(page.words))
 
 
@@ -93,6 +101,7 @@ def assemble_from_results(
     spec = [r for r in ordered if not r.is_drawing]
     spec_pages = [Page(index=r.page_index, words=list(r.words)) for r in spec]
     methods = [r.method for r in spec]
+    figure_occurrences = [f for r in ordered if r.is_drawing for f in r.figures]
     callouts = [c for r in ordered if r.is_drawing for c in r.callouts]
     if doc_type not in ("grant", "application"):
         doc_type = detect_doc_type(spec_pages)
@@ -102,6 +111,7 @@ def assemble_from_results(
         source_sha256=source_sha256,
         page_methods=methods,
         doc_type=doc_type,
+        figure_occurrences=figure_occurrences,
         callouts=callouts,
         total_pages=total_pages,
     )
@@ -114,6 +124,7 @@ def extract_from_pages(
     source_sha256: str,
     page_methods: list[str] | None = None,
     doc_type: str = "grant",
+    figure_occurrences: list[FigureOccurrence] | None = None,
     callouts: list[CalloutOccurrence] | None = None,
     total_pages: int | None = None,
 ) -> Artifact:
@@ -141,6 +152,7 @@ def extract_from_pages(
 
     figure_mentions = detect_figure_references(entries)
     numeral_mentions = detect_reference_numerals(entries)
+    drawing_figures = figure_occurrences or []
     callout_occurrences = callouts or []
     mention_associations = associate_mentions(
         numeral_mentions, callout_occurrences, figure_mentions, entries
@@ -181,6 +193,7 @@ def extract_from_pages(
         entries=entries,
         figure_mentions=figure_mentions,
         numeral_mentions=numeral_mentions,
+        figure_occurrences=drawing_figures,
         callout_occurrences=callout_occurrences,
         mention_associations=mention_associations,
         quality={
@@ -190,6 +203,7 @@ def extract_from_pages(
             "detected_references": detected,
             "interpolated_references": interpolated,
             "figure_mentions": len(figure_mentions),
+            "figure_occurrences": len(drawing_figures),
             "numeral_mentions": len(numeral_mentions),
             "callouts": len(callout_occurrences),
             "verified_links": sum(1 for a in mention_associations if a.status == "verified"),

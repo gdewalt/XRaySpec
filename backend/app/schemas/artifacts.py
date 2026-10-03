@@ -35,5 +35,6 @@ class ArtifactEntriesResponse(BaseModel):
     entries: list[dict[str, Any]]
     figure_mentions: list[dict[str, Any]]
     numeral_mentions: list[dict[str, Any]]
+    figure_occurrences: list[dict[str, Any]]
     mention_associations: list[dict[str, Any]]
     callout_occurrences: list[dict[str, Any]]

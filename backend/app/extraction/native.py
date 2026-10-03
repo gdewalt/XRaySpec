@@ -293,13 +293,45 @@ def _emit_column(
     anchor_ys = [ay for ay, _ in line_map]
     entries: list[Entry] = []
     prev = 0
+
+    # Preserve Tesseract's block/paragraph grouping when available. For native
+    # text (and imperfect OCR), infer a conservative break from a first-line
+    # indent or an unusually large vertical gap.
+    content: list[tuple[_Line, list[Word], str]] = []
     for ln in group_lines(col_words):
-        if ln.cy < header_cutoff:  # masthead row above the specification
+        if ln.cy < header_cutoff:
             continue
         body = [w for w in ln.words if not (gutter_lo <= w.cx <= gutter_hi)]
         text = " ".join(w.text for w in body).strip()
-        if not text or (len(body) == 1 and _digits(body[0].text) is not None):
-            continue
+        if text and not (len(body) == 1 and _digits(body[0].text) is not None):
+            content.append((ln, body, text))
+    gaps = [
+        content[i][0].cy - content[i - 1][0].cy
+        for i in range(1, len(content))
+        if content[i][0].cy > content[i - 1][0].cy
+    ]
+    typical_gap = _median(gaps)
+    common_left = _median([min(w.x0 for w in body) for _, body, _ in content])
+
+    for index, (ln, body, text) in enumerate(content):
+        current_keys = {
+            (w.block_num, w.paragraph_num)
+            for w in body
+            if w.block_num is not None and w.paragraph_num is not None
+        }
+        previous_keys = (
+            {
+                (w.block_num, w.paragraph_num)
+                for w in content[index - 1][1]
+                if w.block_num is not None and w.paragraph_num is not None
+            }
+            if index > 0 else set()
+        )
+        ocr_break = bool(index > 0 and current_keys and previous_keys and current_keys != previous_keys)
+        vertical_gap = ln.cy - content[index - 1][0].cy if index > 0 else 0.0
+        indented = min(w.x0 for w in body) - common_left >= 0.018
+        spaced = bool(index > 0 and typical_gap > 0 and vertical_gap >= max(0.018, typical_gap * 1.6))
+        paragraph_start = ocr_break or indented or spaced
 
         printed = _interp(line_map, ln.cy)
         if printed < prev:  # non-decreasing; a wrapped line may repeat a number
@@ -331,6 +363,7 @@ def _emit_column(
                 ),
                 text_confidence="high" if method == "native" else "medium",
                 reference_confidence="high" if on_anchor else ("medium" if line_map else "low"),
+                paragraph_start=paragraph_start,
             )
         )
         ordinal += 1
