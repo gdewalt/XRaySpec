@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from ...db.models import UserDocument, Workspace
+from ...db.models import Workspace
 from ...schemas.documents import DocumentRead
 from ...schemas.workspaces import (
     DocumentWorkspaceUpdate,
