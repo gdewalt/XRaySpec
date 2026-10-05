@@ -6,6 +6,7 @@ import type { EntryDto } from "../api/types";
 
 export type CiteStyle = {
   includeTitle: boolean;
+  grantFormat: "colon" | "labels";
   columnWord: "col." | "column" | "c.";
   lineWord: "l." | "line";
   paragraphWord: "¶" | "para." | "paragraph";
@@ -15,19 +16,48 @@ export type CitePreset = { id: string; name: string; style: CiteStyle };
 
 export const CITE_PRESETS: CitePreset[] = [
   {
+    id: "column-line",
+    name: "Column:line (3:22)",
+    style: {
+      includeTitle: true,
+      grantFormat: "colon",
+      columnWord: "col.",
+      lineWord: "l.",
+      paragraphWord: "¶",
+    },
+  },
+  {
     id: "standard",
     name: "Standard (col. 3, l. 22)",
-    style: { includeTitle: true, columnWord: "col.", lineWord: "l.", paragraphWord: "¶" },
+    style: {
+      includeTitle: true,
+      grantFormat: "labels",
+      columnWord: "col.",
+      lineWord: "l.",
+      paragraphWord: "¶",
+    },
   },
   {
     id: "verbose",
     name: "Verbose (column 3, line 22)",
-    style: { includeTitle: true, columnWord: "column", lineWord: "line", paragraphWord: "paragraph" },
+    style: {
+      includeTitle: true,
+      grantFormat: "labels",
+      columnWord: "column",
+      lineWord: "line",
+      paragraphWord: "paragraph",
+    },
   },
   {
     id: "compact",
-    name: "Compact (c. 3, l. 22 — no title)",
-    style: { includeTitle: false, columnWord: "c.", lineWord: "l.", paragraphWord: "para." },
+    name: "Compact (3:22 — no title)",
+    style: {
+      includeTitle: false,
+      grantFormat: "colon",
+      columnWord: "c.",
+      lineWord: "l.",
+      paragraphWord: "para.",
+    },
   },
 ];
 
@@ -62,6 +92,14 @@ export function formatRef(entries: EntryDto[], style: CiteStyle): string {
     style.lineWord === "l." ? (plural ? "ll." : "l.") : plural ? "lines" : "line";
 
   if (a.kind === "grant" && b.kind === "grant") {
+    if (style.grantFormat === "colon") {
+      if (a.column === b.column) {
+        return a.printed_line === b.printed_line
+          ? `${a.column}:${a.printed_line}`
+          : `${a.column}:${a.printed_line}–${b.printed_line}`;
+      }
+      return `${a.column}:${a.printed_line}–${b.column}:${b.printed_line}`;
+    }
     if (a.column === b.column) {
       return a.printed_line === b.printed_line
         ? `${style.columnWord} ${a.column}, ${lineWord(false)} ${a.printed_line}`

@@ -44,7 +44,7 @@ import {
   searchEntries,
 } from "../spec/navigation";
 import { exportPortable, exportText } from "../spec/export";
-import { dehyphenateLineBreaks, deriveIndentLevels, joinEntryText } from "../spec/text";
+import { deriveIndentLevels, joinEntryText, normalizeCopiedText } from "../spec/text";
 import { PdfPane } from "./PdfPane";
 
 type Layout = "text" | "pdf" | "split" | "details";
@@ -218,7 +218,7 @@ function copiedTextFromRange(range: Range): string {
     : selectedLines.length > 0
       ? selectedLines.join("\n")
       : copySurface.textContent ?? "";
-  return dehyphenateLineBreaks(raw).trimEnd();
+  return normalizeCopiedText(raw);
 }
 
 export function Viewer({ documentId, onBack }: { documentId: string; onBack: () => void }) {
@@ -654,7 +654,9 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
     selectedEntries.length && doc ? formatCitation(selectedEntries, doc.title, citeStyle) : "";
   const selectedText = joinEntryText(selectedEntries);
   const surfaceSelection = selectionSource === "pdf" ? pdfSelection : textSelection;
-  const activeSelectionText = surfaceSelection.trim() ? surfaceSelection.trimEnd() : selectedText;
+  const activeSelectionText = normalizeCopiedText(
+    surfaceSelection.trim() ? surfaceSelection : selectedText,
+  );
   const highlightOrdinal = selection ? selection.start : null;
   const selectedBookmarked = selectedStartEntry
     ? bookmarkByEntry.has(selectedStartEntry.entry_id)
@@ -1261,9 +1263,22 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                 Include title
               </label>
               <label>
+                Grant locator
+                <select
+                  value={citeStyle.grantFormat}
+                  onChange={(e) =>
+                    updateStyle({ grantFormat: e.target.value as CiteStyle["grantFormat"] })
+                  }
+                >
+                  <option value="colon">3:22</option>
+                  <option value="labels">col. 3, l. 22</option>
+                </select>
+              </label>
+              <label>
                 Column
                 <select
                   value={citeStyle.columnWord}
+                  disabled={citeStyle.grantFormat === "colon"}
                   onChange={(e) => updateStyle({ columnWord: e.target.value as CiteStyle["columnWord"] })}
                 >
                   <option value="col.">col.</option>
@@ -1275,6 +1290,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                 Line
                 <select
                   value={citeStyle.lineWord}
+                  disabled={citeStyle.grantFormat === "colon"}
                   onChange={(e) => updateStyle({ lineWord: e.target.value as CiteStyle["lineWord"] })}
                 >
                   <option value="l.">l. / ll.</option>

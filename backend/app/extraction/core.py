@@ -146,9 +146,19 @@ def extract_from_pages(
             )
             entries.extend(page_entries)
     else:
+        fallback_columns = (1, 2)
         for page, method in zip(pages, methods, strict=False):
-            page_entries, ordinal = extract_page(page, config, ordinal, method=method)
+            page_entries, ordinal = extract_page(
+                page,
+                config,
+                ordinal,
+                method=method,
+                fallback_columns=fallback_columns,
+            )
             entries.extend(page_entries)
+            if page_entries:
+                last_column = max(entry.locator.column for entry in page_entries)
+                fallback_columns = (last_column + 1, last_column + 2)
 
     figure_mentions = detect_figure_references(entries)
     numeral_mentions = detect_reference_numerals(entries)

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { EntryDto } from "../api/types";
-import { dehyphenateLineBreaks, deriveIndentLevels, joinEntryText } from "./text";
+import {
+  dehyphenateLineBreaks,
+  deriveIndentLevels,
+  joinEntryText,
+  normalizeCopiedText,
+} from "./text";
 
 function entry(
   id: string,
@@ -31,7 +36,7 @@ describe("text reconstruction", () => {
     expect(dehyphenateLineBreaks("a well-known design")).toBe("a well-known design");
   });
 
-  it("preserves paragraph breaks while repairing wrapped words", () => {
+  it("copies selected prose on one line while repairing wrapped words", () => {
     const entries = [
       entry("e0", "A trans-", [0.1, 0.1, 0.4, 0.12]),
       entry("e1", "mitter operates.", [0.1, 0.13, 0.4, 0.15]),
@@ -39,7 +44,13 @@ describe("text reconstruction", () => {
         paragraph_start: true,
       }),
     ];
-    expect(joinEntryText(entries)).toBe("A transmitter operates.\n\nA new paragraph.");
+    expect(joinEntryText(entries)).toBe("A transmitter operates. A new paragraph.");
+  });
+
+  it("flattens line, paragraph, and tab whitespace only for copied text", () => {
+    expect(normalizeCopiedText("\tFirst line\n\nSecond\tline  here ")).toBe(
+      "First line Second line here",
+    );
   });
 
   it("derives a leading tab from OCR line geometry", () => {

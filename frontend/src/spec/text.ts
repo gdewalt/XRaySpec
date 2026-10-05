@@ -7,7 +7,12 @@ export function dehyphenateLineBreaks(text: string): string {
   return text.replace(BROKEN_WORD, "$1");
 }
 
-/** Plain selected prose with paragraph boundaries and wrapped words repaired. */
+/** Clipboard prose: repair wrapped words and flatten visual lines to one line. */
+export function normalizeCopiedText(text: string): string {
+  return dehyphenateLineBreaks(text).replace(/\s+/gu, " ").trim();
+}
+
+/** Plain selected prose for the clipboard. Source/display text is never changed. */
 export function joinEntryText(entries: EntryDto[]): string {
   let text = "";
   entries.forEach((entry, index) => {
@@ -20,7 +25,7 @@ export function joinEntryText(entries: EntryDto[]): string {
     }
     text += entry.source_text;
   });
-  return dehyphenateLineBreaks(text);
+  return normalizeCopiedText(text);
 }
 
 /**

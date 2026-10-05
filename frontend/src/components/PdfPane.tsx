@@ -2,6 +2,7 @@ import * as pdfjsLib from "pdfjs-dist";
 import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import workerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
+  type ClipboardEvent as ReactClipboardEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
@@ -20,6 +21,7 @@ import type {
   PdfAnnotationRead,
 } from "../api/types";
 import { getToken } from "../auth/session";
+import { normalizeCopiedText } from "../spec/text";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
 
@@ -692,13 +694,26 @@ export function PdfPane({
     if (!nativeSelection || nativeSelection.isCollapsed || !container) return;
     const range = nativeSelection.getRangeAt(0);
     if (!container.contains(range.commonAncestorContainer)) return;
-    const text = nativeSelection.toString().trim();
+    const text = normalizeCopiedText(nativeSelection.toString());
     if (text) onSelectionText?.(text);
     const covered = Array.from(container.querySelectorAll<HTMLElement>(".pdf-line"))
       .filter((line) => range.intersectsNode(line))
       .map((line) => Number(line.dataset.ordinal))
       .filter((ordinal) => !Number.isNaN(ordinal));
     if (covered.length > 0) onSelectRange(Math.min(...covered), Math.max(...covered));
+  }
+
+  function handleCopy(event: ReactClipboardEvent<HTMLDivElement>) {
+    const nativeSelection = window.getSelection();
+    const container = scrollRef.current;
+    if (!nativeSelection || nativeSelection.isCollapsed || !container) return;
+    const range = nativeSelection.getRangeAt(0);
+    if (!container.contains(range.commonAncestorContainer)) return;
+    const text = normalizeCopiedText(nativeSelection.toString());
+    if (!text) return;
+    event.preventDefault();
+    event.clipboardData.setData("text/plain", text);
+    onSelectionText?.(text);
   }
 
   async function createAnnotation(annotation: PdfAnnotationCreate) {
@@ -848,7 +863,13 @@ export function PdfPane({
         </p>
       )}
 
-      <div ref={scrollRef} className="pdf-scroll" onScroll={handleScroll} onMouseUp={handleMouseUp}>
+      <div
+        ref={scrollRef}
+        className="pdf-scroll"
+        onScroll={handleScroll}
+        onMouseUp={handleMouseUp}
+        onCopy={handleCopy}
+      >
         <div className="pdf-pages">
           {pdf &&
             Array.from({ length: pdf.numPages }, (_, index) => {

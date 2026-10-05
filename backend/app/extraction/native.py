@@ -312,6 +312,30 @@ def _detect_columns(words: list[Word]) -> tuple[int, int, float] | None:
     return left_num, right_num, header_y
 
 
+def _running_header_y(words: list[Word]) -> float | None:
+    """Bottom baseline of a top-band US patent running header, if present.
+
+    Some native PDFs split ``US 7,840,427 B2`` so the number/kind tokens are
+    discarded independently while the bare ``US`` survives as body text. Treat
+    the entire row as masthead even when the printed column-number row is not
+    readable.
+    """
+    top = [word for word in words if word.cy < _TOP_ZONE]
+    rows = group_lines(top)
+    header_rows: list[float] = []
+    for row in rows:
+        tokens = [word.text.strip().upper() for word in row.words]
+        has_us = any(token == "US" or token.startswith("US") for token in tokens)
+        has_identifier = any(
+            any(character.isdigit() for character in token)
+            or token in {"A1", "A2", "B1", "B2"}
+            for token in tokens
+        )
+        if has_us and has_identifier:
+            header_rows.append(row.cy)
+    return max(header_rows) if header_rows else None
+
+
 def _synth_map(header_y: float, config: ExtractionConfig) -> list[tuple[float, int]]:
     """Fallback ``y -> line`` map when the gutter is unreadable: the column runs
     from just below the header to near the page bottom over ~``lines_per_column``."""
@@ -420,7 +444,12 @@ def _emit_column(
 
 
 def extract_page(
-    page: Page, config: ExtractionConfig, ordinal_start: int, *, method: str = "native"
+    page: Page,
+    config: ExtractionConfig,
+    ordinal_start: int,
+    *,
+    method: str = "native",
+    fallback_columns: tuple[int, int] | None = None,
 ) -> tuple[list[Entry], int]:
     """Reconstruct grant ``col:line`` for one specification page (§12.5).
 
@@ -428,7 +457,11 @@ def extract_page(
     is treated as non-specification (cover/front matter) and yields nothing."""
     words = page.words
     columns_hdr = _detect_columns(words)
-    header_y = columns_hdr[2] if columns_hdr else config.content_top_margin
+    header_y = max(
+        config.content_top_margin,
+        columns_hdr[2] if columns_hdr else 0.0,
+        _running_header_y(words) or 0.0,
+    )
 
     gutter = _filter_outliers(_collect_gutter(words, header_y))
     line_map = _line_map(gutter)
@@ -450,11 +483,22 @@ def extract_page(
         gutter_lo = min(w.x0 for w, _ in gutter) - 0.004
         gutter_hi = max(w.x1 for w, _ in gutter) + 0.004
 
-    left_num, right_num = (columns_hdr[0], columns_hdr[1]) if columns_hdr else (1, 2)
+    if columns_hdr:
+        detected_columns = (columns_hdr[0], columns_hdr[1])
+        # Grant specification columns increase monotonically. If OCR/native
+        # parsing finds a stale 1/2 pair after later columns, preserve the
+        # sequence carried from the preceding specification page.
+        left_num, right_num = (
+            fallback_columns
+            if fallback_columns and detected_columns[0] < fallback_columns[0]
+            else detected_columns
+        )
+    else:
+        left_num, right_num = fallback_columns or (1, 2)
     header_cutoff = header_y + _HEADER_PAD
 
     # Split the body at the gutter; drop the header band and the gutter numbers.
-    body = [w for w in words if w.cy > header_cutoff]
+    body = [w for w in words if header_cutoff < w.cy <= config.content_bottom_margin]
     left_words = [w for w in body if w.cx < gutter_x - 0.005]
     right_words = [w for w in body if w.cx > gutter_x + 0.005]
 
