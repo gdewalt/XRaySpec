@@ -2072,6 +2072,29 @@ input:focus, textarea:focus, select:focus {
 .login-panel { padding: clamp(1.5rem,4vw,2.25rem); box-shadow: var(--shadow-lg); }
 .login-panel h2 { font-size: 1.65rem; }
 .login-panel > .muted { margin: .45rem 0 1.4rem; line-height: 1.55; }
+.auth-mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .25rem;
+  margin: 0 0 1rem;
+  padding: .25rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-subtle);
+}
+.auth-mode-tabs button {
+  min-height: 42px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+}
+.auth-mode-tabs button:hover { background: var(--surface); color: var(--text); }
+.auth-mode-tabs button.active {
+  background: var(--surface);
+  color: #173d9d;
+  box-shadow: var(--shadow-sm);
+}
 .login-lock {
   width: 42px;
   height: 42px;

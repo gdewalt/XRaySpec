@@ -61,12 +61,25 @@ export async function initializeAuth(): Promise<void> {
   auth.onAuthStateChange((_event, session) => setToken(session?.access_token ?? null));
 }
 
-export async function sendMagicLink(email: string): Promise<void> {
-  const { error } = await getClient().auth.signInWithOtp({
+export async function signInWithPassword(email: string, password: string): Promise<void> {
+  const { data, error } = await getClient().auth.signInWithPassword({ email, password });
+  if (error) throw error;
+  if (!data.session) throw new Error("Supabase did not return a sign-in session.");
+  setToken(data.session.access_token);
+}
+
+export async function signUpWithPassword(
+  email: string,
+  password: string,
+): Promise<{ confirmationRequired: boolean }> {
+  const { data, error } = await getClient().auth.signUp({
     email,
-    options: { emailRedirectTo: window.location.origin, shouldCreateUser: false },
+    password,
+    options: { emailRedirectTo: window.location.origin },
   });
   if (error) throw error;
+  if (data.session) setToken(data.session.access_token);
+  return { confirmationRequired: !data.session };
 }
 
 export async function signOut(): Promise<void> {
