@@ -19,7 +19,7 @@ from .artifact import Entry, FigureMention, NumeralMention
 
 _FIG_ID = r"\d+[A-Za-z]?"
 _FIG_REF = re.compile(
-    rf"\bFIGS?\.?\s*({_FIG_ID}(?:\s*(?:[-–,]|and|to)\s*{_FIG_ID})*)",
+    rf"\b(?:FIGS?|FIGURES?)\.?\s*({_FIG_ID}(?:\s*(?:[-–,]|and|to)\s*{_FIG_ID})*)",
     re.IGNORECASE,
 )
 _RANGE = re.compile(r"(\d+)([A-Za-z]?)\s*[-–]\s*(\d+)([A-Za-z]?)")

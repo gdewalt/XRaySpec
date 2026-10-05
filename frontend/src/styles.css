@@ -912,15 +912,22 @@ mark.search-hit {
 }
 .pdf-line {
   position: absolute;
-  color: transparent;
+  display: flex;
+  align-items: center;
   cursor: text;
-  overflow: hidden;
-  white-space: nowrap;
-  font-size: 8px;
-  line-height: 1;
+  overflow: visible;
   border-radius: 2px;
 }
-.pdf-line::selection {
+.pdf-line-text {
+  display: inline-block;
+  flex: none;
+  color: transparent;
+  white-space: pre;
+  line-height: 1;
+  transform-origin: left center;
+  user-select: text;
+}
+.pdf-line-text::selection {
   background: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 .pdf-line:hover {
@@ -2471,6 +2478,29 @@ mark.search-hit { background: #ffdf8a; color: #422600; }
   border-color: var(--accent);
   background: var(--accent-soft);
   color: #173d9d;
+}
+.pdf-color-control {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  min-height: 34px;
+  padding-left: .25rem;
+  color: var(--muted);
+  font-size: .7rem;
+}
+.pdf-color-control select {
+  min-height: 34px;
+  min-width: 6.5rem;
+  padding: .25rem 1.8rem .25rem .5rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.pdf-color-control select:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: 2px;
 }
 .pdf-tool-hint {
   margin: .35rem 0;

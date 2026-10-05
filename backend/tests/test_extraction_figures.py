@@ -26,6 +26,8 @@ def _fig_ids(text: str) -> list[list[str]]:
 
 def test_single_figure_reference():
     assert _fig_ids("As shown in FIG. 3, the device") == [["3"]]
+    assert _fig_ids("As shown in Figure 7, the device") == [["7"]]
+    assert _fig_ids("See Fig 8A for another view") == [["8A"]]
 
 
 def test_figure_range_numeric():

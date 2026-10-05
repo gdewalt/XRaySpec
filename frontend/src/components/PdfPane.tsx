@@ -5,6 +5,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -36,6 +37,17 @@ const PDF_TOOLS: { id: PdfTool; label: string }[] = [
   { id: "drawing", label: "Draw" },
   { id: "delete", label: "Delete" },
 ];
+
+const PDF_MARK_COLORS = [
+  { label: "Yellow", value: "#ffe066" },
+  { label: "Lime", value: "#a3e635" },
+  { label: "Cyan", value: "#67e8f9" },
+  { label: "Pink", value: "#f9a8d4" },
+  { label: "Orange", value: "#fb923c" },
+  { label: "Blue", value: "#2456d3" },
+  { label: "Red", value: "#dc2626" },
+  { label: "Black", value: "#1f2937" },
+] as const;
 
 function rotatePoint([x, y]: Point, rotation: number): Point {
   return rotation === 90
@@ -89,6 +101,63 @@ function rotateBox(box: number[], rotation: number): [number, number, number, nu
   return [Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by)];
 }
 
+function SelectablePdfLine({
+  entry,
+  rotation,
+  pageSize,
+  highlighted,
+  onSelect,
+}: {
+  entry: EntryDto;
+  rotation: number;
+  pageSize: { width: number; height: number };
+  highlighted: boolean;
+  onSelect: () => void;
+}) {
+  const boxRef = useRef<HTMLSpanElement>(null);
+  const textRef = useRef<HTMLSpanElement>(null);
+  const [horizontalScale, setHorizontalScale] = useState(1);
+  const [x0, y0, x1, y1] = rotateBox(entry.box as number[], rotation);
+  const lineHeight = Math.max(1, (y1 - y0) * pageSize.height);
+  const fontSize = Math.max(1, lineHeight * 0.82);
+
+  useLayoutEffect(() => {
+    const boxWidth = boxRef.current?.clientWidth ?? 0;
+    const naturalWidth = textRef.current?.scrollWidth ?? 0;
+    if (!boxWidth || !naturalWidth) return;
+    const nextScale = Math.max(0.2, Math.min(5, boxWidth / naturalWidth));
+    setHorizontalScale((current) =>
+      Math.abs(current - nextScale) > 0.002 ? nextScale : current,
+    );
+  }, [entry.source_text, fontSize, pageSize.width, rotation]);
+
+  return (
+    <span
+      ref={boxRef}
+      className={`pdf-line${highlighted ? " hit" : ""}`}
+      data-ordinal={entry.ordinal}
+      style={{
+        left: `${x0 * 100}%`,
+        top: `${y0 * 100}%`,
+        width: `${(x1 - x0) * 100}%`,
+        height: `${(y1 - y0) * 100}%`,
+      }}
+      onClick={onSelect}
+    >
+      <span
+        ref={textRef}
+        className="pdf-line-text"
+        style={{
+          fontSize: `${fontSize}px`,
+          transform: `scaleX(${horizontalScale})`,
+        }}
+      >
+        {entry.source_text}
+      </span>
+    </span>
+  );
+}
+
 function ContinuousPdfPage({
   pdf,
   pageNumber,
@@ -98,6 +167,7 @@ function ContinuousPdfPage({
   focusedFigure,
   annotations,
   tool,
+  annotationColor,
   scale,
   rotation,
   highlightOrdinal,
@@ -117,6 +187,7 @@ function ContinuousPdfPage({
   focusedFigure?: FigureOccurrenceDto | null;
   annotations: PdfAnnotationRead[];
   tool: PdfTool;
+  annotationColor: string;
   scale: number;
   rotation: number;
   highlightOrdinal: number | null;
@@ -226,7 +297,7 @@ function ContinuousPdfPage({
           kind: "highlight",
           page_index: pageNumber - 1,
           geometry: { x0, y0, x1, y1 },
-          color: "#ffe066",
+          color: annotationColor,
         });
       }
     } else if (draft.points.length > 1) {
@@ -234,7 +305,7 @@ function ContinuousPdfPage({
         kind: "drawing",
         page_index: pageNumber - 1,
         geometry: { points: draft.points },
-        color: "#2456d3",
+        color: annotationColor,
       });
     }
     setDraft(null);
@@ -253,25 +324,16 @@ function ContinuousPdfPage({
       >
         <canvas ref={canvasRef} />
         <div className="pdf-overlay">
-          {entries.map((entry) => {
-            const [x0, y0, x1, y1] = rotateBox(entry.box as number[], rotation);
-            return (
-              <span
-                key={entry.entry_id}
-                className={`pdf-line${highlightOrdinal === entry.ordinal ? " hit" : ""}`}
-                data-ordinal={entry.ordinal}
-                style={{
-                  left: `${x0 * 100}%`,
-                  top: `${y0 * 100}%`,
-                  width: `${(x1 - x0) * 100}%`,
-                  height: `${(y1 - y0) * 100}%`,
-                }}
-                onClick={() => onSelectLine(entry)}
-              >
-                {entry.source_text}
-              </span>
-            );
-          })}
+          {entries.map((entry) => (
+            <SelectablePdfLine
+              key={entry.entry_id}
+              entry={entry}
+              rotation={rotation}
+              pageSize={size}
+              highlighted={highlightOrdinal === entry.ordinal}
+              onSelect={() => onSelectLine(entry)}
+            />
+          ))}
           {callouts.map((callout) => {
             const [x0, y0, x1, y1] = rotateBox(callout.box, rotation);
             const hit = highlightCallouts?.has(callout.callout_id);
@@ -434,7 +496,7 @@ function ContinuousPdfPage({
                 y={y0}
                 width={x1 - x0}
                 height={y1 - y0}
-                fill="#ffe066"
+                fill={annotationColor}
               />
             );
           })()}
@@ -445,7 +507,7 @@ function ContinuousPdfPage({
                 .map((point) => rotatePoint(point, rotation).join(","))
                 .join(" ")}
               fill="none"
-              stroke="#2456d3"
+              stroke={annotationColor}
               strokeWidth="0.004"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -500,6 +562,8 @@ export function PdfPane({
   const [scale, setScale] = useState(1.15);
   const [rotation, setRotation] = useState(0);
   const [tool, setTool] = useState<PdfTool>("select");
+  const [highlightColor, setHighlightColor] = useState("#ffe066");
+  const [drawingColor, setDrawingColor] = useState("#2456d3");
   const [annotations, setAnnotations] = useState<PdfAnnotationRead[]>([]);
   const [pendingNote, setPendingNote] = useState<{ pageIndex: number; point: Point } | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
@@ -642,6 +706,7 @@ export function PdfPane({
   }
 
   const pageCount = pdf?.numPages ?? 0;
+  const activeMarkColor = tool === "drawing" ? drawingColor : highlightColor;
 
   return (
     <div className="pdf-pane" onPointerDown={onActivate}>
@@ -686,6 +751,25 @@ export function PdfPane({
               {item.label}
             </button>
           ))}
+          {(tool === "highlight" || tool === "drawing") && (
+            <label className="pdf-color-control">
+              <span>Color</span>
+              <select
+                value={activeMarkColor}
+                aria-label={`${tool === "drawing" ? "Drawing" : "Highlight"} color`}
+                onChange={(event) => {
+                  if (tool === "drawing") setDrawingColor(event.target.value);
+                  else setHighlightColor(event.target.value);
+                }}
+              >
+                {PDF_MARK_COLORS.map((color) => (
+                  <option key={color.value} value={color.value}>
+                    {color.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
         <span className="pdf-scroll-hint">Scroll to move between pages</span>
       </div>
@@ -754,6 +838,7 @@ export function PdfPane({
                     (annotation) => annotation.page_index === index,
                   )}
                   tool={tool}
+                  annotationColor={activeMarkColor}
                   scale={scale}
                   rotation={rotation}
                   highlightOrdinal={highlightOrdinal}

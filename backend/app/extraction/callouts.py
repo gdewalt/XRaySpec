@@ -39,27 +39,37 @@ from .native import _clamp_box, group_lines
 
 _CALLOUT = re.compile(r"^\d{2,4}[A-Za-z]?$")
 _NUMERICISH = re.compile(r"^\d{1,4}[A-Za-z]?$")
-_SHEET_HEADER = re.compile(r"^sheet\s+\d+\s+of\s+\d+$", re.IGNORECASE)
+_SHEET_HEADER = re.compile(r"\bsheet\s+\d+\s+(?:of|/)\s+\d+\b", re.IGNORECASE)
 
 
 def _is_year(token: str) -> bool:
     return len(token) == 4 and token[:2] in ("19", "20") and token.isdigit()
 
 
-def _without_sheet_headers(words: list[Word]) -> list[Word]:
-    """Drop ``Sheet X of Y`` running headers before drawing-label analysis."""
+def _sheet_header_word_ids(words: list[Word]) -> set[int]:
+    """Return words belonging to a top-of-page ``Sheet X of Y`` header."""
     excluded: set[int] = set()
     for line in group_lines(words):
         if line.cy > 0.18:
             continue
         text = " ".join(word.text.strip() for word in line.words).strip()
-        if _SHEET_HEADER.fullmatch(text):
+        if _SHEET_HEADER.search(text):
             excluded.update(id(word) for word in line.words)
+    return excluded
+
+
+def _without_sheet_headers(words: list[Word]) -> list[Word]:
+    """Drop sheet headers after using them to identify drawing pages."""
+    excluded = _sheet_header_word_ids(words)
     return [word for word in words if id(word) not in excluded]
 
 
 def is_drawing_page(words: list[Word], *, max_words: int = 120, min_numeric: float = 0.30) -> bool:
     """A drawing page is sparse and numeral-heavy (vs. a prose specification page)."""
+    # Patent drawing sheets normally identify themselves explicitly. Treat that
+    # header as authoritative even when OCR also finds many labels or diagram text.
+    if _sheet_header_word_ids(words):
+        return True
     words = _without_sheet_headers(words)
     if len(words) > max_words:
         return False

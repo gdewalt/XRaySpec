@@ -68,6 +68,36 @@ def test_sheet_header_numbers_are_not_drawing_callouts():
     assert [callout.value for callout in detect_callouts(words, 3, "1")] == ["104"]
 
 
+def test_sheet_header_identifies_a_drawing_page_without_becoming_a_callout():
+    words = [
+        Word("Sheet", 0.40, 0.03, 0.46, 0.05),
+        Word("2", 0.47, 0.03, 0.49, 0.05),
+        Word("of", 0.50, 0.03, 0.53, 0.05),
+        Word("8", 0.54, 0.03, 0.56, 0.05),
+        *[_w(f"label{i}") for i in range(130)],
+    ]
+    assert is_drawing_page(words) is True
+    assert detect_callouts(words, 1, None) == []
+
+
+def test_figure_and_fig_labels_are_detected_on_drawing_sheets():
+    words = [
+        Word("Sheet", 0.40, 0.03, 0.46, 0.05),
+        Word("3", 0.47, 0.03, 0.49, 0.05),
+        Word("of", 0.50, 0.03, 0.53, 0.05),
+        Word("8", 0.54, 0.03, 0.56, 0.05),
+        Word("Figure", 0.10, 0.30, 0.18, 0.33),
+        Word("7", 0.19, 0.30, 0.21, 0.33),
+        Word("Fig.", 0.55, 0.60, 0.61, 0.63),
+        Word("8A", 0.62, 0.60, 0.66, 0.63),
+    ]
+    figures = detect_figure_occurrences(words, page_index=2)
+    assert [(figure.figure_id, figure.page_index) for figure in figures] == [
+        ("7", 2),
+        ("8A", 2),
+    ]
+
+
 def _numeral(value: str, entry_id: str) -> NumeralMention:
     return NumeralMention(entry_id=entry_id, value=value, component_label="housing", span=(4, 7))
 
