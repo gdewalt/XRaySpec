@@ -5,6 +5,7 @@
 export interface DocumentRead {
   id: string;
   title: string;
+  patent_number: string | null;
   workspace_id: string | null;
   state: string;
   active_artifact_id: string | null;

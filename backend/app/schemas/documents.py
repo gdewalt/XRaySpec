@@ -24,6 +24,7 @@ class DocumentRead(BaseModel):
 
     id: str
     title: str
+    patent_number: str | None = None
     workspace_id: str | None = None
     state: str
     active_artifact_id: str | None = None

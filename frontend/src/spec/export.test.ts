@@ -6,6 +6,7 @@ import { buildPortable, buildText } from "./export";
 const doc: DocumentRead = {
   id: "doc_1",
   title: "US6411897",
+  patent_number: "US 6,411,897",
   workspace_id: null,
   state: "ready",
   active_artifact_id: "art_1",

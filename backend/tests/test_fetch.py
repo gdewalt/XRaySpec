@@ -13,11 +13,13 @@ async def test_fetch_grant_creates_processing_document(client, make_token, auth)
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["title"] == "US 12,262,260 B2"  # defaults to the display name
+    assert body["patent_number"] == "US 12,262,260 B2"
     assert body["state"] == "processing"
 
     # It shows up in the owner's list.
     listed = await client.get("/api/v1/documents", headers=auth(tok))
-    assert body["id"] in [d["id"] for d in listed.json()["items"]]
+    listed_document = next(d for d in listed.json()["items"] if d["id"] == body["id"])
+    assert listed_document["patent_number"] == "US 12,262,260 B2"
 
 
 async def test_fetch_application_identifier(client, make_token, auth):

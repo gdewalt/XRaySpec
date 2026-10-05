@@ -1227,6 +1227,16 @@ mark.mention.clickable:hover {
 .document-row:hover {
   background: var(--surface-subtle);
 }
+.document-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: .25rem .45rem;
+}
+.document-patent-title {
+  color: var(--muted);
+  font-weight: 500;
+}
 .document-main {
   display: flex;
   align-items: center;

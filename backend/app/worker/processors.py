@@ -16,12 +16,14 @@ from dataclasses import replace
 
 from ..config import get_settings
 from ..db.models import ExtractionJob, SourceDocument, UserDocument
+from ..enrichment.google_text import extract_provider_text
 from ..extraction.artifact import Artifact
 from ..extraction.config import ExtractionConfig
 from ..fetch.adapter import RestrictedFetcher
 from ..fetch.errors import FetchError
 from ..fetch.google_patents import extract_pdf_url, patent_page_url
 from ..fetch.guard import check_url
+from ..patents import PatentParseError, parse_patent_identifier
 from ..services.publication import publish_artifact
 from .engine import JobContext
 
@@ -69,7 +71,9 @@ async def fetch_source(
         raise FetchError("no_source", "fetch job has no patent identity")
 
     page = await fetcher.fetch(patent_page_url(canonical), max_bytes=settings.fetch_max_html_bytes)
-    pdf_url = extract_pdf_url(page.content.decode("utf-8", "replace"))
+    page_html = page.content.decode("utf-8", "replace")
+    provider = extract_provider_text(page_html)
+    pdf_url = extract_pdf_url(page_html)
     check_url(pdf_url, allowed)  # the PDF URL must also be on the allowlist
     pdf = await fetcher.fetch(pdf_url, max_bytes=settings.fetch_max_pdf_bytes, expect_pdf=True)
 
@@ -78,10 +82,18 @@ async def fetch_source(
 
     async with ctx.sessionmaker() as session:
         src = await session.get(SourceDocument, source_id)
+        doc = await session.get(UserDocument, job.document_id) if job.document_id else None
         src.pdf_object_key = key
         src.sha256 = hashlib.sha256(pdf.content).hexdigest()
         src.byte_size = len(pdf.content)
         src.state = "uploaded"
+        if doc is not None and provider.title:
+            try:
+                default_title = parse_patent_identifier(canonical).display
+            except PatentParseError:
+                default_title = canonical
+            if doc.title == default_title:
+                doc.title = provider.title.strip()
         await session.commit()
 
 

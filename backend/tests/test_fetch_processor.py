@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import uuid
 
+from sqlalchemy import select
+
 from app.db.models import ExtractionJob, SourceDocument, User, UserDocument
 from app.fetch.adapter import FetchResult
 from app.worker.engine import JobContext
 from app.worker.processors import fetch_source
 
 PDF_URL = "https://patentimages.storage.googleapis.com/x.pdf"
-HTML = f'<meta name="citation_pdf_url" content="{PDF_URL}">'.encode()
+HTML = (
+    f'<meta name="citation_pdf_url" content="{PDF_URL}">'
+    '<meta name="DC.title" content="Adaptive imaging system">'
+).encode()
 PDF = b"%PDF-1.7 body bytes"
 
 
@@ -76,3 +81,31 @@ async def test_fetch_source_downloads_and_records(client):
     # Resolved the page first, then the PDF.
     assert fetcher.calls[0].endswith("/en")
     assert fetcher.calls[1] == PDF_URL
+
+
+async def test_fetch_source_replaces_default_number_with_patent_title(client):
+    job_id, source_id = await _seed_fetch_job(client)
+    async with client.sessionmaker() as session:
+        job = await session.get(ExtractionJob, job_id)
+        document = await session.scalar(
+            select(UserDocument).where(UserDocument.source_id == source_id)
+        )
+        assert document is not None
+        document.title = "US 12,262,260 B2"
+        await session.commit()
+
+    ctx = JobContext(
+        client.sessionmaker,
+        client.object_store,
+        job_id=job_id,
+        fencing_token="tok",
+        lease_seconds=30,
+    )
+    await fetch_source(ctx, job, fetcher=FakeFetcher(HTML, PDF))
+
+    async with client.sessionmaker() as session:
+        document = await session.scalar(
+            select(UserDocument).where(UserDocument.source_id == source_id)
+        )
+    assert document is not None
+    assert document.title == "Adaptive imaging system"

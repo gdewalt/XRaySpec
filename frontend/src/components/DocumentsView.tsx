@@ -53,6 +53,10 @@ function PatentRow({
 }: PatentRowProps) {
   const canOpen = doc.state === "ready" || doc.state === "text_only";
   const [menuOpen, setMenuOpen] = useState(false);
+  const showTitleAfterNumber =
+    doc.patent_number !== null &&
+    doc.title.replace(/[^a-z0-9]/gi, "").toLowerCase() !==
+      doc.patent_number.replace(/[^a-z0-9]/gi, "").toLowerCase();
 
   return (
     <article className="document-row">
@@ -65,7 +69,12 @@ function PatentRow({
       >
         <span className="document-icon" aria-hidden="true"><Icon name="file-text" size={21} /></span>
         <span className="document-copy">
-          <strong>{doc.title}</strong>
+          <strong className="document-heading">
+            <span>{doc.patent_number ?? doc.title}</span>
+            {showTitleAfterNumber && (
+              <span className="document-patent-title">— {doc.title}</span>
+            )}
+          </strong>
           <span className="document-meta">
             Added {formatDate(doc.created_at)}
             <span aria-hidden="true">·</span>

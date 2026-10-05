@@ -54,6 +54,19 @@ async def _owned_document(session, user, document_id: str) -> UserDocument:
     return doc
 
 
+def _document_read(document: UserDocument, patent_canonical: str | None = None) -> DocumentRead:
+    """Build the library DTO with a human-readable patent number when available."""
+    patent_number = None
+    if patent_canonical:
+        try:
+            patent_number = parse_patent_identifier(patent_canonical).display
+        except PatentParseError:
+            patent_number = patent_canonical
+    return DocumentRead.model_validate(document).model_copy(
+        update={"patent_number": patent_number}
+    )
+
+
 @router.post("/documents", response_model=DocumentRead, status_code=status.HTTP_201_CREATED)
 async def create_document(
     body: DocumentCreate, user: CurrentUser, session: DbSession
@@ -113,7 +126,7 @@ async def _create_fetch_document(
     )
     await session.commit()
     await session.refresh(doc)
-    return DocumentRead.model_validate(doc)
+    return _document_read(doc, identity.canonical)
 
 
 async def _create_placeholder_document(
@@ -183,21 +196,25 @@ async def get_document_job(
 
 @router.get("/documents", response_model=DocumentList)
 async def list_documents(user: CurrentUser, session: DbSession) -> DocumentList:
-    rows = await session.scalars(
-        select(UserDocument)
+    rows = await session.execute(
+        select(UserDocument, SourceDocument.patent_canonical)
+        .join(SourceDocument, SourceDocument.id == UserDocument.source_id)
         .where(UserDocument.owner_id == user.id, UserDocument.state != "deleted")
         .order_by(UserDocument.created_at.desc())
     )
-    return DocumentList(items=[DocumentRead.model_validate(d) for d in rows])
+    return DocumentList(
+        items=[_document_read(document, patent_canonical) for document, patent_canonical in rows]
+    )
 
 
 @router.get("/documents/{document_id}", response_model=DocumentRead)
 async def get_document(document_id: str, user: CurrentUser, session: DbSession) -> DocumentRead:
     doc = await _owned_document(session, user, document_id)
+    source = await session.get(SourceDocument, doc.source_id)
     doc.last_opened_at = datetime.now(UTC)
     await session.commit()
     await session.refresh(doc)
-    return DocumentRead.model_validate(doc)
+    return _document_read(doc, source.patent_canonical if source else None)
 
 
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
