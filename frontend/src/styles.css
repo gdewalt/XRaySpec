@@ -894,6 +894,8 @@ mark.search-hit {
 }
 .pdf-scroll {
   overflow: auto;
+  overflow-anchor: none;
+  scrollbar-gutter: stable;
   max-height: calc(100vh - 230px);
   border: 1px solid var(--border);
   border-radius: 8px;

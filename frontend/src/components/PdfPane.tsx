@@ -557,6 +557,7 @@ export function PdfPane({
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef(new Map<number, HTMLDivElement>());
   const visiblePageRef = useRef(1);
+  const scrollFrameRef = useRef<number | null>(null);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [scale, setScale] = useState(1.15);
@@ -611,22 +612,47 @@ export function PdfPane({
     };
   }, [documentId]);
 
+  // Only explicit page navigation moves the scroll position. During ordinary
+  // scrolling, handleScroll updates visiblePageRef before notifying the parent,
+  // so the resulting page prop cannot fight the scrollbar with scrollIntoView.
   useEffect(() => {
-    if (!pdf) return;
+    if (!pdf || page === visiblePageRef.current) return;
     const pageElement = pageRefs.current.get(page);
     if (!pageElement) return;
+    visiblePageRef.current = page;
     const frame = window.requestAnimationFrame(() => {
-      const figureTarget = focusedFigure
-        ? Array.from(pageElement.querySelectorAll<HTMLElement>(".pdf-figure-target")).find(
-            (element) => element.dataset.figureId === focusedFigure.figure_id,
-          )
-        : null;
+      pageElement.scrollIntoView({ block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [page, pdf]);
+
+  // Figure-reference clicks remain intentional navigation and may center a
+  // target even when it lives on the page that is already visible.
+  useEffect(() => {
+    if (!pdf || !focusedFigure) return;
+    const figurePage = focusedFigure.page_index + 1;
+    const pageElement = pageRefs.current.get(figurePage);
+    if (!pageElement) return;
+    visiblePageRef.current = figurePage;
+    const frame = window.requestAnimationFrame(() => {
+      const figureTarget = Array.from(
+        pageElement.querySelectorAll<HTMLElement>(".pdf-figure-target"),
+      ).find((element) => element.dataset.figureId === focusedFigure.figure_id);
       (figureTarget ?? pageElement).scrollIntoView({
         block: figureTarget ? "center" : "start",
       });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [page, pdf, focusedFigure]);
+  }, [pdf, focusedFigure]);
+
+  useEffect(
+    () => () => {
+      if (scrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+      }
+    },
+    [],
+  );
 
   function registerPage(pageNumber: number, element: HTMLDivElement | null) {
     if (element) pageRefs.current.set(pageNumber, element);
@@ -634,6 +660,14 @@ export function PdfPane({
   }
 
   function handleScroll() {
+    if (scrollFrameRef.current !== null) return;
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      updateVisiblePage();
+    });
+  }
+
+  function updateVisiblePage() {
     const container = scrollRef.current;
     if (!container) return;
     const containerTop = container.getBoundingClientRect().top;
