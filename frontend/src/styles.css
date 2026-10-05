@@ -931,6 +931,9 @@ mark.search-hit {
 }
 .pdf-line-text::selection {
   background: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  text-shadow: none;
 }
 .pdf-line:hover {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
