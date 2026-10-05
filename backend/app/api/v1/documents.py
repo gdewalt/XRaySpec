@@ -21,6 +21,7 @@ from ...db.models import (
     Annotation,
     Bookmark,
     ExtractionJob,
+    PdfAnnotation,
     ReferenceLinkOverride,
     SourceDocument,
     UserDocument,
@@ -31,6 +32,7 @@ from ...schemas.bookmarks import BookmarkCreate, BookmarkRead
 from ...schemas.documents import DocumentCreate, DocumentList, DocumentRead
 from ...schemas.jobs import JobRead
 from ...schemas.overrides import OverrideRead, OverrideUpsert
+from ...schemas.pdf_annotations import PdfAnnotationCreate, PdfAnnotationRead
 from ...services.audit import record_audit
 from ...services.deletion import purge_document
 from ..deps import CurrentUser, DbSession, Storage
@@ -334,6 +336,60 @@ async def update_annotation(
     await session.commit()
     await session.refresh(annotation)
     return AnnotationRead.model_validate(annotation)
+
+
+@router.get(
+    "/documents/{document_id}/pdf-annotations", response_model=list[PdfAnnotationRead]
+)
+async def list_pdf_annotations(
+    document_id: str, user: CurrentUser, session: DbSession
+) -> list[PdfAnnotationRead]:
+    await _owned_document(session, user, document_id)
+    rows = await session.scalars(
+        select(PdfAnnotation)
+        .where(PdfAnnotation.document_id == document_id, PdfAnnotation.owner_id == user.id)
+        .order_by(PdfAnnotation.created_at.asc())
+    )
+    return [PdfAnnotationRead.model_validate(annotation) for annotation in rows]
+
+
+@router.post(
+    "/documents/{document_id}/pdf-annotations",
+    response_model=PdfAnnotationRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_pdf_annotation(
+    document_id: str, body: PdfAnnotationCreate, user: CurrentUser, session: DbSession
+) -> PdfAnnotationRead:
+    await _owned_document(session, user, document_id)
+    annotation = PdfAnnotation(
+        owner_id=user.id,
+        document_id=document_id,
+        kind=body.kind,
+        page_index=body.page_index,
+        geometry=body.geometry,
+        color=body.color,
+        note=body.note.strip() if body.note else None,
+    )
+    session.add(annotation)
+    await session.commit()
+    await session.refresh(annotation)
+    return PdfAnnotationRead.model_validate(annotation)
+
+
+@router.delete("/pdf-annotations/{annotation_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_pdf_annotation(
+    annotation_id: str, user: CurrentUser, session: DbSession
+) -> None:
+    annotation = await session.scalar(
+        select(PdfAnnotation).where(
+            PdfAnnotation.id == annotation_id, PdfAnnotation.owner_id == user.id
+        )
+    )
+    if annotation is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "PDF annotation not found")
+    await session.delete(annotation)
+    await session.commit()
 
 
 @router.get("/documents/{document_id}/overrides", response_model=list[OverrideRead])

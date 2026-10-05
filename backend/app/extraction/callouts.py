@@ -39,14 +39,28 @@ from .native import _clamp_box, group_lines
 
 _CALLOUT = re.compile(r"^\d{2,4}[A-Za-z]?$")
 _NUMERICISH = re.compile(r"^\d{1,4}[A-Za-z]?$")
+_SHEET_HEADER = re.compile(r"^sheet\s+\d+\s+of\s+\d+$", re.IGNORECASE)
 
 
 def _is_year(token: str) -> bool:
     return len(token) == 4 and token[:2] in ("19", "20") and token.isdigit()
 
 
+def _without_sheet_headers(words: list[Word]) -> list[Word]:
+    """Drop ``Sheet X of Y`` running headers before drawing-label analysis."""
+    excluded: set[int] = set()
+    for line in group_lines(words):
+        if line.cy > 0.18:
+            continue
+        text = " ".join(word.text.strip() for word in line.words).strip()
+        if _SHEET_HEADER.fullmatch(text):
+            excluded.update(id(word) for word in line.words)
+    return [word for word in words if id(word) not in excluded]
+
+
 def is_drawing_page(words: list[Word], *, max_words: int = 120, min_numeric: float = 0.30) -> bool:
     """A drawing page is sparse and numeral-heavy (vs. a prose specification page)."""
+    words = _without_sheet_headers(words)
     if len(words) > max_words:
         return False
     if not words:
@@ -57,6 +71,7 @@ def is_drawing_page(words: list[Word], *, max_words: int = 120, min_numeric: flo
 
 def detect_page_figure(words: list[Word]) -> str | None:
     """The single figure a drawing sheet shows, or None if zero/ambiguous."""
+    words = _without_sheet_headers(words)
     text = " ".join(w.text for w in words)
     ids: set[str] = set()
     for m in _FIG_REF.finditer(text):
@@ -66,6 +81,7 @@ def detect_page_figure(words: list[Word]) -> str | None:
 
 def detect_figure_occurrences(words: list[Word], page_index: int) -> list[FigureOccurrence]:
     """Locate every FIG label on a drawing sheet, including multi-figure sheets."""
+    words = _without_sheet_headers(words)
     occurrences: list[FigureOccurrence] = []
     seen: set[tuple[str, int, int, int, int]] = set()
     for line in group_lines(words):
@@ -113,6 +129,7 @@ def detect_figure_occurrences(words: list[Word], page_index: int) -> list[Figure
 def detect_callouts(
     words: list[Word], page_index: int, figure_id: str | None
 ) -> list[CalloutOccurrence]:
+    words = _without_sheet_headers(words)
     callouts: list[CalloutOccurrence] = []
     for i, w in enumerate(words):
         token = w.text.strip()

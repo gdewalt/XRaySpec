@@ -19,7 +19,7 @@ from .artifact import Entry, Provenance
 from .config import ExtractionConfig
 from .locator import ApplicationLocator
 from .model import Page
-from .native import _clamp_box, group_lines
+from .native import _clamp_box, _median, group_lines
 
 # A paragraph marker: a 3–4 digit number in [] or () at the start of a line, e.g.
 # "[0001]" or "(0042)".
@@ -45,6 +45,7 @@ def extract_application_page(
         w for w in page.words if config.content_top_margin <= w.cy <= config.content_bottom_margin
     ]
     lines = group_lines(words)
+    common_left = _median([line.x0 for line in lines])
 
     entries: list[Entry] = []
     for ln in lines:
@@ -90,6 +91,7 @@ def extract_application_page(
                 text_confidence="high" if method == "native" else "medium",
                 reference_confidence=ref_conf,
                 paragraph_start=marker is not None,
+                indent_level=max(0, min(6, round((ln.x0 - common_left) / 0.018))),
             )
         )
         ordinal += 1

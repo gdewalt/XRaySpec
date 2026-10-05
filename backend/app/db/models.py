@@ -262,6 +262,22 @@ class Annotation(Base):
     created_at: Mapped[datetime] = _ts()
 
 
+class PdfAnnotation(Base):
+    """A user-created mark anchored to normalized coordinates on a PDF page."""
+
+    __tablename__ = "pdf_annotations"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("pdfann"))
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    document_id: Mapped[str] = mapped_column(ForeignKey("user_documents.id"), index=True)
+    kind: Mapped[str] = mapped_column(String)
+    page_index: Mapped[int] = mapped_column()
+    geometry: Mapped[dict] = mapped_column(JSON)
+    color: Mapped[str | None] = mapped_column(String, default=None)
+    note: Mapped[str | None] = mapped_column(String, default=None)
+    created_at: Mapped[datetime] = _ts()
+
+
 class ReferenceLinkOverride(Base):
     """A user's correction of a mention→callout association (DESIGN.md §7, §12.7).
 

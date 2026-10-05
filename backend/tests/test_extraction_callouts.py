@@ -57,6 +57,17 @@ def test_detect_callouts():
     assert all(c.figure_id == "12A" and c.page_index == 3 for c in callouts)
 
 
+def test_sheet_header_numbers_are_not_drawing_callouts():
+    words = [
+        Word("Sheet", 0.40, 0.03, 0.46, 0.05),
+        Word("12", 0.47, 0.03, 0.50, 0.05),
+        Word("of", 0.51, 0.03, 0.54, 0.05),
+        Word("24", 0.55, 0.03, 0.58, 0.05),
+        Word("104", 0.40, 0.40, 0.45, 0.42),
+    ]
+    assert [callout.value for callout in detect_callouts(words, 3, "1")] == ["104"]
+
+
 def _numeral(value: str, entry_id: str) -> NumeralMention:
     return NumeralMention(entry_id=entry_id, value=value, component_label="housing", span=(4, 7))
 

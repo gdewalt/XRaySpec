@@ -56,6 +56,7 @@ class Entry:
     reference_confidence: Confidence = "high"
     section: str | None = None
     paragraph_start: bool = False
+    indent_level: int = 0
     warnings: list[str] = field(default_factory=list)
 
     def ref(self) -> str:

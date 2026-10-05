@@ -332,6 +332,7 @@ def _emit_column(
         )
         vertical_gap = ln.cy - content[index - 1][0].cy if index > 0 else 0.0
         indented = min(w.x0 for w in body) - common_left >= 0.018
+        indent_level = max(0, min(6, round((min(w.x0 for w in body) - common_left) / 0.018)))
         spaced = bool(
             index > 0
             and typical_gap > 0
@@ -370,6 +371,7 @@ def _emit_column(
                 text_confidence="high" if method == "native" else "medium",
                 reference_confidence="high" if on_anchor else ("medium" if line_map else "low"),
                 paragraph_start=paragraph_start,
+                indent_level=indent_level,
             )
         )
         ordinal += 1

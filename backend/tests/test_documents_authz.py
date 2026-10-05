@@ -144,6 +144,45 @@ async def test_annotation_authorization(client, make_token, auth):
     ).status_code == 204
 
 
+async def test_pdf_annotation_persistence_and_authorization(client, make_token, auth):
+    owner = make_token("owner", "o@example.com")
+    intruder = make_token("intruder", "x@example.com")
+    doc_id = await _create_doc(client, auth, owner)
+    body = {
+        "kind": "highlight",
+        "page_index": 2,
+        "geometry": {"x0": 0.1, "y0": 0.2, "x1": 0.6, "y1": 0.25},
+        "color": "#ffe066",
+    }
+
+    created = await client.post(
+        f"/api/v1/documents/{doc_id}/pdf-annotations", headers=auth(owner), json=body
+    )
+    assert created.status_code == 201, created.text
+    annotation_id = created.json()["id"]
+
+    assert (
+        await client.get(
+            f"/api/v1/documents/{doc_id}/pdf-annotations", headers=auth(intruder)
+        )
+    ).status_code == 404
+    assert (
+        await client.delete(
+            f"/api/v1/pdf-annotations/{annotation_id}", headers=auth(intruder)
+        )
+    ).status_code == 404
+
+    listed = await client.get(
+        f"/api/v1/documents/{doc_id}/pdf-annotations", headers=auth(owner)
+    )
+    assert [annotation["id"] for annotation in listed.json()] == [annotation_id]
+    assert (
+        await client.delete(
+            f"/api/v1/pdf-annotations/{annotation_id}", headers=auth(owner)
+        )
+    ).status_code == 204
+
+
 async def test_override_authorization(client, make_token, auth):
     owner = make_token("owner", "o@example.com")
     intruder = make_token("intruder", "x@example.com")

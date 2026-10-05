@@ -47,6 +47,26 @@ import { PdfPane } from "./PdfPane";
 
 type Layout = "text" | "pdf" | "split" | "details";
 type Selection = { start: number; end: number } | null;
+const VIEWER_PREFERENCES_KEY = "xray.viewer.preferences.v1";
+
+function loadViewerPreferences(): {
+  layout: Layout;
+  splitPercent: number;
+  outlineOpen: boolean;
+} {
+  try {
+    const saved = JSON.parse(localStorage.getItem(VIEWER_PREFERENCES_KEY) ?? "{}");
+    const layout = ["text", "pdf", "split", "details"].includes(saved.layout)
+      ? (saved.layout as Layout)
+      : "text";
+    const splitPercent = Number.isFinite(saved.splitPercent)
+      ? Math.max(24, Math.min(76, saved.splitPercent))
+      : 42;
+    return { layout, splitPercent, outlineOpen: saved.outlineOpen === true };
+  } catch {
+    return { layout: "text", splitPercent: 42, outlineOpen: false };
+  }
+}
 
 type Mark = {
   start: number;
@@ -176,18 +196,22 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   const [doc, setDoc] = useState<DocumentRead | null>(null);
   const [artifact, setArtifact] = useState<ArtifactEntries | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [layout, setLayout] = useState<Layout>("text");
+  const [layout, setLayout] = useState<Layout>(() => loadViewerPreferences().layout);
   const [selection, setSelection] = useState<Selection>(null);
   const [selectionSource, setSelectionSource] = useState<"text" | "pdf">("text");
   const [textSelection, setTextSelection] = useState("");
   const [pdfSelection, setPdfSelection] = useState("");
-  const [splitPercent, setSplitPercent] = useState(42);
+  const [splitPercent, setSplitPercent] = useState(
+    () => loadViewerPreferences().splitPercent,
+  );
   const [pdfPage, setPdfPage] = useState(1);
   const [copied, setCopied] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState<SearchScope>("all");
   const [matchIdx, setMatchIdx] = useState(0);
-  const [outlineOpen, setOutlineOpen] = useState(false);
+  const [outlineOpen, setOutlineOpen] = useState(
+    () => loadViewerPreferences().outlineOpen,
+  );
   const [bookmarks, setBookmarks] = useState<BookmarkRead[]>([]);
   const [annotations, setAnnotations] = useState<AnnotationRead[]>([]);
   const [overrides, setOverrides] = useState<OverrideRead[]>([]);
@@ -199,6 +223,17 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   const searchRef = useRef<HTMLInputElement>(null);
   const panesRef = useRef<HTMLDivElement>(null);
   const specRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        VIEWER_PREFERENCES_KEY,
+        JSON.stringify({ layout, splitPercent, outlineOpen }),
+      );
+    } catch {
+      // Private browsing or storage policy can disable persistence.
+    }
+  }, [layout, splitPercent, outlineOpen]);
 
   const updateStyle = useCallback((patch: Partial<CiteStyle>) => {
     setCiteStyle((s) => {
@@ -987,7 +1022,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                     key={e.entry_id}
                     id={`spec-L${e.ordinal}`}
                     data-ordinal={e.ordinal}
-                    className={`spec-line${sel ? " selected" : ""}${paragraphStart ? " paragraph-start" : ""}`}
+                    className={`spec-line indent-${Math.min(6, Math.max(0, e.indent_level ?? 0))}${sel ? " selected" : ""}${paragraphStart ? " paragraph-start" : ""}`}
                     role="option"
                     aria-selected={!!sel}
                     onClick={() => {

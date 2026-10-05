@@ -44,6 +44,27 @@ export interface AnnotationRead {
   created_at: string;
 }
 
+export type PdfAnnotationKind = "bookmark" | "note" | "highlight" | "drawing";
+
+export interface PdfAnnotationRead {
+  id: string;
+  document_id: string;
+  kind: PdfAnnotationKind;
+  page_index: number;
+  geometry: Record<string, unknown>;
+  color: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+export interface PdfAnnotationCreate {
+  kind: PdfAnnotationKind;
+  page_index: number;
+  geometry: Record<string, unknown>;
+  color?: string | null;
+  note?: string | null;
+}
+
 export interface OverrideRead {
   id: string;
   document_id: string;
@@ -119,6 +140,7 @@ export interface EntryDto {
   text_confidence: string;
   reference_confidence: string;
   paragraph_start?: boolean;
+  indent_level?: number;
 }
 
 export interface FigureMentionDto {

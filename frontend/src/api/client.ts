@@ -11,6 +11,8 @@ import type {
   ImportAnalysis,
   JobRead,
   OverrideRead,
+  PdfAnnotationCreate,
+  PdfAnnotationRead,
   UploadCompleteResponse,
   UploadGrant,
   WorkspaceList,
@@ -86,6 +88,16 @@ export const api = {
     request<AnnotationRead>(`/api/v1/annotations/${id}`, jsonInit("PATCH", { note })),
   deleteAnnotation: (id: string) =>
     request<void>(`/api/v1/annotations/${id}`, { method: "DELETE" }),
+
+  listPdfAnnotations: (docId: string) =>
+    request<PdfAnnotationRead[]>(`/api/v1/documents/${docId}/pdf-annotations`),
+  createPdfAnnotation: (docId: string, annotation: PdfAnnotationCreate) =>
+    request<PdfAnnotationRead>(
+      `/api/v1/documents/${docId}/pdf-annotations`,
+      jsonInit("POST", annotation),
+    ),
+  deletePdfAnnotation: (id: string) =>
+    request<void>(`/api/v1/pdf-annotations/${id}`, { method: "DELETE" }),
 
   listOverrides: (docId: string) =>
     request<OverrideRead[]>(`/api/v1/documents/${docId}/overrides`),

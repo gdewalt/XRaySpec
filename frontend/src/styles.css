@@ -2435,6 +2435,111 @@ mark.search-hit { background: #ffdf8a; color: #422600; }
   -webkit-user-select: text;
 }
 
+/* OCR layout: compact lines within a paragraph, visible breathing room between them. */
+.spec {
+  gap: 0;
+  line-height: 1.34;
+}
+.spec-line {
+  padding-block: .04rem;
+}
+.spec-line.paragraph-start:not(:first-child) {
+  margin-top: .9rem;
+}
+.spec-line.indent-1 .line-text { padding-left: .65rem; }
+.spec-line.indent-2 .line-text { padding-left: 1.3rem; }
+.spec-line.indent-3 .line-text { padding-left: 1.95rem; }
+.spec-line.indent-4 .line-text { padding-left: 2.6rem; }
+.spec-line.indent-5 .line-text { padding-left: 3.25rem; }
+.spec-line.indent-6 .line-text { padding-left: 3.9rem; }
+
+.pdf-controls {
+  flex-wrap: wrap;
+}
+.pdf-annotation-tools {
+  display: flex;
+  gap: .25rem;
+  padding-left: .45rem;
+  border-left: 1px solid var(--border);
+}
+.pdf-annotation-tools button {
+  min-height: 34px;
+  padding: .32rem .55rem;
+  font-size: .7rem;
+}
+.pdf-annotation-tools button.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: #173d9d;
+}
+.pdf-tool-hint {
+  margin: .35rem 0;
+  color: var(--muted);
+  font-size: .76rem;
+}
+.pdf-note-editor {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  align-items: end;
+  gap: .5rem;
+  margin: .45rem 0;
+  padding: .65rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+.pdf-note-editor label {
+  grid-column: 1 / -1;
+}
+.pdf-note-editor textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+.pdf-annotation-layer {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.pdf-annotation-layer:not(.tool-select) {
+  pointer-events: auto;
+  touch-action: none;
+  cursor: crosshair;
+}
+.pdf-annotation-layer.tool-delete { cursor: not-allowed; }
+.pdf-annotation-layer.tool-select .pdf-note-mark,
+.pdf-annotation-layer.tool-select .pdf-bookmark-mark,
+.pdf-annotation-layer.tool-delete .pdf-saved-annotation {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.pdf-highlight-mark {
+  opacity: .36;
+  mix-blend-mode: multiply;
+}
+.pdf-highlight-mark.draft { opacity: .25; }
+.pdf-drawing-mark { opacity: .92; }
+.pdf-note-mark, .pdf-bookmark-mark {
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.35));
+}
+
+@media (max-width: 760px) {
+  .pdf-annotation-tools {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+    padding: .35rem 0 0;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+  .pdf-note-editor { grid-template-columns: 1fr 1fr; }
+  .pdf-note-editor textarea { grid-column: 1 / -1; }
+}
+
 @media (max-width: 700px) {
   .spec-line {
     grid-template-columns: 4.65rem minmax(0,1fr);
