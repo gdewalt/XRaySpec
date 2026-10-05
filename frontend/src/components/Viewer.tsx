@@ -406,6 +406,18 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
 
   const selectLine = useCallback((e: EntryDto) => selectRange(e.ordinal, e.ordinal), [selectRange]);
 
+  const selectPdfLine = useCallback(
+    (entry: EntryDto) => {
+      // A PDF-only layout has no text target to scroll yet, so reveal the text
+      // pane first and scroll after React has committed the split layout.
+      setLayout((current) => (current === "pdf" ? "split" : current));
+      setSelectionSource("pdf");
+      selectRange(entry.ordinal, entry.ordinal);
+      window.requestAnimationFrame(() => scrollToOrdinal(entry.ordinal));
+    },
+    [scrollToOrdinal, selectRange],
+  );
+
   // Keyboard within the spec listbox: arrows/Home/End move (and reveal) the
   // selected line, working from no selection too. preventDefault dedupes against
   // the global arrow handler (which serves the click-then-arrow case).
@@ -1133,7 +1145,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
               onPageChange={setPdfPage}
               highlightOrdinal={highlightOrdinal}
               highlightCallouts={highlightCallouts}
-              onSelectLine={selectLine}
+              onSelectLine={selectPdfLine}
               onSelectRange={(a, b) => selectRange(a, b)}
               onSelectCallout={onSelectCallout}
               onActivate={() => {
