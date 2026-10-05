@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { EntryDto } from "../api/types";
-import { CITE_PRESETS, formatCitation, formatRef } from "./citation";
+import { CITE_PRESETS, formatCitation, formatRef, shortPatentName } from "./citation";
 
 function grant(ordinal: number, column: number, line: number): EntryDto {
   return {
@@ -39,8 +39,8 @@ const compact = CITE_PRESETS[3].style;
 describe("formatRef (grant)", () => {
   it("uses column:line by default", () => {
     expect(formatRef([grant(0, 3, 22)], columnLine)).toBe("3:22");
-    expect(formatRef([grant(0, 3, 22), grant(1, 3, 25)], columnLine)).toBe("3:22–25");
-    expect(formatRef([grant(0, 3, 22), grant(1, 4, 2)], columnLine)).toBe("3:22–4:2");
+    expect(formatRef([grant(0, 3, 22), grant(1, 3, 25)], columnLine)).toBe("3:22-25");
+    expect(formatRef([grant(0, 3, 22), grant(1, 4, 2)], columnLine)).toBe("3:22-4:2");
   });
   it("single line", () => {
     expect(formatRef([grant(0, 3, 22)], standard)).toBe("col. 3, l. 22");
@@ -74,18 +74,29 @@ describe("formatRef (application)", () => {
 });
 
 describe("formatCitation", () => {
-  it("includes a column:line locator under the default style", () => {
-    expect(formatCitation([grant(0, 3, 22)], "US6411897", columnLine)).toBe(
-      "US6411897, 3:22",
+  it("uses the last three patent digits and a column:line range by default", () => {
+    expect(formatCitation(
+      [grant(0, 1, 15), grant(1, 1, 30)],
+      "US 7,840,427 B2",
+      columnLine,
+    )).toBe(
+      "’427 patent 1:15-30",
     );
   });
   it("includes the title when the style asks", () => {
-    expect(formatCitation([grant(0, 3, 22)], "US6411897", standard)).toBe("US6411897, col. 3, l. 22");
+    expect(formatCitation([grant(0, 3, 22)], "US6411897", standard)).toBe(
+      "’897 patent col. 3, l. 22",
+    );
   });
   it("omits the title under the compact style", () => {
     expect(formatCitation([grant(0, 3, 22)], "US6411897", compact)).toBe("3:22");
   });
   it("is empty for no selection", () => {
     expect(formatCitation([], "US6411897", standard)).toBe("");
+  });
+
+  it("finds the patent number without including the kind-code digit", () => {
+    expect(shortPatentName("US7840427B2")).toBe("’427 patent");
+    expect(shortPatentName("US 7,840,427 B2")).toBe("’427 patent");
   });
 });

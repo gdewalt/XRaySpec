@@ -17,7 +17,7 @@ export type CitePreset = { id: string; name: string; style: CiteStyle };
 export const CITE_PRESETS: CitePreset[] = [
   {
     id: "column-line",
-    name: "Column:line (3:22)",
+    name: "Patent + column:line (’427 patent 3:22)",
     style: {
       includeTitle: true,
       grantFormat: "colon",
@@ -96,9 +96,9 @@ export function formatRef(entries: EntryDto[], style: CiteStyle): string {
       if (a.column === b.column) {
         return a.printed_line === b.printed_line
           ? `${a.column}:${a.printed_line}`
-          : `${a.column}:${a.printed_line}–${b.printed_line}`;
+          : `${a.column}:${a.printed_line}-${b.printed_line}`;
       }
-      return `${a.column}:${a.printed_line}–${b.column}:${b.printed_line}`;
+      return `${a.column}:${a.printed_line}-${b.column}:${b.printed_line}`;
     }
     if (a.column === b.column) {
       return a.printed_line === b.printed_line
@@ -120,9 +120,18 @@ export function formatRef(entries: EntryDto[], style: CiteStyle): string {
   return "";
 }
 
-/** Full citation: optional title + reference. */
-export function formatCitation(entries: EntryDto[], title: string, style: CiteStyle): string {
+/** Bluebook-style short patent name, e.g. ``US 7,840,427 B2`` -> ``’427 patent``. */
+export function shortPatentName(identifier: string): string {
+  const candidates = identifier.match(/\d[\d,./-]*/g) ?? [];
+  const number = candidates
+    .map((candidate) => candidate.replace(/\D/g, ""))
+    .sort((left, right) => right.length - left.length)[0];
+  return number?.length >= 3 ? `’${number.slice(-3)} patent` : identifier;
+}
+
+/** Full citation: optional short patent name + reference. */
+export function formatCitation(entries: EntryDto[], patentNumber: string, style: CiteStyle): string {
   const ref = formatRef(entries, style);
   if (!ref) return "";
-  return style.includeTitle && title ? `${title}, ${ref}` : ref;
+  return style.includeTitle && patentNumber ? `${shortPatentName(patentNumber)} ${ref}` : ref;
 }

@@ -651,7 +651,9 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   }, [noteDraft, selectedStartEntry, documentId, editingAnnotationId]);
 
   const citation =
-    selectedEntries.length && doc ? formatCitation(selectedEntries, doc.title, citeStyle) : "";
+    selectedEntries.length && doc
+      ? formatCitation(selectedEntries, doc.patent_number ?? doc.title, citeStyle)
+      : "";
   const selectedText = joinEntryText(selectedEntries);
   const surfaceSelection = selectionSource === "pdf" ? pdfSelection : textSelection;
   const activeSelectionText = normalizeCopiedText(
@@ -1260,7 +1262,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                   checked={citeStyle.includeTitle}
                   onChange={(e) => updateStyle({ includeTitle: e.target.checked })}
                 />
-                Include title
+                Include short patent name
               </label>
               <label>
                 Grant locator
