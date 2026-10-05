@@ -1,4 +1,5 @@
 import {
+  type ClipboardEvent as ReactClipboardEvent,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
@@ -43,6 +44,7 @@ import {
   searchEntries,
 } from "../spec/navigation";
 import { exportPortable, exportText } from "../spec/export";
+import { dehyphenateLineBreaks, deriveIndentLevels, joinEntryText } from "../spec/text";
 import { PdfPane } from "./PdfPane";
 
 type Layout = "text" | "pdf" | "split" | "details";
@@ -192,6 +194,33 @@ function renderText(
   return nodes;
 }
 
+function copiedTextFromRange(range: Range): string {
+  const fragment = range.cloneContents();
+  const copySurface = document.createElement("div");
+  copySurface.appendChild(fragment);
+  copySurface.querySelectorAll("[data-copy-exclude]").forEach((node) => node.remove());
+  const selectedRows = Array.from(copySurface.querySelectorAll<HTMLElement>(".spec-line"));
+  const rowText = selectedRows
+    .map((row) => ({
+      paragraphStart: row.classList.contains("paragraph-start"),
+      text: row.querySelector<HTMLElement>(".line-text")?.textContent?.trimEnd() ?? "",
+    }))
+    .filter((row) => row.text.trim().length > 0);
+  const selectedLines = Array.from(copySurface.querySelectorAll<HTMLElement>(".line-text"))
+    .map((line) => line.textContent?.trimEnd() ?? "")
+    .filter((line) => line.trim().length > 0);
+  const raw = rowText.length > 0
+    ? rowText.reduce(
+        (text, row, index) =>
+          `${text}${index > 0 ? (row.paragraphStart ? "\n\n" : "\n") : ""}${row.text}`,
+        "",
+      )
+    : selectedLines.length > 0
+      ? selectedLines.join("\n")
+      : copySurface.textContent ?? "";
+  return dehyphenateLineBreaks(raw).trimEnd();
+}
+
 export function Viewer({ documentId, onBack }: { documentId: string; onBack: () => void }) {
   const [doc, setDoc] = useState<DocumentRead | null>(null);
   const [artifact, setArtifact] = useState<ArtifactEntries | null>(null);
@@ -274,6 +303,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   }, [documentId]);
 
   const entries = artifact?.entries ?? [];
+  const indentLevels = useMemo(() => deriveIndentLevels(entries), [entries]);
   const figsByEntry = useMemo(() => groupByEntry(artifact?.figure_mentions ?? []), [artifact]);
   const numsByEntry = useMemo(() => groupByEntry(artifact?.numeral_mentions ?? []), [artifact]);
   const assocByKey = useMemo(() => {
@@ -610,9 +640,9 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
 
   const citation =
     selectedEntries.length && doc ? formatCitation(selectedEntries, doc.title, citeStyle) : "";
-  const selectedText = selectedEntries.map((e) => e.display_text).join(" ");
-  const activeSelectionText =
-    (selectionSource === "pdf" ? pdfSelection : textSelection).trim() || selectedText;
+  const selectedText = joinEntryText(selectedEntries);
+  const surfaceSelection = selectionSource === "pdf" ? pdfSelection : textSelection;
+  const activeSelectionText = surfaceSelection.trim() ? surfaceSelection.trimEnd() : selectedText;
   const highlightOrdinal = selection ? selection.start : null;
   const selectedBookmarked = selectedStartEntry
     ? bookmarkByEntry.has(selectedStartEntry.entry_id)
@@ -647,17 +677,8 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
     if (!nativeSelection || nativeSelection.isCollapsed || !container) return;
     const range = nativeSelection.getRangeAt(0);
     if (!container.contains(range.commonAncestorContainer)) return;
-    const fragment = range.cloneContents();
-    const copySurface = document.createElement("div");
-    copySurface.appendChild(fragment);
-    const selectedLines = Array.from(copySurface.querySelectorAll<HTMLElement>(".line-text"))
-      .map((line) => line.textContent?.trim() ?? "")
-      .filter(Boolean);
-    copySurface.querySelectorAll("[data-copy-exclude]").forEach((node) => node.remove());
-    const text = (
-      selectedLines.length > 0 ? selectedLines.join("\n") : copySurface.textContent ?? ""
-    ).trim();
-    if (!text) return;
+    const text = copiedTextFromRange(range);
+    if (!text.trim()) return;
     setSelectionSource("text");
     setTextSelection(text);
     const covered = Array.from(container.querySelectorAll<HTMLElement>(".spec-line"))
@@ -666,6 +687,20 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
       .filter((ordinal) => !Number.isNaN(ordinal));
     if (covered.length > 0) selectRange(Math.min(...covered), Math.max(...covered));
   }, [selectRange]);
+
+  const handleTextCopy = useCallback((event: ReactClipboardEvent<HTMLElement>) => {
+    const nativeSelection = window.getSelection();
+    const container = specRef.current;
+    if (!nativeSelection || nativeSelection.isCollapsed || !container) return;
+    const range = nativeSelection.getRangeAt(0);
+    if (!container.contains(range.commonAncestorContainer)) return;
+    const text = copiedTextFromRange(range);
+    if (!text.trim()) return;
+    event.preventDefault();
+    event.clipboardData.setData("text/plain", text);
+    setSelectionSource("text");
+    setTextSelection(text);
+  }, []);
 
   const resizeSplit = useCallback((clientX: number) => {
     const container = panesRef.current;
@@ -1001,6 +1036,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                 setTextSelection("");
               }}
               onMouseUp={handleTextMouseUp}
+              onCopy={handleTextCopy}
             >
               {entries.map((e, index) => {
                 const marks = buildMarks(
@@ -1017,12 +1053,13 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                   e.paragraph_start === true ||
                   (!!e.locator.paragraph &&
                     e.locator.paragraph !== previous?.locator.paragraph);
+                const indentLevel = indentLevels.get(e.entry_id) ?? e.indent_level ?? 0;
                 return (
                   <div
                     key={e.entry_id}
                     id={`spec-L${e.ordinal}`}
                     data-ordinal={e.ordinal}
-                    className={`spec-line indent-${Math.min(6, Math.max(0, e.indent_level ?? 0))}${sel ? " selected" : ""}${paragraphStart ? " paragraph-start" : ""}`}
+                    className={`spec-line${sel ? " selected" : ""}${paragraphStart ? " paragraph-start" : ""}`}
                     role="option"
                     aria-selected={!!sel}
                     onClick={() => {
@@ -1042,6 +1079,9 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                       <span className="ref">{refShort(e.locator)}</span>
                     </span>
                     <span className="line-text">
+                      {indentLevel > 0 && (
+                        <span className="line-indent">{"\t".repeat(indentLevel)}</span>
+                      )}
                       {renderText(e, marks, query, onMentionClick, navigateToFigure)}
                     </span>
                   </div>

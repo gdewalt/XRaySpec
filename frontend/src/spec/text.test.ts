@@ -1,0 +1,54 @@
+import { describe, expect, it } from "vitest";
+
+import type { EntryDto } from "../api/types";
+import { dehyphenateLineBreaks, deriveIndentLevels, joinEntryText } from "./text";
+
+function entry(
+  id: string,
+  text: string,
+  box: number[],
+  options: Partial<EntryDto> = {},
+): EntryDto {
+  return {
+    entry_id: id,
+    ordinal: Number(id.slice(1)),
+    page_index: 0,
+    locator: { kind: "grant", column: 1, printed_line: 1 },
+    box,
+    source_text: text,
+    display_text: text,
+    text_confidence: "medium",
+    reference_confidence: "medium",
+    ...options,
+  };
+}
+
+describe("text reconstruction", () => {
+  it("joins words broken by a line-ending hyphen", () => {
+    expect(dehyphenateLineBreaks("The trans-\nmitter operates")).toBe(
+      "The transmitter operates",
+    );
+    expect(dehyphenateLineBreaks("a well-known design")).toBe("a well-known design");
+  });
+
+  it("preserves paragraph breaks while repairing wrapped words", () => {
+    const entries = [
+      entry("e0", "A trans-", [0.1, 0.1, 0.4, 0.12]),
+      entry("e1", "mitter operates.", [0.1, 0.13, 0.4, 0.15]),
+      entry("e2", "A new paragraph.", [0.12, 0.18, 0.4, 0.2], {
+        paragraph_start: true,
+      }),
+    ];
+    expect(joinEntryText(entries)).toBe("A transmitter operates.\n\nA new paragraph.");
+  });
+
+  it("derives a leading tab from OCR line geometry", () => {
+    const entries = [
+      entry("e0", "baseline", [0.1, 0.1, 0.4, 0.12]),
+      entry("e1", "baseline", [0.1, 0.13, 0.4, 0.15]),
+      entry("e2", "indented", [0.114, 0.16, 0.4, 0.18]),
+    ];
+    expect(deriveIndentLevels(entries).get("e2")).toBe(1);
+  });
+});
+

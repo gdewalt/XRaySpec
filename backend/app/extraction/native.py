@@ -73,6 +73,47 @@ def _median(values: list[float]) -> float:
     return s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) / 2
 
 
+def reconstruct_line_text(words: list[Word], *, preserve_tabs: bool = False) -> str:
+    """Rebuild a line while retaining meaningful horizontal OCR gaps.
+
+    Ordinary inter-word gaps remain spaces. A gap wider than roughly three
+    characters is represented as one or more tabs so tabular/indented material
+    is not flattened into prose.
+    """
+    ordered = sorted(words, key=lambda word: word.x0)
+    if not ordered:
+        return ""
+    char_width = _median(
+        [
+            (word.x1 - word.x0) / max(len(word.text.strip()), 1)
+            for word in ordered
+            if word.x1 > word.x0 and word.text.strip()
+        ]
+    )
+    parts = [ordered[0].text]
+    for previous, word in zip(ordered, ordered[1:], strict=False):
+        gap = max(0.0, word.x0 - previous.x1)
+        if preserve_tabs and char_width > 0 and gap >= max(0.012, char_width * 2.75):
+            tab_width = max(char_width * 4, 0.018)
+            parts.append("\t" * max(1, min(4, round(gap / tab_width))))
+        else:
+            parts.append(" ")
+        parts.append(word.text)
+    return "".join(parts).strip()
+
+
+def detected_indent_level(words: list[Word], common_left: float) -> int:
+    """Convert a line's geometric left offset into a conservative tab count."""
+    if not words:
+        return 0
+    offset = min(word.x0 for word in words) - common_left
+    typical_height = _median([word.height for word in words if word.height > 0]) or 0.012
+    indent_unit = max(0.008, typical_height * 0.65)
+    if offset < indent_unit * 0.55:
+        return 0
+    return max(1, min(6, round(offset / indent_unit)))
+
+
 def _digits(text: str) -> str | None:
     """Return the 1-3 digit integer string in ``text`` (raw or OCR-repaired), else None."""
     raw = text.strip().rstrip(".")
@@ -302,7 +343,7 @@ def _emit_column(
         if ln.cy < header_cutoff:
             continue
         body = [w for w in ln.words if not (gutter_lo <= w.cx <= gutter_hi)]
-        text = " ".join(w.text for w in body).strip()
+        text = reconstruct_line_text(body, preserve_tabs=method == "ocr")
         if text and not (len(body) == 1 and _digits(body[0].text) is not None):
             content.append((ln, body, text))
     gaps = [
@@ -331,8 +372,8 @@ def _emit_column(
             index > 0 and current_keys and previous_keys and current_keys != previous_keys
         )
         vertical_gap = ln.cy - content[index - 1][0].cy if index > 0 else 0.0
-        indented = min(w.x0 for w in body) - common_left >= 0.018
-        indent_level = max(0, min(6, round((min(w.x0 for w in body) - common_left) / 0.018)))
+        indent_level = detected_indent_level(body, common_left)
+        indented = indent_level > 0
         spaced = bool(
             index > 0
             and typical_gap > 0

@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.extraction.config import DEFAULT_CONFIG
 from app.extraction.core import extract_from_pages
 from app.extraction.model import Page, Word
+from app.extraction.native import reconstruct_line_text
 from app.extraction.ocr import ocr_available, words_from_tsv
 
 
@@ -45,6 +46,15 @@ def test_words_from_tsv_respects_min_confidence():
     }
     words = words_from_tsv(data, 100, 100, min_confidence=50)
     assert [w.text for w in words] == ["good"]
+
+
+def test_ocr_line_reconstruction_preserves_large_gaps_as_tabs():
+    words = [
+        Word("Label", 0.10, 0.10, 0.15, 0.12, confidence=90.0),
+        Word("Value", 0.24, 0.10, 0.29, 0.12, confidence=90.0),
+        Word("units", 0.30, 0.10, 0.35, 0.12, confidence=90.0),
+    ]
+    assert reconstruct_line_text(words, preserve_tabs=True) == "Label\t\tValue units"
 
 
 def test_ocr_method_recorded_in_provenance():

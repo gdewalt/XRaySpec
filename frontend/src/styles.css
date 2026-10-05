@@ -2450,8 +2450,13 @@ mark.search-hit { background: #ffdf8a; color: #422600; }
 }
 .line-text {
   min-width: 0;
+  white-space: pre-wrap;
+  tab-size: 4;
   user-select: text;
   -webkit-user-select: text;
+}
+.line-indent {
+  white-space: pre;
 }
 
 /* OCR layout: compact lines within a paragraph, visible breathing room between them. */
@@ -2465,12 +2470,6 @@ mark.search-hit { background: #ffdf8a; color: #422600; }
 .spec-line.paragraph-start:not(:first-child) {
   margin-top: .9rem;
 }
-.spec-line.indent-1 .line-text { padding-left: .65rem; }
-.spec-line.indent-2 .line-text { padding-left: 1.3rem; }
-.spec-line.indent-3 .line-text { padding-left: 1.95rem; }
-.spec-line.indent-4 .line-text { padding-left: 2.6rem; }
-.spec-line.indent-5 .line-text { padding-left: 3.25rem; }
-.spec-line.indent-6 .line-text { padding-left: 3.9rem; }
 
 .pdf-controls {
   flex-wrap: wrap;
