@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import pytest
+from PIL import Image
 
+import app.extraction.ocr as ocr_module
 from app.extraction.config import DEFAULT_CONFIG
 from app.extraction.core import extract_from_pages, route_page
 from app.extraction.model import Page, Word
@@ -13,6 +15,7 @@ from app.extraction.ocr import (
     _unrotate_right_angle_words,
     dedupe_words,
     ocr_available,
+    ocr_quality,
     words_from_tsv,
 )
 
@@ -54,6 +57,64 @@ def test_words_from_tsv_respects_min_confidence():
     }
     words = words_from_tsv(data, 100, 100, min_confidence=50)
     assert [w.text for w in words] == ["good"]
+
+
+def test_ocr_quality_tracks_confidence_and_coverage():
+    quality = ocr_quality(
+        [
+            Word("clear", 0.1, 0.1, 0.2, 0.2, confidence=90.0),
+            Word("faint", 0.2, 0.1, 0.3, 0.2, confidence=30.0),
+        ]
+    )
+    assert quality.word_count == 2
+    assert quality.mean_confidence == 60.0
+    assert quality.low_confidence_fraction == 0.5
+    assert quality.useful_characters == 10
+
+
+def test_adaptive_ocr_skips_retries_for_a_strong_first_pass(monkeypatch):
+    calls: list[tuple[int, int]] = []
+    strong = [
+        Word(f"word{i}", 0.1, 0.1, 0.2, 0.2, confidence=92.0) for i in range(12)
+    ]
+
+    def recognize(_image, _config, *, psm, thresholding_method):
+        calls.append((psm, thresholding_method))
+        return strong
+
+    monkeypatch.setattr(ocr_module, "_tesseract_words", recognize)
+    result = ocr_module._adaptive_tesseract_words(
+        Image.new("L", (20, 20), 255),
+        DEFAULT_CONFIG,
+        primary_psm=3,
+        retry_psm=4,
+        minimum_words=12,
+    )
+    assert result == strong
+    assert calls == [(3, 2)]
+
+
+def test_adaptive_ocr_retries_weak_text_and_keeps_better_candidate(monkeypatch):
+    calls: list[tuple[int, int]] = []
+    weak = [Word("nolse", 0.1, 0.1, 0.2, 0.2, confidence=22.0)]
+    strong = [
+        Word(f"word{i}", 0.1, 0.1, 0.2, 0.2, confidence=94.0) for i in range(12)
+    ]
+
+    def recognize(_image, _config, *, psm, thresholding_method):
+        calls.append((psm, thresholding_method))
+        return weak if thresholding_method == 2 else strong
+
+    monkeypatch.setattr(ocr_module, "_tesseract_words", recognize)
+    result = ocr_module._adaptive_tesseract_words(
+        Image.new("L", (20, 20), 255),
+        DEFAULT_CONFIG,
+        primary_psm=3,
+        retry_psm=4,
+        minimum_words=12,
+    )
+    assert result == strong
+    assert calls == [(3, 2), (4, 1)]
 
 
 def test_crop_and_rotation_coordinates_map_back_to_pdf_space():

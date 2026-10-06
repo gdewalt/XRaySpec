@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from .config import ExtractionConfig
 from .model import Word
@@ -170,13 +171,20 @@ def preprocess_image(image, config: ExtractionConfig):
     return clean, angle
 
 
-def _tesseract_words(image, config: ExtractionConfig, *, psm: int) -> list[Word]:
+def _tesseract_words(
+    image,
+    config: ExtractionConfig,
+    *,
+    psm: int,
+    thresholding_method: int = 2,
+) -> list[Word]:
     import pytesseract
     from pytesseract import Output
 
     tess_config = (
         f"--oem 1 --psm {psm} "
-        "-c thresholding_method=2 -c preserve_interword_spaces=1"
+        f"-c thresholding_method={thresholding_method} "
+        "-c preserve_interword_spaces=1"
     )
     data = pytesseract.image_to_data(
         image,
@@ -187,6 +195,105 @@ def _tesseract_words(image, config: ExtractionConfig, *, psm: int) -> list[Word]
     return words_from_tsv(
         data, image.width, image.height, min_confidence=config.ocr_min_confidence
     )
+
+
+@dataclass(frozen=True, slots=True)
+class OcrQuality:
+    """Small, deterministic signal used to decide whether another pass is worthwhile."""
+
+    word_count: int
+    mean_confidence: float
+    low_confidence_fraction: float
+    useful_characters: int
+
+
+def ocr_quality(words: Iterable[Word], *, low_confidence_cutoff: float = 50.0) -> OcrQuality:
+    """Summarize an OCR candidate without interpreting its document layout."""
+    materialized = list(words)
+    confidences = [
+        max(0.0, min(100.0, float(word.confidence)))
+        for word in materialized
+        if word.confidence is not None
+    ]
+    mean = sum(confidences) / len(confidences) if confidences else 0.0
+    low = (
+        sum(confidence < low_confidence_cutoff for confidence in confidences)
+        / len(confidences)
+        if confidences
+        else 1.0
+    )
+    return OcrQuality(
+        word_count=len(materialized),
+        mean_confidence=mean,
+        low_confidence_fraction=low,
+        useful_characters=sum(
+            sum(character.isalnum() for character in word.text) for word in materialized
+        ),
+    )
+
+
+def _candidate_score(words: list[Word], config: ExtractionConfig) -> float:
+    quality = ocr_quality(
+        words, low_confidence_cutoff=config.ocr_retry_low_confidence_cutoff
+    )
+    # Confidence dominates, while a logarithmic coverage bonus prevents a tiny,
+    # pristine fragment from defeating a complete and nearly-as-clean page.
+    coverage_bonus = 4.0 * math.log1p(quality.useful_characters)
+    noise_penalty = 25.0 * quality.low_confidence_fraction
+    return quality.mean_confidence + coverage_bonus - noise_penalty
+
+
+def _needs_retry(
+    words: list[Word], config: ExtractionConfig, *, minimum_words: int
+) -> bool:
+    quality = ocr_quality(
+        words, low_confidence_cutoff=config.ocr_retry_low_confidence_cutoff
+    )
+    return (
+        quality.word_count < minimum_words
+        or quality.mean_confidence < config.ocr_retry_mean_confidence
+        or quality.low_confidence_fraction > config.ocr_retry_low_confidence_fraction
+    )
+
+
+def _binarize_image(image):
+    """Create a global-Otsu fallback for uneven results from Tesseract thresholding."""
+    from PIL import ImageOps
+
+    gray = ImageOps.grayscale(image)
+    threshold = _otsu_threshold(gray)
+    return gray.point(lambda value: 255 if value > threshold else 0)
+
+
+def _adaptive_tesseract_words(
+    image,
+    config: ExtractionConfig,
+    *,
+    primary_psm: int,
+    retry_psm: int,
+    minimum_words: int,
+) -> list[Word]:
+    """Run extra OCR profiles only when the current best result is weak."""
+    candidates = [
+        _tesseract_words(image, config, psm=primary_psm, thresholding_method=2)
+    ]
+    if not _needs_retry(candidates[0], config, minimum_words=minimum_words):
+        return candidates[0]
+
+    candidates.append(
+        _tesseract_words(image, config, psm=retry_psm, thresholding_method=1)
+    )
+    best = max(candidates, key=lambda words: _candidate_score(words, config))
+    if _needs_retry(best, config, minimum_words=minimum_words):
+        candidates.append(
+            _tesseract_words(
+                _binarize_image(image),
+                config,
+                psm=retry_psm,
+                thresholding_method=0,
+            )
+        )
+    return max(candidates, key=lambda words: _candidate_score(words, config))
 
 
 def _word_with_box(word: Word, box: tuple[float, float, float, float]) -> Word:
@@ -302,7 +409,15 @@ def ocr_page_words(
     """Clean, deskew, and OCR a full page while preserving original coordinates."""
     image = render_page(pdf_bytes, page_index, config.ocr_dpi)
     clean, angle = preprocess_image(image, config)
-    words = _tesseract_words(clean, config, psm=psm or 3)
+    primary_psm = psm or 3
+    retry_psm = psm or config.ocr_text_retry_psm
+    words = _adaptive_tesseract_words(
+        clean,
+        config,
+        primary_psm=primary_psm,
+        retry_psm=retry_psm,
+        minimum_words=12,
+    )
     return _unrotate_words(words, angle, clean.size)
 
 
@@ -336,7 +451,13 @@ def ocr_specification_words(
             round(crop[2] * clean.width),
             round(crop[3] * clean.height),
         )
-        recognized = _tesseract_words(clean.crop(pixels), config, psm=config.ocr_text_psm)
+        recognized = _adaptive_tesseract_words(
+            clean.crop(pixels),
+            config,
+            primary_psm=config.ocr_text_psm,
+            retry_psm=config.ocr_text_retry_psm,
+            minimum_words=8,
+        )
         column_words.extend(_map_crop_words(recognized, crop))
     column_words = _unrotate_words(column_words, angle, clean.size)
     base_body = [
@@ -358,9 +479,24 @@ def ocr_drawing_words(
     """OCR a drawing sheet at high resolution and all configured orientations."""
     image = render_page(pdf_bytes, page_index, config.ocr_drawing_dpi)
     clean, deskew_angle = preprocess_image(image, config)
-    recognized: list[Word] = []
-    for rotation in config.ocr_drawing_rotations:
-        rotated = clean.rotate(rotation, expand=True, fillcolor=255)
-        oriented = _tesseract_words(rotated, config, psm=config.ocr_sparse_psm)
-        recognized.extend(_unrotate_right_angle_words(oriented, rotation))
-    return _unrotate_words(dedupe_words(recognized), deskew_angle, clean.size)
+
+    def orientation_pass(thresholding_method: int) -> list[Word]:
+        recognized: list[Word] = []
+        for rotation in config.ocr_drawing_rotations:
+            rotated = clean.rotate(rotation, expand=True, fillcolor=255)
+            oriented = _tesseract_words(
+                rotated,
+                config,
+                psm=config.ocr_sparse_psm,
+                thresholding_method=thresholding_method,
+            )
+            recognized.extend(_unrotate_right_angle_words(oriented, rotation))
+        return dedupe_words(recognized)
+
+    candidates = [orientation_pass(2)]
+    # Drawing sheets are already four orientation passes. Only repeat that set
+    # when the combined result is empty or demonstrably low-confidence.
+    if _needs_retry(candidates[0], config, minimum_words=1):
+        candidates.append(orientation_pass(1))
+    recognized = max(candidates, key=lambda words: _candidate_score(words, config))
+    return _unrotate_words(recognized, deskew_angle, clean.size)
