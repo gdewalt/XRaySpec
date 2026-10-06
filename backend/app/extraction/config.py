@@ -22,15 +22,20 @@ OcrPolicy = Literal["auto", "force", "disabled"]
 @dataclass(frozen=True, slots=True)
 class ExtractionConfig:
     # Engine identity
-    version: str = "0.5.0"
+    version: str = "0.6.0"
 
     # OCR
     ocr_policy: OcrPolicy = "auto"
     ocr_dpi: int = 300
+    ocr_drawing_dpi: int = 400
     ocr_languages: tuple[str, ...] = ("eng",)
     ocr_min_confidence: float = 0.0  # keep all non-empty tokens by default
     min_native_words_per_page: int = 15  # below this a page is treated as image-only
+    ocr_text_psm: int = 6  # one uniform block after each specification column is cropped
     ocr_sparse_psm: int = 11  # Tesseract page-seg mode for drawing callout labels (§12.7)
+    ocr_deskew_max_degrees: float = 2.0
+    ocr_deskew_step_degrees: float = 0.5
+    ocr_drawing_rotations: tuple[int, ...] = (0, 90, 180, 270)
 
     # Grant line-reference reconstruction (§12.5)
     line_y_tolerance: float = 3.0

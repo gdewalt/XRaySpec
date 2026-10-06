@@ -61,13 +61,20 @@ def route_page(
     can_ocr: bool,
     *,
     ocr_fn: Callable[..., list[Word]] | None = None,
+    specification_ocr_fn: Callable[..., list[Word]] | None = None,
+    drawing_ocr_fn: Callable[..., list[Word]] | None = None,
 ) -> PageResult:
     """Route one page to native words or OCR, and classify spec-vs-drawing (§12.3–12.7).
 
     Pure per-page work with no persistence: the resume orchestrator calls this only
     for pages without a valid ``page_text`` checkpoint."""
     if ocr_fn is None:
-        from .ocr import ocr_page_words as ocr_fn  # lazy: OCR libs only in the worker
+        # Lazy imports keep PDF/OCR binaries out of API and unit-test startup.
+        from .ocr import ocr_drawing_words, ocr_page_words, ocr_specification_words
+
+        ocr_fn = ocr_page_words
+        specification_ocr_fn = specification_ocr_fn or ocr_specification_words
+        drawing_ocr_fn = drawing_ocr_fn or ocr_drawing_words
 
     if len(native_page.words) >= config.min_native_words_per_page:
         page, method = native_page, "native"
@@ -79,12 +86,23 @@ def route_page(
 
     if is_drawing_page(page.words):
         draw_words = page.words
-        if method == "ocr" and can_ocr:
+        if can_ocr and drawing_ocr_fn is not None:
+            enhanced = drawing_ocr_fn(pdf_bytes, page.index, config)
+            if method == "native":
+                from .ocr import dedupe_words
+
+                draw_words = dedupe_words([*draw_words, *enhanced])
+            else:
+                draw_words = enhanced
+        elif method == "ocr" and can_ocr:
             draw_words = ocr_fn(pdf_bytes, page.index, config, psm=config.ocr_sparse_psm)
         figure_id = detect_page_figure(draw_words)
         figures = tuple(detect_figure_occurrences(draw_words, page.index))
         callouts = tuple(detect_callouts(draw_words, page.index, figure_id))
         return PageResult(page.index, method, True, figures=figures, callouts=callouts)
+    if method == "ocr" and specification_ocr_fn is not None:
+        words = specification_ocr_fn(pdf_bytes, page.index, config, list(page.words))
+        page = Page(index=page.index, words=words)
     return PageResult(page.index, method, False, words=tuple(page.words))
 
 

@@ -31,6 +31,26 @@ from .checkpoints import (
 from .engine import JobContext
 
 
+async def _route_page_with_lease(
+    ctx: JobContext,
+    route_page: Callable[..., PageResult],
+    pdf_bytes: bytes,
+    native_page: Page,
+    config: ExtractionConfig,
+    can_ocr: bool,
+) -> PageResult:
+    """Run CPU-bound page OCR while renewing the database lease."""
+    task = asyncio.create_task(
+        asyncio.to_thread(route_page, pdf_bytes, native_page, config, can_ocr)
+    )
+    interval = max(5.0, min(20.0, ctx.lease_seconds / 3))
+    while True:
+        done, _ = await asyncio.wait({task}, timeout=interval)
+        if task in done:
+            return await task
+        await ctx.heartbeat()
+
+
 async def run_extraction(
     ctx: JobContext,
     *,
@@ -104,8 +124,8 @@ async def run_extraction(
             if native_page.index in cached:
                 results.append(cached[native_page.index])
             else:
-                result = await asyncio.to_thread(
-                    route_page, pdf_bytes, native_page, config, can_ocr
+                result = await _route_page_with_lease(
+                    ctx, route_page, pdf_bytes, native_page, config, can_ocr
                 )
                 async with ctx.sessionmaker() as session:
                     await save_page_text(

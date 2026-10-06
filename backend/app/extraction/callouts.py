@@ -13,12 +13,9 @@ callouts (``104``) with boxes. This module:
 
 Pure over the abstract word model, unit-testable; drawing OCR is an adapter.
 
-KNOWN LIMITATION (measured on a real scanned grant): detection + association logic
-is correct and wired end to end, but real-world *callout yield* is low — Tesseract
-(even in sparse-text mode) misses many small/rotated numeral labels on scanned
-figures, and drawing-vs-spec page classification is approximate. Higher yield needs
-bounded orientation passes, DPI/PSM tuning, and threshold calibration against the
-labeled corpus (§12.7, §19) — deliberately not over-fit to a single example.
+Drawing OCR supplies high-resolution, bounded orientation passes before this
+module runs. Remaining yield/precision tuning is calibrated against the labeled
+corpus (§12.7, §19), never fitted to a single example.
 """
 
 from __future__ import annotations

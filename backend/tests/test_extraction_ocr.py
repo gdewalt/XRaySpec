@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.extraction.config import DEFAULT_CONFIG
-from app.extraction.core import extract_from_pages
+from app.extraction.core import extract_from_pages, route_page
 from app.extraction.model import Page, Word
 from app.extraction.native import reconstruct_line_text
-from app.extraction.ocr import ocr_available, words_from_tsv
+from app.extraction.ocr import (
+    _map_crop_words,
+    _unrotate_right_angle_words,
+    dedupe_words,
+    ocr_available,
+    words_from_tsv,
+)
 
 
 def test_ocr_available_is_bool():
@@ -46,6 +54,86 @@ def test_words_from_tsv_respects_min_confidence():
     }
     words = words_from_tsv(data, 100, 100, min_confidence=50)
     assert [w.text for w in words] == ["good"]
+
+
+def test_crop_and_rotation_coordinates_map_back_to_pdf_space():
+    cropped = Word("104", 0.0, 0.0, 1.0, 1.0, confidence=90.0)
+    mapped = _map_crop_words([cropped], (0.05, 0.10, 0.45, 0.90))[0]
+    assert (mapped.x0, mapped.y0, mapped.x1, mapped.y1) == (0.05, 0.10, 0.45, 0.90)
+
+    rotated = Word("104", 0.20, 0.70, 0.30, 0.80, confidence=90.0)
+    restored = _unrotate_right_angle_words([rotated], 90)[0]
+    assert restored.x0 == pytest.approx(0.20)
+    assert restored.y0 == pytest.approx(0.20)
+    assert restored.x1 == pytest.approx(0.30)
+    assert restored.y1 == pytest.approx(0.30)
+
+
+def test_orientation_passes_deduplicate_the_same_label_by_confidence():
+    words = [
+        Word("104", 0.10, 0.20, 0.15, 0.23, confidence=72.0),
+        Word("104", 0.101, 0.201, 0.151, 0.231, confidence=94.0),
+        Word("106", 0.30, 0.40, 0.35, 0.43, confidence=80.0),
+    ]
+    result = dedupe_words(words)
+    assert [word.text for word in result] == ["104", "106"]
+    assert result[0].confidence == 94.0
+
+
+def test_route_page_uses_separate_column_ocr_for_scanned_specification():
+    full_words = [
+        Word(f"word{i}", 0.10, 0.10 + (i % 60) * 0.01, 0.20, 0.11 + (i % 60) * 0.01)
+        for i in range(121)
+    ]
+    calls: list[str] = []
+
+    def full_pass(*_args, **_kwargs):
+        return full_words
+
+    def column_pass(_pdf, _index, _config, base_words):
+        calls.append("columns")
+        assert base_words == full_words
+        return [Word("enhanced", 0.1, 0.2, 0.2, 0.22)]
+
+    result = route_page(
+        b"pdf",
+        Page(0, []),
+        DEFAULT_CONFIG,
+        True,
+        ocr_fn=full_pass,
+        specification_ocr_fn=column_pass,
+    )
+    assert calls == ["columns"]
+    assert [word.text for word in result.words] == ["enhanced"]
+
+
+def test_route_page_uses_rotated_drawing_pass_for_scanned_sheet():
+    initial = [
+        Word("Sheet", 0.1, 0.04, 0.2, 0.06),
+        Word("1", 0.21, 0.04, 0.23, 0.06),
+        Word("of", 0.24, 0.04, 0.27, 0.06),
+        Word("2", 0.28, 0.04, 0.30, 0.06),
+    ]
+    calls: list[str] = []
+
+    def full_pass(*_args, **_kwargs):
+        return initial
+
+    def drawing_pass(*_args, **_kwargs):
+        calls.append("drawing")
+        return [Word("104", 0.3, 0.4, 0.35, 0.43, confidence=92.0)]
+
+    result = route_page(
+        b"pdf",
+        Page(0, []),
+        DEFAULT_CONFIG,
+        True,
+        ocr_fn=full_pass,
+        drawing_ocr_fn=drawing_pass,
+    )
+    assert calls == ["drawing"]
+    assert result.is_drawing is True
+    assert [callout.value for callout in result.callouts] == ["104"]
 
 
 def test_ocr_line_reconstruction_preserves_large_gaps_as_tabs():
