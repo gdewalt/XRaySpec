@@ -5,6 +5,8 @@ from __future__ import annotations
 from app.enrichment import (
     align_entries,
     enrich_from_page_html,
+    enrich_from_ppubs_html,
+    extract_ppubs_text,
     extract_provider_text,
     verify_identity,
 )
@@ -95,3 +97,47 @@ def test_enrich_blocks_on_identity_mismatch():
     aligned, identity = enrich_from_page_html(entries, HTML, "US9999999B2", DEFAULT_CONFIG)
     assert identity.status == "mismatch"
     assert aligned[0].display_text == entries[0].display_text  # unchanged, no alignment
+
+
+PPUBS_HTML = """
+<html><head><title>US-7840427-B2 - Patent Public Search | USPTO</title></head><body>
+<h2>Shared transport system and service network</h2>
+<section><h3>Background/Summary</h3>
+<p>(1) FIELD OF THE INVENTION<br>(2) The houslng 104 receives the shaft 108.</p></section>
+<section><h3>Description</h3>
+<p>(3) The shaft rotates freely.<br>(4) A final paragraph follows.</p></section>
+<section><h3>Claims</h3>
+<p>1. A transport method.<br>2. The method of claim 1.</p></section>
+</body></html>
+"""
+
+
+def test_extract_ppubs_text_removes_markers_and_preserves_paragraphs():
+    provider = extract_ppubs_text(PPUBS_HTML)
+    assert provider.canonical == "US7840427B2"
+    assert provider.title == "Shared transport system and service network"
+    assert "(1)" not in provider.clean_text and "(4)" not in provider.clean_text
+    assert provider.description.splitlines() == [
+        "FIELD OF THE INVENTION",
+        "The houslng 104 receives the shaft 108.",
+        "The shaft rotates freely.",
+        "A final paragraph follows.",
+    ]
+    assert provider.claims.splitlines() == [
+        "1. A transport method.",
+        "2. The method of claim 1.",
+    ]
+
+
+def test_ppubs_alignment_uses_clean_text_and_paragraph_boundaries():
+    entries = [
+        _entry("The houslng 104 receives the shaft 108.", 1),
+        _entry("The shaft rotates freely.", 2),
+    ]
+    aligned, identity = enrich_from_ppubs_html(
+        entries, PPUBS_HTML, "US7840427B2", DEFAULT_CONFIG
+    )
+    assert identity.status == "verified"
+    assert aligned[0].provenance.provider == "uspto_ppubs"
+    assert aligned[0].paragraph_start is True
+    assert aligned[1].paragraph_start is True

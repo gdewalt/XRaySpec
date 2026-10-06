@@ -23,6 +23,7 @@ from ..fetch.adapter import RestrictedFetcher
 from ..fetch.errors import FetchError
 from ..fetch.google_patents import extract_pdf_url, patent_page_url
 from ..fetch.guard import check_url
+from ..fetch.ppubs import PpubsClient
 from ..patents import PatentParseError, parse_patent_identifier
 from ..services.publication import publish_artifact
 from .engine import JobContext
@@ -49,9 +50,8 @@ async def fetch_source(
 ) -> None:
     """Download the source PDF for a fetch job through the restricted adapter.
 
-    Resolves the Google Patents page, extracts the citation PDF URL, downloads it
-    (SSRF-guarded, byte/time capped), verifies it is a PDF, stores it privately,
-    and records the observed hash/size on the source. The web tier never does this.
+    Resolves and downloads the official PPUBS PDF first, with Google Patents as a
+    compatibility fallback. Every request is SSRF-guarded and size/time capped.
     """
     settings = get_settings()
     fetcher = fetcher or RestrictedFetcher(
@@ -70,12 +70,23 @@ async def fetch_source(
     if not canonical or source_id is None:
         raise FetchError("no_source", "fetch job has no patent identity")
 
-    page = await fetcher.fetch(patent_page_url(canonical), max_bytes=settings.fetch_max_html_bytes)
-    page_html = page.content.decode("utf-8", "replace")
-    provider = extract_provider_text(page_html)
-    pdf_url = extract_pdf_url(page_html)
-    check_url(pdf_url, allowed)  # the PDF URL must also be on the allowlist
-    pdf = await fetcher.fetch(pdf_url, max_bytes=settings.fetch_max_pdf_bytes, expect_pdf=True)
+    provider_title: str | None = None
+    try:
+        identity = parse_patent_identifier(canonical)
+        ppubs = PpubsClient(fetcher, max_json_bytes=settings.fetch_max_html_bytes)
+        document = await ppubs.resolve(identity)
+        pdf = await ppubs.fetch_pdf(document, max_bytes=settings.fetch_max_pdf_bytes)
+        provider_title = document.title
+    except (FetchError, PatentParseError):
+        page = await fetcher.fetch(
+            patent_page_url(canonical), max_bytes=settings.fetch_max_html_bytes
+        )
+        page_html = page.content.decode("utf-8", "replace")
+        provider = extract_provider_text(page_html)
+        pdf_url = extract_pdf_url(page_html)
+        check_url(pdf_url, allowed)  # the PDF URL must also be on the allowlist
+        pdf = await fetcher.fetch(pdf_url, max_bytes=settings.fetch_max_pdf_bytes, expect_pdf=True)
+        provider_title = provider.title
 
     key = f"sources/{owner_id}/{source_id}.pdf"
     await ctx.store.write(key, pdf.content, content_type="application/pdf")
@@ -87,13 +98,13 @@ async def fetch_source(
         src.sha256 = hashlib.sha256(pdf.content).hexdigest()
         src.byte_size = len(pdf.content)
         src.state = "uploaded"
-        if doc is not None and provider.title:
+        if doc is not None and provider_title:
             try:
                 default_title = parse_patent_identifier(canonical).display
             except PatentParseError:
                 default_title = canonical
             if doc.title == default_title:
-                doc.title = provider.title.strip()
+                doc.title = provider_title.strip()
         await session.commit()
 
 
@@ -169,7 +180,7 @@ async def _enrich_artifact(
     if not settings.enrichment_enabled or not canonical or not artifact.entries:
         return artifact
 
-    from ..enrichment import enrich_from_page_html
+    from ..enrichment import enrich_from_page_html, enrich_from_ppubs_html
 
     await ctx.heartbeat(
         stage="aligning_text", stage_label="Aligning clean text", indeterminate=True
@@ -177,18 +188,39 @@ async def _enrich_artifact(
     fetcher = fetcher or RestrictedFetcher(
         settings.fetch_allowed_hosts, max_redirects=settings.fetch_max_redirects
     )
+    provider_name = "uspto_ppubs"
     try:
-        page = await fetcher.fetch(
-            patent_page_url(canonical), max_bytes=settings.fetch_max_html_bytes
+        patent_identity = parse_patent_identifier(canonical)
+        ppubs = PpubsClient(fetcher, max_json_bytes=settings.fetch_max_html_bytes)
+        document = await ppubs.resolve(patent_identity)
+        page = await ppubs.fetch_text(document, max_bytes=settings.fetch_max_html_bytes)
+        html = page.content.decode("utf-8", "replace")
+        # Alignment over the whole specification is CPU-bound — keep it off the loop.
+        aligned, identity = await asyncio.to_thread(
+            enrich_from_ppubs_html,
+            artifact.entries,
+            html,
+            canonical,
+            config,
+            source_title=title,
         )
-    except FetchError:
-        return artifact  # graceful: keep the unaligned entries
-    html = page.content.decode("utf-8", "replace")
-
-    # difflib alignment over the whole spec is CPU-bound — keep it off the loop.
-    aligned, identity = await asyncio.to_thread(
-        enrich_from_page_html, artifact.entries, html, canonical, config, source_title=title
-    )
+    except (FetchError, PatentParseError):
+        provider_name = "google_patents"
+        try:
+            page = await fetcher.fetch(
+                patent_page_url(canonical), max_bytes=settings.fetch_max_html_bytes
+            )
+        except FetchError:
+            return artifact  # graceful: keep the unaligned entries
+        html = page.content.decode("utf-8", "replace")
+        aligned, identity = await asyncio.to_thread(
+            enrich_from_page_html,
+            artifact.entries,
+            html,
+            canonical,
+            config,
+            source_title=title,
+        )
     aligned_count = sum(
         1 for e in aligned if e.provenance.alignment_method in ("exact", "fuzzy")
     )
@@ -196,6 +228,7 @@ async def _enrich_artifact(
         **artifact.quality,
         "identity_status": identity.status,
         "aligned_lines": aligned_count,
+        "text_provider": provider_name,
     }
     return replace(artifact, entries=aligned, quality=quality)
 

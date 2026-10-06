@@ -7,7 +7,7 @@ worker) has outbound access.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urljoin
 
 import httpx
@@ -25,6 +25,7 @@ class FetchResult:
     content: bytes
     content_type: str | None
     final_url: str
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 class RestrictedFetcher:
@@ -46,7 +47,22 @@ class RestrictedFetcher:
         self._timeout = httpx.Timeout(total_timeout, connect=connect_timeout, read=read_timeout)
 
     async def fetch(self, url: str, *, max_bytes: int, expect_pdf: bool = False) -> FetchResult:
+        return await self.request(url, max_bytes=max_bytes, expect_pdf=expect_pdf)
+
+    async def request(
+        self,
+        url: str,
+        *,
+        max_bytes: int,
+        expect_pdf: bool = False,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+        content: bytes | None = None,
+    ) -> FetchResult:
+        """Make a bounded request while applying the SSRF guard to every hop."""
         current = url
+        current_method = method.upper()
+        current_content = content
         for _ in range(self._max_redirects + 1):
             validate_hop(current, self._allowed, self._resolve)  # SSRF guard, every hop
             redirect_to: str | None = None
@@ -54,12 +70,20 @@ class RestrictedFetcher:
                 follow_redirects=False, transport=self._transport, timeout=self._timeout
             ) as client:
                 try:
-                    async with client.stream("GET", current) as resp:
+                    async with client.stream(
+                        current_method,
+                        current,
+                        headers=headers,
+                        content=current_content,
+                    ) as resp:
                         if resp.status_code in _REDIRECT_CODES:
                             location = resp.headers.get("location")
                             if not location:
                                 raise FetchError("malformed", "redirect without a Location header")
                             redirect_to = urljoin(current, location)
+                            if resp.status_code in {301, 302, 303} and current_method != "GET":
+                                current_method = "GET"
+                                current_content = None
                         elif resp.status_code >= 400:
                             code = _STATUS_CODES.get(resp.status_code, "upstream_unavailable")
                             raise FetchError(code, f"upstream returned {resp.status_code}")
@@ -72,7 +96,12 @@ class RestrictedFetcher:
                             data = bytes(chunks)
                             if expect_pdf and _PDF_MAGIC not in data[:1024]:
                                 raise FetchError("invalid_pdf", "response is not a PDF")
-                            return FetchResult(data, resp.headers.get("content-type"), current)
+                            return FetchResult(
+                                data,
+                                resp.headers.get("content-type"),
+                                current,
+                                dict(resp.headers),
+                            )
                 except httpx.TimeoutException as exc:
                     raise FetchError("timeout", "upstream timed out") from exc
                 except httpx.HTTPError as exc:

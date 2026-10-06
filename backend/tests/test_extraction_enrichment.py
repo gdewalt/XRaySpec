@@ -43,6 +43,9 @@ class FakeFetcher:
             raise FetchError("boom", "fetch failed")
         return FetchResult(self.page, "text/html", url)
 
+    async def request(self, *_args, **_kwargs) -> FetchResult:
+        raise FetchError("ppubs_unavailable", "use provider fallback")
+
 
 def _artifact(*texts: str) -> Artifact:
     entries = [

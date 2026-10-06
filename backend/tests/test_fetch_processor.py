@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from app.db.models import ExtractionJob, SourceDocument, User, UserDocument
 from app.fetch.adapter import FetchResult
+from app.fetch.errors import FetchError
 from app.worker.engine import JobContext
 from app.worker.processors import fetch_source
 
@@ -30,6 +31,9 @@ class FakeFetcher:
         if expect_pdf:
             return FetchResult(self.pdf, "application/pdf", url)
         return FetchResult(self.html, "text/html", url)
+
+    async def request(self, *_args, **_kwargs) -> FetchResult:
+        raise FetchError("ppubs_unavailable", "use provider fallback")
 
 
 async def _seed_fetch_job(client, canonical="US12262260B2") -> tuple[str, str]:

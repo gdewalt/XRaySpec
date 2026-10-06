@@ -892,13 +892,14 @@ An unresolved page inside the probable specification interval yields `partial`, 
 
 ## 13. External enrichment and clean-text alignment
 
-Google Patents enrichment is optional and independently retryable. Per-line clean-text alignment is **retained in full**: comfortable in-place reading of scanned patents is a core need, so the alignment that maps clean provider text onto PDF line geometry is a v1 capability. Enrichment and fetch run in the restricted-egress worker.
+USPTO Patent Public Search (PPUBS) is the primary PDF and clean-text provider, with Google Patents retained as a compatibility fallback. Enrichment is optional and independently retryable. Per-line clean-text alignment is **retained in full**: comfortable in-place reading of scanned patents is a core need, so the alignment that maps authoritative provider text onto PDF line geometry is a v1 capability. PPUBS numbered paragraph prefixes such as `(1)` establish paragraph boundaries and are removed from display text after parsing. OCR/PDF geometry remains authoritative for pages, boxes, printed columns, and line citations; verified PPUBS text is authoritative only for wording and paragraph spacing. Enrichment and fetch run in the restricted-egress worker.
 
 ### 13.1 Privacy and policy
 
 - Instance policy (operator configuration) controls whether external enrichment is enabled, disabled, or user-selectable.
 - The ingestion UI discloses that the canonical patent identifier is sent to the provider. Uploaded PDF bytes and selections are not sent for alignment.
 - A user may process without provider access and request enrichment later.
+- PPUBS public-session access is best-effort because USPTO has announced mandatory account sign-in beginning November 7, 2026; failure falls back without blocking extraction.
 
 ### 13.2 Identity verification
 

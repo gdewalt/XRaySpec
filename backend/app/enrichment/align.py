@@ -23,6 +23,7 @@ from ..extraction.artifact import Entry
 from ..extraction.config import ExtractionConfig
 from .google_text import extract_provider_text
 from .identity import IdentityResult, verify_identity
+from .ppubs_text import extract_ppubs_text
 
 _NONALNUM = re.compile(r"[^a-z0-9 ]")
 _WS = re.compile(r"\s+")
@@ -32,16 +33,19 @@ def _normalize(text: str) -> str:
     return _WS.sub(" ", _NONALNUM.sub(" ", text.lower())).strip()
 
 
-def _clean_tokens(clean_text: str) -> tuple[list[str], list[str]]:
-    """Return parallel (original, normalized) token lists, dropping punctuation-only tokens."""
+def _clean_tokens(clean_text: str) -> tuple[list[str], list[str], list[int]]:
+    """Return original/normalized tokens plus their provider paragraph indexes."""
     original: list[str] = []
     normalized: list[str] = []
-    for tok in clean_text.split():
-        norm = _normalize(tok)
-        if norm:
-            original.append(tok)
-            normalized.append(norm)
-    return original, normalized
+    paragraphs: list[int] = []
+    for paragraph_index, paragraph in enumerate(clean_text.splitlines()):
+        for tok in paragraph.split():
+            norm = _normalize(tok)
+            if norm:
+                original.append(tok)
+                normalized.append(norm)
+                paragraphs.append(paragraph_index)
+    return original, normalized, paragraphs
 
 
 def _best_window(
@@ -71,13 +75,15 @@ def align_entries(
     *,
     identity_verified: bool,
     provider: str = "google_patents",
+    use_provider_paragraphs: bool = False,
 ) -> list[Entry]:
     """Return new entries with ``display_text`` aligned to ``clean_text``."""
-    original, normalized = _clean_tokens(clean_text)
+    original, normalized, paragraphs = _clean_tokens(clean_text)
     if not normalized:
         return entries
 
     cursor = 0
+    previous_paragraph: int | None = None
     out: list[Entry] = []
     for entry in entries:
         src_norm = _normalize(entry.source_text).split()
@@ -92,9 +98,15 @@ def align_entries(
             display = " ".join(original[start:end])
             method = "exact" if ratio >= config.alignment_exact_ratio else "fuzzy"
             cursor = end
+            paragraph = paragraphs[start]
+            paragraph_start = entry.paragraph_start or (
+                use_provider_paragraphs and paragraph != previous_paragraph
+            )
+            previous_paragraph = paragraph
         else:
             display = entry.source_text  # reject substitution; keep the source line
             method = "unmatched"
+            paragraph_start = entry.paragraph_start
 
         provenance = replace(
             entry.provenance,
@@ -103,7 +115,14 @@ def align_entries(
             provider=provider,
             identity_verified=identity_verified,
         )
-        out.append(replace(entry, display_text=display, provenance=provenance))
+        out.append(
+            replace(
+                entry,
+                display_text=display,
+                provenance=provenance,
+                paragraph_start=paragraph_start,
+            )
+        )
     return out
 
 
@@ -129,5 +148,38 @@ def enrich_from_page_html(
         return entries, identity
     aligned = align_entries(
         entries, provider.clean_text, config, identity_verified=identity.status == "verified"
+    )
+    return aligned, identity
+
+
+def enrich_from_ppubs_html(
+    entries: list[Entry],
+    page_html: str,
+    source_canonical: str | None,
+    config: ExtractionConfig,
+    *,
+    source_title: str | None = None,
+    allow_probable: bool = False,
+) -> tuple[list[Entry], IdentityResult]:
+    """Verify and align against USPTO text, including its paragraph boundaries."""
+    provider = extract_ppubs_text(page_html)
+    identity = verify_identity(
+        source_canonical,
+        provider.canonical,
+        source_title=source_title,
+        provider_title=provider.title,
+    )
+    allowed = identity.status == "verified" or (
+        identity.status == "probable" and allow_probable
+    )
+    if not allowed or not provider.clean_text:
+        return entries, identity
+    aligned = align_entries(
+        entries,
+        provider.clean_text,
+        config,
+        identity_verified=identity.status == "verified",
+        provider="uspto_ppubs",
+        use_provider_paragraphs=True,
     )
     return aligned, identity

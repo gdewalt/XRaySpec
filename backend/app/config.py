@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     # Restricted outbound fetch (§11.2, §17.4)
     fetch_allowed_hosts: list[str] = Field(
         default_factory=lambda: [
+            "ppubs.uspto.gov",
+            "image-ppubs.uspto.gov",
             "patents.google.com",
             "patentimages.storage.googleapis.com",
             "storage.googleapis.com",
