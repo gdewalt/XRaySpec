@@ -115,7 +115,12 @@ def _projection_score(image) -> float:
         sum(pixels[y * width + margin_x : y * width + width - margin_x])
         for y in range(margin_y, height - margin_y)
     ]
-    return float(sum((current - previous) ** 2 for previous, current in zip(rows, rows[1:])))
+    return float(
+        sum(
+            (current - previous) ** 2
+            for previous, current in zip(rows, rows[1:], strict=False)
+        )
+    )
 
 
 def estimate_skew_angle(image, config: ExtractionConfig) -> float:
