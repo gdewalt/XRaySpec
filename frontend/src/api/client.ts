@@ -38,9 +38,22 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (res.status === 204) return undefined as T;
 
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+  }
   if (!res.ok) {
-    const detail = data?.detail ?? data?.error?.message ?? res.statusText;
+    const body = typeof data === "object" && data !== null ? data as Record<string, unknown> : null;
+    const error = body?.error;
+    const nestedMessage =
+      typeof error === "object" && error !== null
+        ? (error as Record<string, unknown>).message
+        : undefined;
+    const detail = body?.detail ?? nestedMessage ?? (typeof data === "string" ? data : res.statusText);
     throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
   }
   return data as T;

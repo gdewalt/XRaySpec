@@ -48,27 +48,40 @@ async def purge_document(session: AsyncSession, store: ObjectStore, doc: UserDoc
     await session.execute(delete(ExtractionJob).where(ExtractionJob.document_id == doc.id))
 
     source = await session.get(SourceDocument, doc.source_id)
+    shared = False
+    artifacts: list[ExtractionArtifact] = []
     if source is not None:
-        artifacts = await session.scalars(
-            select(ExtractionArtifact).where(ExtractionArtifact.source_id == source.id)
-        )
-        for artifact in artifacts:
-            await _delete_blob(store, artifact.manifest_object_key)
-            await session.delete(artifact)
-
-        # Only delete the source (and its PDF blob + resume checkpoints) if no other
-        # document shares it.
-        shared = await session.scalar(
-            select(func.count())
-            .select_from(UserDocument)
-            .where(UserDocument.source_id == source.id, UserDocument.id != doc.id)
+        # Artifacts belong to the source, not to one library entry. Preserve them
+        # whenever another document still uses the same source.
+        shared = bool(
+            await session.scalar(
+                select(func.count())
+                .select_from(UserDocument)
+                .where(UserDocument.source_id == source.id, UserDocument.id != doc.id)
+            )
         )
         if not shared:
-            await session.execute(
-                delete(JobCheckpoint).where(JobCheckpoint.source_id == source.id)
+            artifacts = list(
+                await session.scalars(
+                    select(ExtractionArtifact).where(ExtractionArtifact.source_id == source.id)
+                )
             )
+            # Remove live objects while the tombstoned document still makes this
+            # operation retryable if storage fails partway through.
+            for artifact in artifacts:
+                await _delete_blob(store, artifact.manifest_object_key)
             await _delete_blob(store, source.pdf_object_key)
-            await session.delete(source)
 
+    # PostgreSQL enforces both user_documents.active_artifact_id -> artifacts and
+    # user_documents.source_id -> sources. Flush the document removal before its
+    # artifact/source rows; SQLite's default test setup does not expose this order.
     await session.delete(doc)
+    await session.flush()
+
+    if source is not None and not shared:
+        await session.execute(delete(JobCheckpoint).where(JobCheckpoint.source_id == source.id))
+        await session.execute(
+            delete(ExtractionArtifact).where(ExtractionArtifact.source_id == source.id)
+        )
+        await session.delete(source)
     await session.commit()
