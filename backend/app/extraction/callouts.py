@@ -20,8 +20,10 @@ corpus (§12.7, §19), never fitted to a single example.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable
+from dataclasses import replace
 
 from .artifact import (
     CalloutOccurrence,
@@ -39,6 +41,11 @@ _CALLOUT = re.compile(r"^\d{2,4}[A-Za-z]?$")
 _NUMERICISH = re.compile(r"^\d{1,4}[A-Za-z]?$")
 _SHEET_HEADER = re.compile(r"\bsheet\s+\d+\s+(?:of|/)\s+\d+\b", re.IGNORECASE)
 _SPEC_TOKEN_TRIM = ".,;:()[]{}"
+_DRAWING_FIG_REF = re.compile(
+    r"\b(?:FIGS?|FIGURES?)\s*\.?\s*"
+    r"([0-9ILOilo]+(?:[A-Za-z]|\s+[A-Za-z](?![A-Za-z]))?)",
+    re.IGNORECASE,
+)
 
 
 def _is_year(token: str) -> bool:
@@ -137,6 +144,17 @@ def detect_page_figure(words: list[Word]) -> str | None:
     return next(iter(ids)) if len(ids) == 1 else None
 
 
+def _drawing_figure_candidates(raw: str) -> set[str]:
+    """Normalize drawing OCR, including common I/l/1 and O/0 confusions."""
+    compact = re.sub(r"\s+", "", raw).upper()
+    candidates = {compact.translate(str.maketrans({"I": "1", "L": "1", "O": "0"}))}
+    if len(compact) > 1 and compact[-1].isalpha():
+        prefix = compact[:-1].translate(str.maketrans({"I": "1", "L": "1", "O": "0"}))
+        if prefix.isdigit():
+            candidates.add(f"{prefix}{compact[-1]}")
+    return {candidate for candidate in candidates if re.fullmatch(r"\d+[A-Z]?", candidate)}
+
+
 def detect_figure_occurrences(words: list[Word], page_index: int) -> list[FigureOccurrence]:
     """Locate every FIG label on a drawing sheet, including multi-figure sheets."""
     words = _without_sheet_headers(words)
@@ -181,7 +199,101 @@ def detect_figure_occurrences(words: list[Word], page_index: int) -> list[Figure
                         confidence=(sum(confidences) / len(confidences)) if confidences else None,
                     )
                 )
+        for match in _DRAWING_FIG_REF.finditer(text):
+            matched_words = [
+                word for start, end, word in spans
+                if start < match.end() and end > match.start()
+            ]
+            if not matched_words:
+                continue
+            box = _clamp_box(
+                min(w.x0 for w in matched_words),
+                min(w.y0 for w in matched_words),
+                max(w.x1 for w in matched_words),
+                max(w.y1 for w in matched_words),
+            )
+            confidences = [w.confidence for w in matched_words if w.confidence is not None]
+            confidence = (sum(confidences) / len(confidences)) if confidences else None
+            for figure_id in _drawing_figure_candidates(match.group(1)):
+                key = (figure_id, *[round(value * 10000) for value in box])
+                if key in seen:
+                    continue
+                seen.add(key)
+                occurrences.append(
+                    FigureOccurrence(
+                        figure_id=figure_id,
+                        page_index=page_index,
+                        box=box,
+                        confidence=confidence,
+                        method="sparse_ocr_confusable",
+                    )
+                )
     return occurrences
+
+
+def filter_figure_occurrences(
+    occurrences: Iterable[FigureOccurrence], expected_ids: set[str]
+) -> list[FigureOccurrence]:
+    """Select the strongest drawing label for each specification figure per page."""
+    expected = {re.sub(r"\s+", "", value).upper(): value.upper() for value in expected_ids}
+    strongest: dict[tuple[int, str], FigureOccurrence] = {}
+    for occurrence in occurrences:
+        normalized = re.sub(r"\s+", "", occurrence.figure_id).upper()
+        canonical = expected.get(normalized)
+        if canonical is None:
+            continue
+        candidate = replace(occurrence, figure_id=canonical)
+        key = (candidate.page_index, canonical)
+        current = strongest.get(key)
+        score = (
+            candidate.method != "sparse_ocr_confusable",
+            candidate.confidence if candidate.confidence is not None else -1.0,
+        )
+        current_score = (
+            current.method != "sparse_ocr_confusable",
+            current.confidence if current.confidence is not None else -1.0,
+        ) if current else None
+        if current_score is None or score > current_score:
+            strongest[key] = candidate
+    return sorted(strongest.values(), key=lambda item: (item.page_index, item.figure_id))
+
+
+def assign_callouts_to_figures(
+    callouts: Iterable[CalloutOccurrence], figures: Iterable[FigureOccurrence]
+) -> list[CalloutOccurrence]:
+    """Assign each drawing numeral to the nearest supported figure on its page."""
+    by_page: dict[int, list[FigureOccurrence]] = {}
+    for figure in figures:
+        by_page.setdefault(figure.page_index, []).append(figure)
+    assigned: list[CalloutOccurrence] = []
+    for callout in callouts:
+        candidates = by_page.get(callout.page_index, [])
+        if not candidates:
+            assigned.append(callout)
+            continue
+        existing = next(
+            (
+                figure
+                for figure in candidates
+                if callout.figure_id
+                and figure.figure_id.upper() == callout.figure_id.upper()
+            ),
+            None,
+        )
+        if existing is not None:
+            assigned.append(replace(callout, figure_id=existing.figure_id))
+            continue
+        cx = (callout.box[0] + callout.box[2]) / 2
+        cy = (callout.box[1] + callout.box[3]) / 2
+        closest = min(
+            candidates,
+            key=lambda figure: math.hypot(
+                cx - (figure.box[0] + figure.box[2]) / 2,
+                cy - (figure.box[1] + figure.box[3]) / 2,
+            ),
+        )
+        assigned.append(replace(callout, figure_id=closest.figure_id))
+    return assigned
 
 
 def detect_callouts(

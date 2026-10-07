@@ -20,11 +20,13 @@ from dataclasses import dataclass
 from .applications import count_paragraph_markers, extract_application_page
 from .artifact import Artifact, CalloutOccurrence, FigureOccurrence
 from .callouts import (
+    assign_callouts_to_figures,
     associate_mentions,
     detect_callouts,
     detect_figure_occurrences,
     detect_page_figure,
     filter_callouts_by_values,
+    filter_figure_occurrences,
     is_drawing_page,
     specification_callout_values,
 )
@@ -182,12 +184,22 @@ def extract_from_pages(
 
     figure_mentions = detect_figure_references(entries)
     numeral_mentions = detect_reference_numerals(entries)
-    drawing_figures = figure_occurrences or []
+    expected_figure_ids = {
+        figure_id.upper()
+        for mention in figure_mentions
+        for figure_id in mention.figure_ids
+    }
+    drawing_figures = filter_figure_occurrences(
+        figure_occurrences or [], expected_figure_ids
+    )
     supported_callouts = specification_callout_values(
         pages,
         fallback_values=(mention.value for mention in numeral_mentions),
     )
-    callout_occurrences = filter_callouts_by_values(callouts or [], supported_callouts)
+    callout_occurrences = assign_callouts_to_figures(
+        filter_callouts_by_values(callouts or [], supported_callouts),
+        drawing_figures,
+    )
     mention_associations = associate_mentions(
         numeral_mentions, callout_occurrences, figure_mentions, entries
     )

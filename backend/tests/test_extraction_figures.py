@@ -40,6 +40,12 @@ def test_figure_list_and_alnum():
     assert _fig_ids("FIGS. 3A-3C show") == [["3A", "3B", "3C"]]
 
 
+def test_spaced_subfigure_references_are_normalized():
+    assert _fig_ids("FIG. 14 A illustrates the first state") == [["14A"]]
+    assert _fig_ids("FIGS. 14A and 14 B show the states") == [["14A", "14B"]]
+    assert _fig_ids("FIG . 14 A illustrates the first state") == [["14A"]]
+
+
 def test_figure_span_points_at_reference():
     m = detect_figure_references([_entry("text FIG. 5 here")])[0]
     assert m.raw_text.upper().startswith("FIG")

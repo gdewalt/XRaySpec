@@ -17,13 +17,14 @@ from .artifact import Entry, FigureMention, NumeralMention
 
 # --- figure references -------------------------------------------------------
 
-_FIG_ID = r"\d+[A-Za-z]?"
+_FIG_ID = r"\d+(?:[A-Za-z]|\s+[A-Za-z](?![A-Za-z]))?"
 _FIG_REF = re.compile(
-    rf"\b(?:FIGS?|FIGURES?)\.?\s*({_FIG_ID}(?:\s*(?:[-–,]|and|to)\s*{_FIG_ID})*)",
+    rf"\b(?:FIGS?|FIGURES?)\s*\.?\s*"
+    rf"({_FIG_ID}(?:\s*(?:[-–,]|and|to)\s*{_FIG_ID})*)",
     re.IGNORECASE,
 )
-_RANGE = re.compile(r"(\d+)([A-Za-z]?)\s*[-–]\s*(\d+)([A-Za-z]?)")
-_SINGLE = re.compile(r"(\d+)([A-Za-z]?)")
+_RANGE = re.compile(r"(\d+)\s*([A-Za-z]?)\s*[-–]\s*(\d+)\s*([A-Za-z]?)")
+_SINGLE = re.compile(r"(\d+)\s*([A-Za-z]?)")
 
 
 def _expand_figure_expr(expr: str) -> list[str]:
@@ -32,7 +33,7 @@ def _expand_figure_expr(expr: str) -> list[str]:
         part = part.strip()
         if not part:
             continue
-        rng = _RANGE.match(part)
+        rng = _RANGE.fullmatch(part)
         if rng:
             n1, l1, n2, l2 = rng.groups()
             if n1 == n2 and l1 and l2:  # 3A-3C
@@ -45,7 +46,7 @@ def _expand_figure_expr(expr: str) -> list[str]:
                 ids.append(f"{n1}{l1.upper()}")
                 ids.append(f"{n2}{l2.upper()}")
             continue
-        one = _SINGLE.match(part)
+        one = _SINGLE.fullmatch(part)
         if one:
             ids.append(f"{one.group(1)}{one.group(2).upper()}")
     return ids

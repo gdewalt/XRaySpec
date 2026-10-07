@@ -6,15 +6,18 @@ from app.extraction.artifact import (
     CalloutOccurrence,
     Entry,
     FigureMention,
+    FigureOccurrence,
     NumeralMention,
     Provenance,
 )
 from app.extraction.callouts import (
+    assign_callouts_to_figures,
     associate_mentions,
     detect_callouts,
     detect_figure_occurrences,
     detect_page_figure,
     filter_callouts_by_values,
+    filter_figure_occurrences,
     is_drawing_page,
     specification_callout_values,
 )
@@ -139,6 +142,43 @@ def test_figure_and_fig_labels_are_detected_on_drawing_sheets():
         ("7", 2),
         ("8A", 2),
     ]
+
+
+def test_spaced_and_ocr_confused_subfigure_labels_are_detected():
+    words = [
+        Word("FIG.", 0.10, 0.30, 0.16, 0.33, confidence=91.0),
+        Word("I4", 0.17, 0.30, 0.21, 0.33, confidence=88.0),
+        Word("A", 0.22, 0.30, 0.24, 0.33, confidence=86.0),
+        Word("Fig.", 0.55, 0.60, 0.61, 0.63, confidence=90.0),
+        Word("14b", 0.62, 0.60, 0.67, 0.63, confidence=93.0),
+    ]
+    figures = detect_figure_occurrences(words, page_index=2)
+    assert {figure.figure_id for figure in figures} >= {"14A", "14B"}
+
+
+def test_drawing_figures_are_limited_to_specification_ids():
+    figures = [
+        FigureOccurrence("14A", 2, (0.1, 0.2, 0.2, 0.3), confidence=80.0),
+        FigureOccurrence("14A", 2, (0.2, 0.2, 0.3, 0.3), confidence=95.0),
+        FigureOccurrence("15", 3, (0.1, 0.2, 0.2, 0.3), confidence=99.0),
+    ]
+    filtered = filter_figure_occurrences(figures, {"14A"})
+    assert len(filtered) == 1
+    assert filtered[0].figure_id == "14A"
+    assert filtered[0].confidence == 95.0
+
+
+def test_callouts_are_assigned_to_nearest_supported_subfigure():
+    figures = [
+        FigureOccurrence("14A", 2, (0.10, 0.10, 0.20, 0.15)),
+        FigureOccurrence("14B", 2, (0.70, 0.70, 0.80, 0.75)),
+    ]
+    callouts = [
+        CalloutOccurrence("a", "104", 2, (0.15, 0.20, 0.18, 0.23)),
+        CalloutOccurrence("b", "108", 2, (0.74, 0.60, 0.77, 0.63)),
+    ]
+    assigned = assign_callouts_to_figures(callouts, figures)
+    assert [callout.figure_id for callout in assigned] == ["14A", "14B"]
 
 
 def _numeral(value: str, entry_id: str) -> NumeralMention:
