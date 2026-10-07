@@ -39,7 +39,7 @@ def resume_cache_key(
 def _word_to_list(w: Word) -> list:
     return [
         w.text, w.x0, w.y0, w.x1, w.y1, w.confidence,
-        w.block_num, w.paragraph_num, w.line_num,
+        w.block_num, w.paragraph_num, w.line_num, w.is_bold,
     ]
 
 
@@ -49,6 +49,7 @@ def _word_from_list(v: list) -> Word:
         block_num=v[6] if len(v) > 6 else None,
         paragraph_num=v[7] if len(v) > 7 else None,
         line_num=v[8] if len(v) > 8 else None,
+        is_bold=v[9] if len(v) > 9 else None,
     )
 
 

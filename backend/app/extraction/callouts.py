@@ -21,6 +21,7 @@ corpus (§12.7, §19), never fitted to a single example.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 
 from .artifact import (
     CalloutOccurrence,
@@ -31,12 +32,13 @@ from .artifact import (
     NumeralMention,
 )
 from .figures import _FIG_REF, _expand_figure_expr
-from .model import Word
+from .model import Page, Word
 from .native import _clamp_box, group_lines
 
 _CALLOUT = re.compile(r"^\d{2,4}[A-Za-z]?$")
 _NUMERICISH = re.compile(r"^\d{1,4}[A-Za-z]?$")
 _SHEET_HEADER = re.compile(r"\bsheet\s+\d+\s+(?:of|/)\s+\d+\b", re.IGNORECASE)
+_SPEC_TOKEN_TRIM = ".,;:()[]{}"
 
 
 def _is_year(token: str) -> bool:
@@ -56,9 +58,58 @@ def _sheet_header_word_ids(words: list[Word]) -> set[int]:
 
 
 def _without_sheet_headers(words: list[Word]) -> list[Word]:
-    """Drop sheet headers after using them to identify drawing pages."""
+    """Drop the complete drawing-header band, including patent/date text."""
     excluded = _sheet_header_word_ids(words)
-    return [word for word in words if id(word) not in excluded]
+    if not excluded:
+        return words
+    header_bottom = max(word.y1 for word in words if id(word) in excluded)
+    cutoff = max(0.10, header_bottom + 0.02)
+    return [word for word in words if id(word) not in excluded and word.y0 >= cutoff]
+
+
+def specification_callout_values(
+    pages: Iterable[Page], *, fallback_values: Iterable[str] = ()
+) -> set[str]:
+    """Find the bold reference numerals printed in specification columns.
+
+    Native PDFs carry font-weight evidence. Scanned/OCR-only specifications do
+    not, so those fall back to already-vetted textual numeral mentions rather
+    than accepting arbitrary numbers from drawings.
+    """
+    words = [word for page in pages for word in page.words]
+    styled = [word for word in words if word.is_bold is not None]
+    if not styled:
+        return {
+            value.strip().upper()
+            for value in fallback_values
+            if _CALLOUT.fullmatch(value.strip()) and not _is_year(value.strip())
+        }
+
+    values: set[str] = set()
+    for word in styled:
+        # The column bounds omit running headers, page/line-number gutters, and
+        # the centre gutter while retaining both prose columns.
+        if not word.is_bold or not (0.075 <= word.cy <= 0.95):
+            continue
+        if not (0.08 <= word.cx <= 0.92) or 0.47 <= word.cx <= 0.53:
+            continue
+        token = word.text.strip().strip(_SPEC_TOKEN_TRIM).upper()
+        if _CALLOUT.fullmatch(token) and not _is_year(token):
+            values.add(token)
+    return values
+
+
+def filter_callouts_by_values(
+    callouts: Iterable[CalloutOccurrence], allowed_values: set[str]
+) -> list[CalloutOccurrence]:
+    """Keep only clearly numeric drawing labels supported by specification text."""
+    return [
+        callout
+        for callout in callouts
+        if callout.value.strip().upper() in allowed_values
+        and _CALLOUT.fullmatch(callout.value.strip())
+        and not _is_year(callout.value.strip())
+    ]
 
 
 def is_drawing_page(words: list[Word], *, max_words: int = 120, min_numeric: float = 0.30) -> bool:
@@ -139,7 +190,7 @@ def detect_callouts(
     words = _without_sheet_headers(words)
     callouts: list[CalloutOccurrence] = []
     for i, w in enumerate(words):
-        token = w.text.strip()
+        token = w.text.strip().upper()
         if not _CALLOUT.match(token) or _is_year(token):
             continue
         callouts.append(

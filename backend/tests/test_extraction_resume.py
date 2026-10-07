@@ -17,10 +17,22 @@ from app.db.models import ExtractionJob, JobCheckpoint, SourceDocument, User
 from app.extraction.config import DEFAULT_CONFIG
 from app.extraction.core import PageResult
 from app.extraction.model import Page, Word
+from app.worker.checkpoints import page_result_from_payload, page_result_to_payload
 from app.worker.engine import JobContext
 from app.worker.extraction import run_extraction
 
 N_PAGES = 3
+
+
+def test_checkpoint_preserves_bold_font_evidence():
+    result = PageResult(
+        0,
+        "native",
+        is_drawing=False,
+        words=(Word("104", 0.1, 0.2, 0.2, 0.3, is_bold=True),),
+    )
+    restored = page_result_from_payload(page_result_to_payload(result))
+    assert restored.words[0].is_bold is True
 
 
 def _fake_load_pages(_pdf: bytes) -> list[Page]:

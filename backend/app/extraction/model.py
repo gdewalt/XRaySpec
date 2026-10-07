@@ -25,6 +25,9 @@ class Word:
     block_num: int | None = None
     paragraph_num: int | None = None
     line_num: int | None = None
+    # Native PDF font evidence. OCR words leave this unset because Tesseract's
+    # word output does not reliably expose font weight.
+    is_bold: bool | None = None
 
     @property
     def cx(self) -> float:

@@ -307,6 +307,7 @@ def _word_with_box(word: Word, box: tuple[float, float, float, float]) -> Word:
         block_num=word.block_num,
         paragraph_num=word.paragraph_num,
         line_num=word.line_num,
+        is_bold=word.is_bold,
     )
 
 

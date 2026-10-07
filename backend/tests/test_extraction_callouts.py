@@ -14,10 +14,12 @@ from app.extraction.callouts import (
     detect_callouts,
     detect_figure_occurrences,
     detect_page_figure,
+    filter_callouts_by_values,
     is_drawing_page,
+    specification_callout_values,
 )
 from app.extraction.locator import GrantLocator
-from app.extraction.model import Word
+from app.extraction.model import Page, Word
 
 
 def _w(text: str, x: float = 0.4) -> Word:
@@ -66,6 +68,47 @@ def test_sheet_header_numbers_are_not_drawing_callouts():
         Word("104", 0.40, 0.40, 0.45, 0.42),
     ]
     assert [callout.value for callout in detect_callouts(words, 3, "1")] == ["104"]
+
+
+def test_entire_drawing_header_band_is_ignored():
+    words = [
+        Word("US", 0.05, 0.06, 0.09, 0.08),
+        Word("7840427", 0.10, 0.06, 0.18, 0.08),
+        Word("Sheet", 0.40, 0.03, 0.46, 0.05),
+        Word("12", 0.47, 0.03, 0.50, 0.05),
+        Word("of", 0.51, 0.03, 0.54, 0.05),
+        Word("24", 0.55, 0.03, 0.58, 0.05),
+        Word("104", 0.40, 0.40, 0.45, 0.42),
+    ]
+    assert [callout.value for callout in detect_callouts(words, 3, "1")] == ["104"]
+
+
+def test_specification_callouts_are_bold_numbers_in_column_body():
+    page = Page(
+        0,
+        [
+            Word("104", 0.15, 0.30, 0.19, 0.32, is_bold=True),
+            Word("108", 0.20, 0.30, 0.24, 0.32, is_bold=False),
+            Word("20", 0.49, 0.30, 0.51, 0.32, is_bold=True),  # centre line number
+            Word("2024", 0.70, 0.30, 0.75, 0.32, is_bold=True),  # year
+            Word("112", 0.70, 0.04, 0.74, 0.06, is_bold=True),  # running header
+            Word("104A", 0.70, 0.40, 0.76, 0.42, is_bold=True),
+        ],
+    )
+    assert specification_callout_values([page], fallback_values=["999"]) == {"104", "104A"}
+
+
+def test_ocr_specification_uses_vetted_text_mentions_as_fallback():
+    page = Page(0, [Word("housing", 0.10, 0.30, 0.20, 0.32)])
+    assert specification_callout_values([page], fallback_values=["104", "2024"]) == {"104"}
+
+
+def test_drawing_callouts_are_limited_to_specification_values():
+    callouts = [
+        CalloutOccurrence("a", "104", 1, (0.1, 0.2, 0.2, 0.3)),
+        CalloutOccurrence("b", "108", 1, (0.3, 0.2, 0.4, 0.3)),
+    ]
+    assert [item.value for item in filter_callouts_by_values(callouts, {"104"})] == ["104"]
 
 
 def test_sheet_header_identifies_a_drawing_page_without_becoming_a_callout():

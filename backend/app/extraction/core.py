@@ -24,7 +24,9 @@ from .callouts import (
     detect_callouts,
     detect_figure_occurrences,
     detect_page_figure,
+    filter_callouts_by_values,
     is_drawing_page,
+    specification_callout_values,
 )
 from .config import ExtractionConfig
 from .figures import detect_figure_references, detect_reference_numerals
@@ -181,7 +183,11 @@ def extract_from_pages(
     figure_mentions = detect_figure_references(entries)
     numeral_mentions = detect_reference_numerals(entries)
     drawing_figures = figure_occurrences or []
-    callout_occurrences = callouts or []
+    supported_callouts = specification_callout_values(
+        pages,
+        fallback_values=(mention.value for mention in numeral_mentions),
+    )
+    callout_occurrences = filter_callouts_by_values(callouts or [], supported_callouts)
     mention_associations = associate_mentions(
         numeral_mentions, callout_occurrences, figure_mentions, entries
     )
