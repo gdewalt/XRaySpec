@@ -75,7 +75,7 @@ def align_entries(
     *,
     identity_verified: bool,
     provider: str = "google_patents",
-    use_provider_paragraphs: bool = False,
+    provider_paragraph_source: str | None = None,
 ) -> list[Entry]:
     """Return new entries with ``display_text`` aligned to ``clean_text``."""
     original, normalized, paragraphs = _clean_tokens(clean_text)
@@ -100,17 +100,19 @@ def align_entries(
             cursor = end
             paragraph = paragraphs[start]
             provider_paragraph_start = bool(
-                use_provider_paragraphs
+                provider_paragraph_source
                 and (
                     (previous_paragraph is None and paragraph > 0)
                     or (previous_paragraph is not None and paragraph != previous_paragraph)
                 )
             )
-            if use_provider_paragraphs:
-                # PPUBS numbered paragraphs are authoritative for spacing. Do
-                # not preserve layout/OCR guesses inside one numbered paragraph.
+            if provider_paragraph_source:
+                # Provider paragraphs are authoritative for spacing. Do not
+                # preserve layout/OCR guesses inside one provider paragraph.
                 paragraph_start = provider_paragraph_start
-                paragraph_source = "uspto_numbered" if provider_paragraph_start else None
+                paragraph_source = (
+                    provider_paragraph_source if provider_paragraph_start else None
+                )
             else:
                 paragraph_start = entry.paragraph_start
                 paragraph_source = entry.paragraph_source
@@ -118,8 +120,8 @@ def align_entries(
         else:
             display = entry.source_text  # reject substitution; keep the source line
             method = "unmatched"
-            if use_provider_paragraphs:
-                paragraph_start = entry.paragraph_source == "uspto_numbered"
+            if provider_paragraph_source:
+                paragraph_start = entry.paragraph_source == provider_paragraph_source
                 paragraph_source = entry.paragraph_source if paragraph_start else None
             else:
                 paragraph_start = entry.paragraph_start
@@ -165,7 +167,12 @@ def enrich_from_page_html(
     if not allowed or not provider.clean_text:
         return entries, identity
     aligned = align_entries(
-        entries, provider.clean_text, config, identity_verified=identity.status == "verified"
+        entries,
+        provider.clean_text,
+        config,
+        identity_verified=identity.status == "verified",
+        provider="google_patents",
+        provider_paragraph_source="google_patents",
     )
     return aligned, identity
 
@@ -198,6 +205,6 @@ def enrich_from_ppubs_html(
         config,
         identity_verified=identity.status == "verified",
         provider="uspto_ppubs",
-        use_provider_paragraphs=True,
+        provider_paragraph_source="uspto_numbered",
     )
     return aligned, identity

@@ -141,8 +141,27 @@ export interface EntryDto {
   text_confidence: string;
   reference_confidence: string;
   paragraph_start?: boolean;
-  paragraph_source?: "layout" | "printed_marker" | "uspto_numbered" | null;
+  paragraph_source?:
+    | "layout"
+    | "printed_marker"
+    | "uspto_numbered"
+    | "google_patents"
+    | null;
   indent_level?: number;
+}
+
+export interface PatentMetadataDto {
+  label: string;
+  value: string;
+}
+
+/** Bibliographic information shown ahead of the line-numbered specification. */
+export interface PatentFrontMatterDto {
+  title?: string | null;
+  patent_number?: string | null;
+  abstract?: string | null;
+  metadata?: PatentMetadataDto[];
+  source?: string | null;
 }
 
 export interface FigureMentionDto {
@@ -195,6 +214,7 @@ export interface ArtifactEntries {
   disposition: string | null;
   page_count: number | null;
   warnings: string[];
+  front_matter?: PatentFrontMatterDto | null;
   entries: EntryDto[];
   figure_mentions: FigureMentionDto[];
   numeral_mentions: NumeralMentionDto[];

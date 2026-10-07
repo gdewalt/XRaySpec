@@ -101,9 +101,66 @@ def test_enrich_blocks_on_identity_mismatch():
     assert aligned[0].display_text == entries[0].display_text  # unchanged, no alignment
 
 
+GOOGLE_PARAGRAPH_HTML = """
+<html><head>
+<meta content="US7840427B2" name="citation_patent_number">
+<meta content="Shared transport system" name="DC.title">
+<meta name="DC.contributor" scheme="inventor" content="Ada Example">
+<meta name="DC.contributor" scheme="assignee" content="Transit Labs">
+<meta name="citation_filing_date" content="2007-03-01">
+</head><body>
+<section itemprop="abstract"><div class="abstract">A concise &amp; useful abstract.</div></section>
+<section itemprop="description">
+  <div class="description-paragraph">First line. Continued line.</div>
+  <div class="description-paragraph">Second paragraph begins.</div>
+</section>
+</body></html>
+"""
+
+
+def test_google_text_preserves_paragraphs_abstract_and_front_page_metadata():
+    provider = extract_provider_text(GOOGLE_PARAGRAPH_HTML)
+    assert provider.canonical == "US7840427B2"
+    assert provider.description.splitlines() == [
+        "First line. Continued line.",
+        "Second paragraph begins.",
+    ]
+    assert provider.abstract == "A concise & useful abstract."
+    assert provider.metadata == (
+        ("Inventor", "Ada Example"),
+        ("Original assignee", "Transit Labs"),
+        ("Filing date", "2007-03-01"),
+    )
+
+
+def test_google_alignment_uses_google_paragraphs_and_discards_layout_guesses():
+    entries = [
+        _entry("First line.", 1),
+        replace(
+            _entry("Continued line.", 2),
+            paragraph_start=True,
+            paragraph_source="layout",
+        ),
+        _entry("Second paragraph begins.", 3),
+    ]
+    aligned, identity = enrich_from_page_html(
+        entries,
+        GOOGLE_PARAGRAPH_HTML,
+        "US7840427B2",
+        DEFAULT_CONFIG,
+    )
+    assert identity.status == "verified"
+    assert aligned[0].paragraph_start is False
+    assert aligned[1].paragraph_start is False
+    assert aligned[1].paragraph_source is None
+    assert aligned[2].paragraph_start is True
+    assert aligned[2].paragraph_source == "google_patents"
+
+
 PPUBS_HTML = """
 <html><head><title>US-7840427-B2 - Patent Public Search | USPTO</title></head><body>
 <h2>Shared transport system and service network</h2>
+<section><h3>Abstract</h3><p>A shared transport network.</p></section>
 <section><h3>Background/Summary</h3>
 <p>(1) FIELD OF THE INVENTION<br>(2) The houslng 104 receives the shaft 108.</p></section>
 <section><h3>Description</h3>
@@ -119,6 +176,7 @@ def test_extract_ppubs_text_removes_markers_and_preserves_paragraphs():
     provider = extract_ppubs_text(PPUBS_HTML)
     assert provider.canonical == "US7840427B2"
     assert provider.title == "Shared transport system and service network"
+    assert provider.abstract == "A shared transport network."
     assert "(1)" not in provider.clean_text and "(4)" not in provider.clean_text
     assert provider.description.splitlines() == [
         "FIELD OF THE INVENTION",

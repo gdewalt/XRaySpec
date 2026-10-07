@@ -2426,6 +2426,7 @@ mark.search-hit { background: #ffdf8a; color: #422600; }
 }
 @media (pointer: coarse) {
   button, .tab, .outline-item, .outline-jump { min-height: 44px; }
+  .patent-preface-row.navigable { min-height: 44px; }
 }
 
 
@@ -2487,6 +2488,83 @@ mark.search-hit { background: #ffdf8a; color: #422600; }
 }
 .line-indent {
   white-space: pre;
+}
+
+/* Bibliographic front matter belongs to the readable text flow, but not to the
+   patent's column/line citation system. */
+.patent-preface {
+  margin: .25rem 1rem 1.4rem;
+  padding: 1rem 1.1rem 1.15rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-subtle);
+  color: var(--text);
+}
+.patent-preface-row {
+  border-radius: 7px;
+}
+.patent-preface-row.navigable {
+  cursor: pointer;
+}
+.patent-preface-row.navigable:hover {
+  background: var(--accent-soft);
+}
+.patent-preface-row.navigable:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: 2px;
+}
+.patent-preface-row.identity {
+  padding: .25rem .35rem .65rem;
+}
+.patent-preface-number {
+  margin: 0 0 .22rem;
+  color: var(--muted);
+  font-family: Inter, ui-sans-serif, sans-serif;
+  font-size: .76rem;
+  font-weight: 700;
+  letter-spacing: .055em;
+  text-transform: uppercase;
+}
+.patent-preface h2 {
+  margin: 0;
+  font-family: Inter, ui-sans-serif, sans-serif;
+  font-size: 1.12rem;
+  line-height: 1.35;
+}
+.patent-preface-metadata {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: .2rem .9rem;
+  margin: .2rem 0 .9rem;
+}
+.patent-preface-metadata .patent-preface-row {
+  display: grid;
+  grid-template-columns: minmax(6.5rem, auto) minmax(0, 1fr);
+  gap: .6rem;
+  min-height: 36px;
+  padding: .4rem .35rem;
+}
+.patent-preface dt {
+  color: var(--muted);
+  font-family: Inter, ui-sans-serif, sans-serif;
+  font-size: .75rem;
+  font-weight: 650;
+}
+.patent-preface dd {
+  margin: 0;
+  font-size: .86rem;
+}
+.patent-preface-abstract h3 {
+  margin: .8rem .35rem .4rem;
+  font-family: Inter, ui-sans-serif, sans-serif;
+  font-size: .78rem;
+  letter-spacing: .045em;
+  text-transform: uppercase;
+}
+.patent-preface-abstract p {
+  margin: 0;
+  padding: .35rem;
+  line-height: 1.52;
 }
 
 /* OCR layout: compact lines within a paragraph, visible breathing room between them. */

@@ -56,7 +56,7 @@ class Entry:
     reference_confidence: Confidence = "high"
     section: str | None = None
     paragraph_start: bool = False
-    paragraph_source: str | None = None  # layout | printed_marker | uspto_numbered
+    paragraph_source: str | None = None  # layout | printed_marker | uspto_numbered | google_patents
     indent_level: int = 0
     warnings: list[str] = field(default_factory=list)
 
@@ -124,6 +124,17 @@ class MentionAssociation:
 
 
 @dataclass(frozen=True, slots=True)
+class PatentFrontMatter:
+    """Provider-sourced front-page information shown before cited specification lines."""
+
+    title: str | None = None
+    patent_number: str | None = None
+    abstract: str | None = None
+    metadata: list[dict[str, str]] = field(default_factory=list)
+    source: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Artifact:
     """Immutable result of one extraction run (DESIGN.md §8.1)."""
 
@@ -141,5 +152,6 @@ class Artifact:
     figure_occurrences: list[FigureOccurrence] = field(default_factory=list)
     callout_occurrences: list[CalloutOccurrence] = field(default_factory=list)
     mention_associations: list[MentionAssociation] = field(default_factory=list)
+    front_matter: PatentFrontMatter | None = None
     quality: dict[str, object] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)

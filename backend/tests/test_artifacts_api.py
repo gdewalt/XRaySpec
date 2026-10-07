@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from sqlalchemy import select
 
 from app.db.models import SourceDocument, User, UserDocument
+from app.extraction.artifact import PatentFrontMatter
 from app.extraction.config import DEFAULT_CONFIG
 from app.extraction.core import extract_from_pages
 from app.extraction.model import Page, Word
@@ -34,7 +37,17 @@ def _artifact():
         words.append(Word("col2", 0.60, y0, 0.70, y1))
         if (i + 1) % 5 == 0:
             words.append(Word(str(i + 1), 0.49, y0, 0.51, y1))
-    return extract_from_pages([Page(0, words)], DEFAULT_CONFIG, source_sha256="abc")
+    artifact = extract_from_pages([Page(0, words)], DEFAULT_CONFIG, source_sha256="abc")
+    return replace(
+        artifact,
+        front_matter=PatentFrontMatter(
+            title="A useful patent",
+            patent_number="US1234567B2",
+            abstract="An example abstract.",
+            metadata=[{"label": "Inventor", "value": "Ada Example"}],
+            source="google_patents",
+        ),
+    )
 
 
 async def _setup(client, auth, token, sub: str) -> tuple[str, str]:
@@ -64,6 +77,13 @@ async def test_get_artifact_entries(client, make_token, auth):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["doc_type"] == "grant"
+    assert body["front_matter"] == {
+        "title": "A useful patent",
+        "patent_number": "US1234567B2",
+        "abstract": "An example abstract.",
+        "metadata": [{"label": "Inventor", "value": "Ada Example"}],
+        "source": "google_patents",
+    }
     assert len(body["entries"]) >= 2
     assert body["entries"][0]["locator"] == {"column": 1, "printed_line": 1, "kind": "grant"}
     # detection ran: "housing 104" numeral + "FIG. 3" figure reference.

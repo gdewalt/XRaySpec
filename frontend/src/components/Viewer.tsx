@@ -23,6 +23,7 @@ import type {
   FigureOccurrenceDto,
   NumeralMentionDto,
   OverrideRead,
+  PatentFrontMatterDto,
 } from "../api/types";
 import {
   type CiteStyle,
@@ -225,6 +226,85 @@ function copiedTextFromRange(range: Range): string {
       ? selectedLines.join("\n")
       : copySurface.textContent ?? "";
   return normalizeCopiedText(raw);
+}
+
+function frontMatterParagraphs(value: string | null | undefined): string[] {
+  return (value ?? "")
+    .split(/\r?\n\s*\r?\n/)
+    .map((paragraph) => paragraph.replace(/\s*\r?\n\s*/g, " ").trim())
+    .filter(Boolean);
+}
+
+function PatentFrontMatter({
+  value,
+  pdfVisible,
+  onNavigate,
+}: {
+  value: PatentFrontMatterDto;
+  pdfVisible: boolean;
+  onNavigate: () => void;
+}) {
+  const paragraphs = frontMatterParagraphs(value.abstract);
+  const activate = () => {
+    const nativeSelection = window.getSelection();
+    if (!nativeSelection || nativeSelection.isCollapsed) onNavigate();
+  };
+  const keyboardActivate = (event: ReactKeyboardEvent) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    onNavigate();
+  };
+  const navigationProps = pdfVisible
+    ? {
+        role: "button",
+        tabIndex: 0,
+        title: "Go to the first page in the PDF",
+        onClick: activate,
+        onKeyDown: keyboardActivate,
+      }
+    : {};
+
+  return (
+    <section className="patent-preface" aria-label="Patent information">
+      {(value.patent_number || value.title) && (
+        <div
+          className={`patent-preface-row identity${pdfVisible ? " navigable" : ""}`}
+          {...navigationProps}
+        >
+          {value.patent_number && <p className="patent-preface-number">{value.patent_number}</p>}
+          {value.title && <h2>{value.title}</h2>}
+        </div>
+      )}
+      {(value.metadata ?? []).length > 0 && (
+        <dl className="patent-preface-metadata">
+          {(value.metadata ?? []).map((item, index) => (
+            <div
+              key={`${item.label}-${index}`}
+              className={`patent-preface-row${pdfVisible ? " navigable" : ""}`}
+              {...navigationProps}
+            >
+              <dt>{item.label}</dt>{" "}
+              <dd>{item.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {paragraphs.length > 0 && (
+        <div className="patent-preface-abstract">
+          <h3>Abstract</h3>
+          {paragraphs.map((paragraph, index) => (
+            <p
+              key={index}
+              className={`patent-preface-row${pdfVisible ? " navigable" : ""}`}
+              {...navigationProps}
+            >
+              {paragraph}
+            </p>
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }
 
 export function Viewer({ documentId, onBack }: { documentId: string; onBack: () => void }) {
@@ -704,11 +784,15 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
     if (!text.trim()) return;
     setSelectionSource("text");
     setTextSelection(text);
+    const coversFrontMatter = Array.from(
+      container.querySelectorAll<HTMLElement>(".patent-preface-row"),
+    ).some((row) => range.intersectsNode(row));
     const covered = Array.from(container.querySelectorAll<HTMLElement>(".spec-line"))
       .filter((line) => range.intersectsNode(line))
       .map((line) => Number(line.dataset.ordinal))
       .filter((ordinal) => !Number.isNaN(ordinal));
     if (covered.length > 0) selectRange(Math.min(...covered), Math.max(...covered));
+    else if (coversFrontMatter) setSelection(null);
   }, [selectRange]);
 
   const handleTextCopy = useCallback((event: ReactClipboardEvent<HTMLElement>) => {
@@ -719,11 +803,25 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
     if (!container.contains(range.commonAncestorContainer)) return;
     const text = copiedTextFromRange(range);
     if (!text.trim()) return;
+    const coversSpecification = Array.from(
+      container.querySelectorAll<HTMLElement>(".spec-line"),
+    ).some((line) => range.intersectsNode(line));
     event.preventDefault();
-    event.clipboardData.setData("text/plain", formatSelectionWithCitation(text, citation));
+    event.clipboardData.setData(
+      "text/plain",
+      coversSpecification ? formatSelectionWithCitation(text, citation) : text,
+    );
     setSelectionSource("text");
     setTextSelection(text);
   }, [citation]);
+
+  const navigateFrontMatterToPdf = useCallback(() => {
+    if (!showPdf) return;
+    setSelection(null);
+    setFocusedFigure(null);
+    setHighlightCallouts(new Set());
+    setPdfPage(1);
+  }, [showPdf]);
 
   const resizeSplit = useCallback((clientX: number) => {
     const container = panesRef.current;
@@ -1069,6 +1167,13 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
               onMouseUp={handleTextMouseUp}
               onCopy={handleTextCopy}
             >
+              {artifact.front_matter && (
+                <PatentFrontMatter
+                  value={artifact.front_matter}
+                  pdfVisible={showPdf}
+                  onNavigate={navigateFrontMatterToPdf}
+                />
+              )}
               {entries.map((e) => {
                 const marks = buildMarks(
                   e,

@@ -11,6 +11,7 @@ _NUMBERED_PARAGRAPH = re.compile(r"^\s*\((\d{1,4})\)\s*")
 _SPACE = re.compile(r"\s+")
 _CANONICAL = re.compile(r"\b(US)-?(\d+)-?([A-Z]\d?)\b", re.IGNORECASE)
 _SECTIONS = {
+    "abstract": "abstract",
     "background/summary": "description",
     "description": "description",
     "claims": "claims",
@@ -30,7 +31,11 @@ class _PpubsParser(HTMLParser):
         self._in_paragraph = False
         self._segment: list[str] = []
         self._block: list[tuple[str, bool]] = []
-        self.sections: dict[str, list[str]] = {"description": [], "claims": []}
+        self.sections: dict[str, list[str]] = {
+            "abstract": [],
+            "description": [],
+            "claims": [],
+        }
 
     def handle_starttag(self, tag: str, attrs) -> None:
         del attrs
@@ -107,4 +112,5 @@ def extract_ppubs_text(page_html: str) -> ProviderText:
         title=title,
         description="\n".join(parser.sections["description"]),
         claims="\n".join(parser.sections["claims"]),
+        abstract=" ".join(parser.sections["abstract"]),
     )

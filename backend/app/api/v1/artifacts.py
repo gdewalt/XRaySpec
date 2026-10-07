@@ -51,6 +51,7 @@ async def get_artifact_entries(
         disposition=data.get("disposition"),
         page_count=data.get("page_count"),
         warnings=data.get("warnings", []),
+        front_matter=data.get("front_matter"),
         entries=data.get("entries", []),
         figure_mentions=data.get("figure_mentions", []),
         numeral_mentions=data.get("numeral_mentions", []),

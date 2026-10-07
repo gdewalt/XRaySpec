@@ -16,8 +16,8 @@ from dataclasses import replace
 
 from ..config import get_settings
 from ..db.models import ExtractionJob, SourceDocument, UserDocument
-from ..enrichment.google_text import extract_provider_text
-from ..extraction.artifact import Artifact
+from ..enrichment.google_text import ProviderText, extract_provider_text
+from ..extraction.artifact import Artifact, PatentFrontMatter
 from ..extraction.config import ExtractionConfig
 from ..fetch.adapter import RestrictedFetcher
 from ..fetch.errors import FetchError
@@ -177,10 +177,22 @@ async def _enrich_artifact(
     patent identity, a fetch failure, or an identity mismatch all fall back to the
     unaligned artifact, so extraction still publishes."""
     settings = get_settings()
-    if not settings.enrichment_enabled or not canonical or not artifact.entries:
+    base_front_matter = (
+        PatentFrontMatter(title=title, patent_number=canonical)
+        if title or canonical
+        else None
+    )
+    if base_front_matter is not None:
+        artifact = replace(artifact, front_matter=base_front_matter)
+    if not settings.enrichment_enabled or not canonical:
         return artifact
 
-    from ..enrichment import enrich_from_page_html, enrich_from_ppubs_html
+    from ..enrichment import (
+        enrich_from_page_html,
+        enrich_from_ppubs_html,
+        extract_ppubs_text,
+    )
+    from ..enrichment.identity import verify_identity
 
     await ctx.heartbeat(
         stage="aligning_text", stage_label="Aligning clean text", indeterminate=True
@@ -189,12 +201,14 @@ async def _enrich_artifact(
         settings.fetch_allowed_hosts, max_redirects=settings.fetch_max_redirects
     )
     provider_name = "uspto_ppubs"
+    selected_provider: ProviderText | None = None
     try:
         patent_identity = parse_patent_identifier(canonical)
         ppubs = PpubsClient(fetcher, max_json_bytes=settings.fetch_max_html_bytes)
         document = await ppubs.resolve(patent_identity)
         page = await ppubs.fetch_text(document, max_bytes=settings.fetch_max_html_bytes)
         html = page.content.decode("utf-8", "replace")
+        ppubs_provider = extract_ppubs_text(html)
         # Alignment over the whole specification is CPU-bound — keep it off the loop.
         aligned, identity = await asyncio.to_thread(
             enrich_from_ppubs_html,
@@ -204,6 +218,15 @@ async def _enrich_artifact(
             config,
             source_title=title,
         )
+        aligned_count = _aligned_count(aligned)
+        usable = (
+            bool(ppubs_provider.clean_text)
+            and identity.status == "verified"
+            and (not artifact.entries or aligned_count > 0)
+        )
+        if not usable:
+            raise FetchError("ppubs_text_unusable", "PPUBS did not provide usable patent text")
+        selected_provider = ppubs_provider
     except (FetchError, PatentParseError):
         provider_name = "google_patents"
         try:
@@ -213,6 +236,7 @@ async def _enrich_artifact(
         except FetchError:
             return artifact  # graceful: keep the unaligned entries
         html = page.content.decode("utf-8", "replace")
+        google_provider = extract_provider_text(html)
         aligned, identity = await asyncio.to_thread(
             enrich_from_page_html,
             artifact.entries,
@@ -221,8 +245,42 @@ async def _enrich_artifact(
             config,
             source_title=title,
         )
-    aligned_count = sum(
-        1 for e in aligned if e.provenance.alignment_method in ("exact", "fuzzy")
+        if identity.status == "verified":
+            selected_provider = google_provider
+        aligned_count = _aligned_count(aligned)
+
+    # PPUBS is authoritative for specification wording, but its text endpoint
+    # does not consistently carry the abstract/front-page metadata. Fill that
+    # display-only preface from a verified Google page when available without
+    # replacing the PPUBS-aligned specification.
+    front_source = provider_name
+    if provider_name == "uspto_ppubs" and selected_provider is not None:
+        try:
+            google_page = await fetcher.fetch(
+                patent_page_url(canonical), max_bytes=settings.fetch_max_html_bytes
+            )
+            google_provider = extract_provider_text(
+                google_page.content.decode("utf-8", "replace")
+            )
+            google_identity = verify_identity(
+                canonical,
+                google_provider.canonical,
+                source_title=title,
+                provider_title=google_provider.title,
+            )
+            if google_identity.status == "verified" and (
+                google_provider.abstract or google_provider.metadata
+            ):
+                selected_provider = google_provider
+                front_source = "google_patents"
+        except FetchError:
+            pass
+
+    front_matter = _front_matter(
+        selected_provider,
+        fallback_title=title,
+        fallback_number=canonical,
+        source=front_source if selected_provider is not None else None,
     )
     quality = {
         **artifact.quality,
@@ -230,7 +288,48 @@ async def _enrich_artifact(
         "aligned_lines": aligned_count,
         "text_provider": provider_name,
     }
-    return replace(artifact, entries=aligned, quality=quality)
+    return replace(
+        artifact,
+        entries=aligned,
+        front_matter=front_matter,
+        quality=quality,
+    )
+
+
+def _aligned_count(entries) -> int:
+    return sum(
+        1 for entry in entries if entry.provenance.alignment_method in ("exact", "fuzzy")
+    )
+
+
+def _front_matter(
+    provider: ProviderText | None,
+    *,
+    fallback_title: str | None,
+    fallback_number: str | None,
+    source: str | None,
+) -> PatentFrontMatter:
+    """Build a bounded, display-only patent preface from verified provider data."""
+    grouped: dict[str, list[str]] = {}
+    for label, value in provider.metadata if provider is not None else ():
+        clean_label = label.strip()[:80]
+        clean_value = value.strip()[:500]
+        if clean_label and clean_value and clean_value not in grouped.setdefault(clean_label, []):
+            grouped[clean_label].append(clean_value)
+    metadata = [
+        {"label": label, "value": "; ".join(values)}
+        for label, values in grouped.items()
+    ]
+    abstract = provider.abstract.strip()[:20_000] if provider and provider.abstract else None
+    return PatentFrontMatter(
+        title=(provider.title if provider and provider.title else fallback_title),
+        patent_number=(
+            provider.canonical if provider and provider.canonical else fallback_number
+        ),
+        abstract=abstract,
+        metadata=metadata,
+        source=source,
+    )
 
 
 async def dispatch_processor(ctx: JobContext, job: ExtractionJob) -> None:

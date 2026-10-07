@@ -25,7 +25,9 @@ PAGE_HTML = b"""
 <html><head>
 <meta name="DC.title" content="Wireless communication method">
 <meta name="citation_patent_number" content="US12262260B2">
+<meta name="DC.contributor" scheme="inventor" content="Ada Example">
 </head><body>
+<section itemprop="abstract"><div class="abstract">A wireless housing system.</div></section>
 <section itemprop="description"><p>The housing 104 receives the shaft 108.</p></section>
 </body></html>
 """
@@ -45,6 +47,43 @@ class FakeFetcher:
 
     async def request(self, *_args, **_kwargs) -> FetchResult:
         raise FetchError("ppubs_unavailable", "use provider fallback")
+
+
+class EmptyTextPpubsClient:
+    """PPUBS resolves successfully but returns no specification text."""
+
+    def __init__(self, *_args, **_kwargs) -> None:
+        pass
+
+    async def resolve(self, _identity):
+        return object()
+
+    async def fetch_text(self, _document, *, max_bytes: int) -> FetchResult:
+        del max_bytes
+        return FetchResult(
+            (
+                b"<html><title>US-12262260-B2 - USPTO</title>"
+                b"<h2>Wireless communication method</h2></html>"
+            ),
+            "text/html",
+            "https://ppubs.uspto.gov/empty",
+        )
+
+
+class WorkingPpubsClient(EmptyTextPpubsClient):
+    async def fetch_text(self, _document, *, max_bytes: int) -> FetchResult:
+        del max_bytes
+        return FetchResult(
+            b"""
+            <html><title>US-12262260-B2 - USPTO</title><body>
+            <h2>Wireless communication method</h2>
+            <section><h3>Description</h3>
+            <p>(1) The housing 104 receives the shaft 108.</p>
+            </section></body></html>
+            """,
+            "text/html",
+            "https://ppubs.uspto.gov/text",
+        )
 
 
 def _artifact(*texts: str) -> Artifact:
@@ -103,7 +142,62 @@ async def test_enrichment_aligns_display_text(client):
     assert out.entries[0].provenance.identity_verified is True
     assert out.quality["identity_status"] == "verified"
     assert out.quality["aligned_lines"] == 1
+    assert out.front_matter is not None
+    assert out.front_matter.abstract == "A wireless housing system."
+    assert out.front_matter.metadata == [{"label": "Inventor", "value": "Ada Example"}]
     assert fetcher.calls == ["https://patents.google.com/patent/US12262260B2/en"]
+
+
+async def test_unusable_ppubs_text_falls_back_to_google_paragraph_text(
+    client, monkeypatch
+):
+    ctx = await _ctx(client)
+    art = _artifact("The houslng 104 receives the shaft 108.")
+    fetcher = FakeFetcher(PAGE_HTML)
+    monkeypatch.setattr(
+        "app.worker.processors.PpubsClient",
+        EmptyTextPpubsClient,
+    )
+
+    out = await _enrich_artifact(
+        ctx,
+        art,
+        config=DEFAULT_CONFIG,
+        canonical="US12262260B2",
+        title="Wireless communication method",
+        fetcher=fetcher,
+    )
+
+    assert "housing 104" in out.entries[0].display_text
+    assert out.entries[0].provenance.provider == "google_patents"
+    assert out.quality["text_provider"] == "google_patents"
+    assert out.front_matter is not None
+    assert out.front_matter.abstract == "A wireless housing system."
+    assert fetcher.calls == ["https://patents.google.com/patent/US12262260B2/en"]
+
+
+async def test_ppubs_text_remains_authoritative_while_google_supplies_front_matter(
+    client, monkeypatch
+):
+    ctx = await _ctx(client)
+    art = _artifact("The houslng 104 receives the shaft 108.")
+    fetcher = FakeFetcher(PAGE_HTML)
+    monkeypatch.setattr("app.worker.processors.PpubsClient", WorkingPpubsClient)
+
+    out = await _enrich_artifact(
+        ctx,
+        art,
+        config=DEFAULT_CONFIG,
+        canonical="US12262260B2",
+        title="Wireless communication method",
+        fetcher=fetcher,
+    )
+
+    assert out.entries[0].provenance.provider == "uspto_ppubs"
+    assert out.quality["text_provider"] == "uspto_ppubs"
+    assert out.front_matter is not None
+    assert out.front_matter.abstract == "A wireless housing system."
+    assert out.front_matter.source == "google_patents"
 
 
 async def test_enrichment_skipped_without_patent_identity(client):
@@ -128,8 +222,10 @@ async def test_enrichment_survives_fetch_failure(client):
         ctx, art, config=DEFAULT_CONFIG, canonical="US12262260B2", title="t", fetcher=fetcher
     )
 
-    assert out is art  # graceful fallback to the unaligned artifact
+    assert out.entries == art.entries  # graceful fallback to the unaligned artifact
     assert out.entries[0].display_text == "The houslng 104 receives the shaft 108."
+    assert out.front_matter is not None
+    assert out.front_matter.patent_number == "US12262260B2"
 
 
 async def test_enrichment_blocks_on_identity_mismatch(client):
@@ -158,6 +254,8 @@ async def test_enrichment_respects_disabled_instance(client, monkeypatch):
         ctx, art, config=DEFAULT_CONFIG, canonical="US12262260B2", title="t", fetcher=fetcher
     )
 
-    assert out is art
+    assert out.entries == art.entries
+    assert out.front_matter is not None
+    assert out.front_matter.patent_number == "US12262260B2"
     assert fetcher.calls == []
     get_settings.cache_clear()
