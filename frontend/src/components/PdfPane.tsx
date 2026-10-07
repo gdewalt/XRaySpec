@@ -21,7 +21,7 @@ import type {
   PdfAnnotationRead,
 } from "../api/types";
 import { getToken } from "../auth/session";
-import { normalizeCopiedText } from "../spec/text";
+import { formatSelectionWithCitation, normalizeCopiedText } from "../spec/text";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
 
@@ -540,6 +540,7 @@ export function PdfPane({
   onSelectCallout,
   onActivate,
   onSelectionText,
+  copyCitation,
 }: {
   documentId: string;
   entries: EntryDto[];
@@ -555,6 +556,7 @@ export function PdfPane({
   onSelectCallout?: (callout: CalloutDto) => void;
   onActivate?: () => void;
   onSelectionText?: (text: string) => void;
+  copyCitation?: string;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef(new Map<number, HTMLDivElement>());
@@ -712,7 +714,10 @@ export function PdfPane({
     const text = normalizeCopiedText(nativeSelection.toString());
     if (!text) return;
     event.preventDefault();
-    event.clipboardData.setData("text/plain", text);
+    event.clipboardData.setData(
+      "text/plain",
+      formatSelectionWithCitation(text, copyCitation ?? ""),
+    );
     onSelectionText?.(text);
   }
 

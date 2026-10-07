@@ -4,6 +4,7 @@ import type { EntryDto } from "../api/types";
 import {
   dehyphenateLineBreaks,
   deriveIndentLevels,
+  formatSelectionWithCitation,
   joinEntryText,
   normalizeCopiedText,
 } from "./text";
@@ -50,6 +51,12 @@ describe("text reconstruction", () => {
   it("flattens line, paragraph, and tab whitespace only for copied text", () => {
     expect(normalizeCopiedText("\tFirst line\n\nSecond\tline  here ")).toBe(
       "First line Second line here",
+    );
+  });
+
+  it("quotes selected text before its citation", () => {
+    expect(formatSelectionWithCitation("A trans-\nmitter operates.", "’427 patent 1:15-16")).toBe(
+      "“A transmitter operates.” ’427 patent 1:15-16",
     );
   });
 

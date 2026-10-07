@@ -12,6 +12,14 @@ export function normalizeCopiedText(text: string): string {
   return dehyphenateLineBreaks(text).replace(/\s+/gu, " ").trim();
 }
 
+/** Citation-ready clipboard text with the selected prose quoted first. */
+export function formatSelectionWithCitation(text: string, citation: string): string {
+  const selection = normalizeCopiedText(text);
+  const reference = citation.trim();
+  if (!selection) return reference;
+  return `“${selection}”${reference ? ` ${reference}` : ""}`;
+}
+
 /** Plain selected prose for the clipboard. Source/display text is never changed. */
 export function joinEntryText(entries: EntryDto[]): string {
   let text = "";

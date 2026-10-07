@@ -44,7 +44,12 @@ import {
   searchEntries,
 } from "../spec/navigation";
 import { exportPortable, exportText } from "../spec/export";
-import { deriveIndentLevels, joinEntryText, normalizeCopiedText } from "../spec/text";
+import {
+  deriveIndentLevels,
+  formatSelectionWithCitation,
+  joinEntryText,
+  normalizeCopiedText,
+} from "../spec/text";
 import { PdfPane } from "./PdfPane";
 
 type Layout = "text" | "pdf" | "split" | "details";
@@ -713,10 +718,10 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
     const text = copiedTextFromRange(range);
     if (!text.trim()) return;
     event.preventDefault();
-    event.clipboardData.setData("text/plain", text);
+    event.clipboardData.setData("text/plain", formatSelectionWithCitation(text, citation));
     setSelectionSource("text");
     setTextSelection(text);
-  }, []);
+  }, [citation]);
 
   const resizeSplit = useCallback((clientX: number) => {
     const container = panesRef.current;
@@ -1169,6 +1174,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                 setSelectionSource("pdf");
                 setPdfSelection(text);
               }}
+              copyCitation={citation}
             />
           )}
         </div>
@@ -1373,7 +1379,10 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
             <button type="button" onClick={() => copy("cite", citation)}>
               Copy citation
             </button>
-            <button type="button" onClick={() => copy("both", `“${activeSelectionText}” ${citation}`)}>
+            <button
+              type="button"
+              onClick={() => copy("both", formatSelectionWithCitation(activeSelectionText, citation))}
+            >
               Copy selection + citation
             </button>
             <button
