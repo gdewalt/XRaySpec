@@ -820,18 +820,7 @@ export function PdfPane({
             </label>
           )}
         </div>
-        <span className="pdf-scroll-hint">Scroll to move between pages</span>
       </div>
-
-      {tool !== "select" && (
-        <p className="pdf-tool-hint" role="status">
-          {tool === "delete"
-            ? "Click a saved PDF mark to delete it."
-            : tool === "highlight" || tool === "drawing"
-              ? `Drag on a page to ${tool === "drawing" ? "draw" : "highlight"}.`
-              : `Click a page to add a ${tool}.`}
-        </p>
-      )}
 
       {pendingNote && (
         <div className="pdf-note-editor" role="dialog" aria-label="Add PDF note">

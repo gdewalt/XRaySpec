@@ -729,13 +729,22 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
     setSplitPercent(Math.max(24, Math.min(76, ((clientX - left) / (right - left)) * 100)));
   }, []);
 
+  const patentNumber = doc?.patent_number?.trim();
+  const patentTitle = doc?.title.trim();
+  const viewerTitle = patentNumber
+    ? patentTitle && patentTitle.replace(/[^a-z0-9]/gi, "").toLowerCase() !==
+        patentNumber.replace(/[^a-z0-9]/gi, "").toLowerCase()
+      ? `${patentNumber} — ${patentTitle}`
+      : patentNumber
+    : patentTitle || "…";
+
   return (
     <div className="viewer">
       <div className="viewer-bar">
         <button type="button" className="secondary" onClick={onBack}>
           ← Documents
         </button>
-        <strong className="viewer-title">{doc?.title ?? "…"}</strong>
+        <strong className="viewer-title">{viewerTitle}</strong>
 
         {artifact && (
           <div className="viewer-mode-nav" aria-label="Viewer navigation">

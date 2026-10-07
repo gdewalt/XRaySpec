@@ -858,11 +858,13 @@ mark.search-hit {
   display: flex;
   gap: 1rem;
   align-items: flex-start;
+  --viewer-pane-height: calc(100vh - 210px);
 }
 .panes .spec {
   flex: 1;
   min-width: 0;
-  max-height: calc(100vh - 210px);
+  height: var(--viewer-pane-height);
+  max-height: var(--viewer-pane-height);
   overflow-y: auto;
   padding-right: 0.5rem;
 }
@@ -876,6 +878,8 @@ mark.search-hit {
   gap: 0.5rem;
   flex: 1;
   min-width: 0;
+  height: var(--viewer-pane-height);
+  max-height: var(--viewer-pane-height);
 }
 .pdf-controls {
   display: flex;
@@ -893,10 +897,12 @@ mark.search-hit {
   text-align: center;
 }
 .pdf-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   overflow-anchor: none;
   scrollbar-gutter: stable;
-  max-height: calc(100vh - 230px);
+  max-height: none;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #2a2d33;
@@ -1792,11 +1798,6 @@ mark.mention.clickable:hover {
   min-width: 8.5rem;
   text-align: left;
 }
-.pdf-scroll-hint {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 0.76rem;
-}
 .pdf-pages {
   display: grid;
   gap: 1rem;
@@ -1850,9 +1851,6 @@ mark.mention.clickable:hover {
     max-height: none;
   }
   .pane-resizer {
-    display: none;
-  }
-  .pdf-scroll-hint {
     display: none;
   }
 }
@@ -2544,11 +2542,6 @@ mark.search-hit { background: #ffdf8a; color: #422600; }
 .pdf-color-control select:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent);
   outline-offset: 2px;
-}
-.pdf-tool-hint {
-  margin: .35rem 0;
-  color: var(--muted);
-  font-size: .76rem;
 }
 .pdf-note-editor {
   display: grid;
