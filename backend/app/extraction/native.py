@@ -403,7 +403,18 @@ def _emit_column(
             and typical_gap > 0
             and vertical_gap >= max(0.018, typical_gap * 1.6)
         )
-        paragraph_start = ocr_break or indented or spaced
+        # Tesseract's paragraph/block ids often reset inside a continuous patent
+        # paragraph. Treat that hierarchy as supporting evidence only when a
+        # visible gap and sentence boundary agree; indentation and large geometry
+        # gaps remain independently reliable.
+        previous_text = content[index - 1][2].rstrip() if index > 0 else ""
+        ocr_break_supported = bool(
+            ocr_break
+            and typical_gap > 0
+            and vertical_gap >= typical_gap * 1.15
+            and previous_text.endswith((".", "?", "!", ":"))
+        )
+        paragraph_start = indented or spaced or ocr_break_supported
 
         printed = _interp(line_map, ln.cy)
         if printed < prev:  # non-decreasing; a wrapped line may repeat a number
@@ -436,6 +447,7 @@ def _emit_column(
                 text_confidence="high" if method == "native" else "medium",
                 reference_confidence="high" if on_anchor else ("medium" if line_map else "low"),
                 paragraph_start=paragraph_start,
+                paragraph_source="layout" if paragraph_start else None,
                 indent_level=indent_level,
             )
         )

@@ -99,14 +99,31 @@ def align_entries(
             method = "exact" if ratio >= config.alignment_exact_ratio else "fuzzy"
             cursor = end
             paragraph = paragraphs[start]
-            paragraph_start = entry.paragraph_start or (
-                use_provider_paragraphs and paragraph != previous_paragraph
+            provider_paragraph_start = bool(
+                use_provider_paragraphs
+                and (
+                    (previous_paragraph is None and paragraph > 0)
+                    or (previous_paragraph is not None and paragraph != previous_paragraph)
+                )
             )
+            if use_provider_paragraphs:
+                # PPUBS numbered paragraphs are authoritative for spacing. Do
+                # not preserve layout/OCR guesses inside one numbered paragraph.
+                paragraph_start = provider_paragraph_start
+                paragraph_source = "uspto_numbered" if provider_paragraph_start else None
+            else:
+                paragraph_start = entry.paragraph_start
+                paragraph_source = entry.paragraph_source
             previous_paragraph = paragraph
         else:
             display = entry.source_text  # reject substitution; keep the source line
             method = "unmatched"
-            paragraph_start = entry.paragraph_start
+            if use_provider_paragraphs:
+                paragraph_start = entry.paragraph_source == "uspto_numbered"
+                paragraph_source = entry.paragraph_source if paragraph_start else None
+            else:
+                paragraph_start = entry.paragraph_start
+                paragraph_source = entry.paragraph_source
 
         provenance = replace(
             entry.provenance,
@@ -121,6 +138,7 @@ def align_entries(
                 display_text=display,
                 provenance=provenance,
                 paragraph_start=paragraph_start,
+                paragraph_source=paragraph_source,
             )
         )
     return out

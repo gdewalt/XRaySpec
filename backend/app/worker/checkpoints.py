@@ -59,6 +59,7 @@ def _figure_to_dict(f: FigureOccurrence) -> dict:
         "page_index": f.page_index,
         "box": list(f.box),
         "confidence": f.confidence,
+        "detection_score": f.detection_score,
         "method": f.method,
     }
 
@@ -70,6 +71,7 @@ def _figure_from_dict(d: dict) -> FigureOccurrence:
         page_index=d["page_index"],
         box=box,
         confidence=d.get("confidence"),
+        detection_score=d.get("detection_score"),
         method=d.get("method", "sparse_ocr"),
     )
 
@@ -82,6 +84,7 @@ def _callout_to_dict(c: CalloutOccurrence) -> dict:
         "box": list(c.box),
         "figure_id": c.figure_id,
         "confidence": c.confidence,
+        "detection_score": c.detection_score,
         "method": c.method,
     }
 
@@ -95,6 +98,7 @@ def _callout_from_dict(d: dict) -> CalloutOccurrence:
         box=box,
         figure_id=d.get("figure_id"),
         confidence=d.get("confidence"),
+        detection_score=d.get("detection_score"),
         method=d.get("method", "sparse_ocr"),
     )
 

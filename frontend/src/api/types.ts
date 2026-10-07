@@ -141,6 +141,7 @@ export interface EntryDto {
   text_confidence: string;
   reference_confidence: string;
   paragraph_start?: boolean;
+  paragraph_source?: "layout" | "printed_marker" | "uspto_numbered" | null;
   indent_level?: number;
 }
 
@@ -172,6 +173,8 @@ export interface FigureOccurrenceDto {
   page_index: number;
   box: number[];
   confidence: number | null;
+  detection_score?: number | null;
+  method?: string;
 }
 
 export interface CalloutDto {
@@ -181,6 +184,8 @@ export interface CalloutDto {
   box: number[];
   figure_id: string | null;
   confidence: number | null;
+  detection_score?: number | null;
+  method?: string;
 }
 
 export interface ArtifactEntries {

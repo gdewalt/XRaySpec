@@ -46,6 +46,7 @@ import {
 import { exportPortable, exportText } from "../spec/export";
 import {
   deriveIndentLevels,
+  deriveParagraphStarts,
   formatSelectionWithCitation,
   joinEntryText,
   normalizeCopiedText,
@@ -309,6 +310,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
 
   const entries = artifact?.entries ?? [];
   const indentLevels = useMemo(() => deriveIndentLevels(entries), [entries]);
+  const paragraphStarts = useMemo(() => deriveParagraphStarts(entries), [entries]);
   const figsByEntry = useMemo(() => groupByEntry(artifact?.figure_mentions ?? []), [artifact]);
   const numsByEntry = useMemo(() => groupByEntry(artifact?.numeral_mentions ?? []), [artifact]);
   const assocByKey = useMemo(() => {
@@ -947,6 +949,22 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
         >
           {showText && outlineOpen && (
             <nav className="outline" aria-label="Outline">
+              {outline.length > 0 && (
+                <>
+                  <h3 className="outline-head">Specification</h3>
+                  {outline.map((item) => (
+                    <button
+                      key={`${item.kind}-${item.ordinal}-${item.label}`}
+                      type="button"
+                      className={`outline-item ${item.kind}`}
+                      onClick={() => selectRange(item.ordinal, item.ordinal, { scroll: true })}
+                    >
+                      <span className="outline-label">{item.label}</span>
+                      <span className="outline-ref">{item.ref}</span>
+                    </button>
+                  ))}
+                </>
+              )}
               {bookmarks.length > 0 && (
                 <>
                   <h3 className="outline-head">Bookmarks</h3>
@@ -1031,25 +1049,8 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                   ))}
                 </>
               )}
-              {(bookmarks.length > 0 || annotations.length > 0 || claims.length > 0) &&
-                outline.length > 0 && <h3 className="outline-head">Sections</h3>}
-              {outline.length === 0 ? (
-                bookmarks.length === 0 && annotations.length === 0 && claims.length === 0 ? (
-                  <p className="muted small">No sections detected.</p>
-                ) : null
-              ) : (
-                outline.map((item) => (
-                  <button
-                    key={`${item.kind}-${item.ordinal}-${item.label}`}
-                    type="button"
-                    className={`outline-item ${item.kind}`}
-                    onClick={() => selectRange(item.ordinal, item.ordinal, { scroll: true })}
-                  >
-                    <span className="outline-label">{item.label}</span>
-                    <span className="outline-ref">{item.ref}</span>
-                  </button>
-                ))
-              )}
+              {outline.length === 0 && bookmarks.length === 0 && annotations.length === 0 &&
+                claims.length === 0 && <p className="muted small">No sections detected.</p>}
             </nav>
           )}
           {showText && (
@@ -1068,7 +1069,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
               onMouseUp={handleTextMouseUp}
               onCopy={handleTextCopy}
             >
-              {entries.map((e, index) => {
+              {entries.map((e) => {
                 const marks = buildMarks(
                   e,
                   figsByEntry.get(e.entry_id) ?? [],
@@ -1078,11 +1079,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                 const sel =
                   selection && e.ordinal >= selection.start && e.ordinal <= selection.end;
                 const noteCount = notesByEntry.get(e.entry_id)?.length ?? 0;
-                const previous = entries[index - 1];
-                const paragraphStart =
-                  e.paragraph_start === true ||
-                  (!!e.locator.paragraph &&
-                    e.locator.paragraph !== previous?.locator.paragraph);
+                const paragraphStart = paragraphStarts.has(e.entry_id);
                 const indentLevel = indentLevels.get(e.entry_id) ?? e.indent_level ?? 0;
                 return (
                   <div

@@ -28,7 +28,7 @@ from .callouts import (
     filter_callouts_by_values,
     filter_figure_occurrences,
     is_drawing_page,
-    specification_callout_values,
+    specification_callout_evidence,
 )
 from .config import ExtractionConfig
 from .figures import detect_figure_references, detect_reference_numerals
@@ -102,7 +102,9 @@ def route_page(
             draw_words = ocr_fn(pdf_bytes, page.index, config, psm=config.ocr_sparse_psm)
         figure_id = detect_page_figure(draw_words)
         figures = tuple(detect_figure_occurrences(draw_words, page.index))
-        callouts = tuple(detect_callouts(draw_words, page.index, figure_id))
+        callouts = tuple(
+            detect_callouts(draw_words, page.index, figure_id, figure_occurrences=figures)
+        )
         return PageResult(page.index, method, True, figures=figures, callouts=callouts)
     if method == "ocr" and specification_ocr_fn is not None:
         words = specification_ocr_fn(pdf_bytes, page.index, config, list(page.words))
@@ -192,7 +194,7 @@ def extract_from_pages(
     drawing_figures = filter_figure_occurrences(
         figure_occurrences or [], expected_figure_ids
     )
-    supported_callouts = specification_callout_values(
+    supported_callouts = specification_callout_evidence(
         pages,
         fallback_values=(mention.value for mention in numeral_mentions),
     )

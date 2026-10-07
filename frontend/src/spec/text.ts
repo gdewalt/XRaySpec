@@ -68,3 +68,68 @@ export function deriveIndentLevels(entries: EntryDto[]): Map<string, number> {
   return levels;
 }
 
+/**
+ * Resolve paragraph spacing while remaining compatible with older artifacts.
+ * New artifacts identify the evidence that created a break. Older ones are
+ * accepted only when their geometry corroborates the flag, which suppresses
+ * noisy OCR/provider boundaries without losing a real first-line indent.
+ */
+export function deriveParagraphStarts(entries: EntryDto[]): Set<string> {
+  const starts = new Set<string>();
+  const groups = new Map<string, EntryDto[]>();
+
+  for (const entry of entries) {
+    if (entry.locator.kind === "application") {
+      const previous = entries[entry.ordinal - 1];
+      if (
+        entry.paragraph_start === true ||
+        (!!entry.locator.paragraph && entry.locator.paragraph !== previous?.locator.paragraph)
+      ) {
+        starts.add(entry.entry_id);
+      }
+      continue;
+    }
+    const key = `${entry.page_index}:${entry.locator.column ?? 0}`;
+    const group = groups.get(key);
+    if (group) group.push(entry);
+    else groups.set(key, [entry]);
+  }
+
+  for (const unsorted of groups.values()) {
+    const group = [...unsorted].sort((a, b) => a.ordinal - b.ordinal);
+    const leftEdges = group
+      .map((entry) => entry.box?.[0])
+      .filter((value): value is number => typeof value === "number")
+      .sort((a, b) => a - b);
+    const baseline = leftEdges[Math.floor(Math.max(0, leftEdges.length - 1) * 0.2)];
+    const gaps = group
+      .slice(1)
+      .map((entry, index) => {
+        const previous = group[index];
+        return entry.box && previous.box ? entry.box[1] - previous.box[1] : 0;
+      })
+      .filter((gap) => gap > 0)
+      .sort((a, b) => a - b);
+    const typicalGap = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0;
+
+    group.forEach((entry, index) => {
+      if (entry.paragraph_start !== true) return;
+      // New artifacts carry explicit, already-vetted evidence.
+      if (entry.paragraph_source) {
+        starts.add(entry.entry_id);
+        return;
+      }
+
+      const previous = group[index - 1];
+      const indented =
+        (entry.indent_level ?? 0) > 0 ||
+        (typeof baseline === "number" && !!entry.box && entry.box[0] - baseline >= 0.006);
+      const verticalGap = entry.box && previous?.box ? entry.box[1] - previous.box[1] : 0;
+      const spaced = typicalGap > 0 && verticalGap >= Math.max(0.018, typicalGap * 1.6);
+      if (indented || spaced) starts.add(entry.entry_id);
+    });
+  }
+
+  return starts;
+}
+

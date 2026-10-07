@@ -22,7 +22,7 @@ OcrPolicy = Literal["auto", "force", "disabled"]
 @dataclass(frozen=True, slots=True)
 class ExtractionConfig:
     # Engine identity
-    version: str = "0.11.0"
+    version: str = "0.12.0"
 
     # OCR
     ocr_policy: OcrPolicy = "auto"
@@ -34,6 +34,8 @@ class ExtractionConfig:
     ocr_text_psm: int = 6  # one uniform block after each specification column is cropped
     ocr_text_retry_psm: int = 4  # retry weak text as variable-size column blocks
     ocr_sparse_psm: int = 11  # Tesseract page-seg mode for drawing callout labels (§12.7)
+    ocr_drawing_figure_psm: int = 11  # sparse words: FIG./FIGURE plus identifier
+    ocr_drawing_callout_psm: int = 12  # sparse text with orientation-aware segmentation
     ocr_retry_mean_confidence: float = 78.0
     ocr_retry_low_confidence_fraction: float = 0.20
     ocr_retry_low_confidence_cutoff: float = 50.0

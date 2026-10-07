@@ -62,6 +62,17 @@ def test_detect_callouts():
     assert all(c.figure_id == "12A" and c.page_index == 3 for c in callouts)
 
 
+def test_figure_identifier_is_not_duplicated_as_a_component_callout():
+    words = [
+        Word("FIG.", 0.10, 0.30, 0.16, 0.33, confidence=91.0),
+        Word("14B", 0.17, 0.30, 0.22, 0.33, confidence=92.0),
+        Word("104", 0.55, 0.60, 0.60, 0.63, confidence=90.0),
+    ]
+    figures = detect_figure_occurrences(words, page_index=2)
+    callouts = detect_callouts(words, 2, None, figure_occurrences=figures)
+    assert [callout.value for callout in callouts] == ["104"]
+
+
 def test_sheet_header_numbers_are_not_drawing_callouts():
     words = [
         Word("Sheet", 0.40, 0.03, 0.46, 0.05),
@@ -98,7 +109,11 @@ def test_specification_callouts_are_bold_numbers_in_column_body():
             Word("104A", 0.70, 0.40, 0.76, 0.42, is_bold=True),
         ],
     )
-    assert specification_callout_values([page], fallback_values=["999"]) == {"104", "104A"}
+    assert specification_callout_values([page], fallback_values=["999"]) == {
+        "104",
+        "104A",
+        "999",
+    }
 
 
 def test_ocr_specification_uses_vetted_text_mentions_as_fallback():
@@ -106,12 +121,52 @@ def test_ocr_specification_uses_vetted_text_mentions_as_fallback():
     assert specification_callout_values([page], fallback_values=["104", "2024"]) == {"104"}
 
 
-def test_drawing_callouts_are_limited_to_specification_values():
+def test_drawing_callouts_are_scored_against_specification_values():
     callouts = [
-        CalloutOccurrence("a", "104", 1, (0.1, 0.2, 0.2, 0.3)),
-        CalloutOccurrence("b", "108", 1, (0.3, 0.2, 0.4, 0.3)),
+        CalloutOccurrence("a", "104", 1, (0.1, 0.2, 0.2, 0.3), confidence=55.0),
+        CalloutOccurrence("b", "108", 1, (0.3, 0.2, 0.4, 0.3), confidence=70.0),
     ]
-    assert [item.value for item in filter_callouts_by_values(callouts, {"104"})] == ["104"]
+    ranked = filter_callouts_by_values(callouts, {"104"})
+    assert [item.value for item in ranked] == ["104"]
+    assert ranked[0].method == "spec_exact"
+    assert ranked[0].detection_score is not None
+
+
+def test_high_confidence_drawing_only_callout_survives_and_confusable_value_matches_spec():
+    callouts = [
+        CalloutOccurrence("a", "I04", 1, (0.1, 0.2, 0.2, 0.3), confidence=72.0),
+        CalloutOccurrence("b", "118", 1, (0.3, 0.2, 0.4, 0.3), confidence=95.0),
+    ]
+    ranked = filter_callouts_by_values(callouts, {"104"})
+    assert [(item.value, item.method) for item in ranked] == [
+        ("104", "spec_fuzzy"),
+        ("118", "drawing_only"),
+    ]
+
+
+def test_unique_one_edit_spec_match_recovers_damaged_low_confidence_callout():
+    callouts = [
+        CalloutOccurrence("a", "�204}", 1, (0.1, 0.2, 0.2, 0.3), confidence=8.0),
+    ]
+    ranked = filter_callouts_by_values(callouts, {"1204": 1.0, "1207": 1.0})
+    assert len(ranked) == 1
+    assert ranked[0].value == "1204"
+    assert ranked[0].method == "spec_fuzzy"
+    assert ranked[0].detection_score == 0.348
+
+
+def test_one_edit_spec_match_must_be_unambiguous():
+    callouts = [
+        CalloutOccurrence("a", "1209", 1, (0.1, 0.2, 0.2, 0.3), confidence=40.0),
+    ]
+    assert filter_callouts_by_values(callouts, {"1201": 1.0, "1202": 1.0}) == []
+
+
+def test_same_length_damage_is_not_silently_mapped_to_the_wrong_spec_value():
+    callouts = [
+        CalloutOccurrence("a", "L304", 1, (0.1, 0.2, 0.2, 0.3), confidence=20.0),
+    ]
+    assert filter_callouts_by_values(callouts, {"1204": 1.0, "1205": 1.0}) == []
 
 
 def test_sheet_header_identifies_a_drawing_page_without_becoming_a_callout():
@@ -156,16 +211,29 @@ def test_spaced_and_ocr_confused_subfigure_labels_are_detected():
     assert {figure.figure_id for figure in figures} >= {"14A", "14B"}
 
 
-def test_drawing_figures_are_limited_to_specification_ids():
+def test_drawing_figures_prefer_specification_ids_without_hard_filtering_clear_labels():
     figures = [
         FigureOccurrence("14A", 2, (0.1, 0.2, 0.2, 0.3), confidence=80.0),
         FigureOccurrence("14A", 2, (0.2, 0.2, 0.3, 0.3), confidence=95.0),
         FigureOccurrence("15", 3, (0.1, 0.2, 0.2, 0.3), confidence=99.0),
     ]
     filtered = filter_figure_occurrences(figures, {"14A"})
-    assert len(filtered) == 1
+    assert len(filtered) == 2
     assert filtered[0].figure_id == "14A"
     assert filtered[0].confidence == 95.0
+    assert filtered[0].method == "spec_exact"
+    assert filtered[1].figure_id == "15"
+    assert filtered[1].method == "drawing_only"
+
+
+def test_exact_specification_figure_can_rescue_zero_confidence_tiled_ocr():
+    figures = [
+        FigureOccurrence("12A", 18, (0.15, 0.22, 0.42, 0.25), confidence=0.0),
+    ]
+    filtered = filter_figure_occurrences(figures, {"12A"})
+    assert len(filtered) == 1
+    assert filtered[0].method == "spec_exact"
+    assert filtered[0].detection_score == 0.38
 
 
 def test_callouts_are_assigned_to_nearest_supported_subfigure():

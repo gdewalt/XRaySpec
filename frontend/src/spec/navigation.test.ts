@@ -81,10 +81,49 @@ describe("outline + scopes", () => {
     const figFirst = new Map([["3", 1]]);
     const items = detectOutline(entries, figFirst);
     const labels = items.map((i) => i.label);
-    expect(labels).toContain("APPARATUS FOR SIGNAL RECEPTION");
+    expect(labels).not.toContain("APPARATUS FOR SIGNAL RECEPTION");
     expect(labels).toContain("BACKGROUND OF THE INVENTION");
     expect(items.some((i) => i.kind === "figure" && i.label === "FIG. 3")).toBe(true);
     expect(labels).not.toContain("Some prose here.");
+  });
+  it("starts at specification headings and joins wrapped headings from US 7,840,427", () => {
+    const patent = [
+      grant(0, 1, "SHARED TRANSPORT SYSTEMAND"),
+      grant(1, 2, "SERVICENETWORK"),
+      grant(2, 6, "FIELD OF THE INVENTION"),
+      grant(3, 13, "BACKGROUND OF THE INVENTION"),
+      grant(4, 5, "DETAILED DESCRIPTION OF THE PREFERRED", 7),
+      grant(5, 6, "EMBODIMENTS", 7),
+      grant(6, 10, "What is claimed is:", 16),
+      grant(7, 11, "1. A shared transportation system.", 16),
+    ];
+
+    expect(detectOutline(patent, new Map()).map((item) => item.label)).toEqual([
+      "FIELD OF THE INVENTION",
+      "BACKGROUND OF THE INVENTION",
+      "DETAILED DESCRIPTION OF THE PREFERRED EMBODIMENTS",
+    ]);
+  });
+  it("keeps the specification before figures and leaves claims to the claims outline", () => {
+    const withClaimsHeading = [
+      grant(0, 1, "BACKGROUND OF THE INVENTION"),
+      grant(1, 2, "FIG. 2 illustrates an embodiment."),
+      grant(2, 3, "DETAILED DESCRIPTION"),
+      grant(3, 4, "CLAIMS"),
+      grant(4, 5, "1. A method comprising steps."),
+      grant(5, 6, "APPARATUS", 2),
+    ];
+
+    const items = detectOutline(withClaimsHeading, new Map([
+      ["2", 1],
+      ["99", 5],
+    ]));
+
+    expect(items.map((item) => item.label)).toEqual([
+      "BACKGROUND OF THE INVENTION",
+      "DETAILED DESCRIPTION",
+      "FIG. 2",
+    ]);
   });
   it("finds where claims begin", () => {
     expect(claimsStartOrdinal(entries)).toBe(3);

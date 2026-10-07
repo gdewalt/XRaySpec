@@ -18,6 +18,24 @@ export type OutlineItem = {
 // plus a few well-known single-word headings.
 const HEADING_RE = /^[A-Z][A-Z0-9 ,.'()\-/&]{3,58}$/;
 const SINGLE_WORD_HEADINGS = new Set(["ABSTRACT", "CLAIMS", "BACKGROUND", "SUMMARY", "DRAWINGS"]);
+const CLAIMS_START = /^(claims?|what is claimed|i claim)\b/i;
+const SPECIFICATION_HEADING = new RegExp(
+  `^(?:${[
+    "field\\s+of\\s+the\\s+invention",
+    "technical\\s+field",
+    "background(?:\\s+of\\s+the\\s+invention)?",
+    "summary(?:\\s+of\\s+the\\s+invention)?",
+    "brief\\s+description\\s+of\\s+the\\s+drawings",
+    "description\\s+of\\s+the\\s+drawings",
+    "detailed\\s+description",
+    "description\\s+of\\s+(?:the\\s+)?(?:preferred\\s+)?embodiments?",
+    "cross-reference\\s+to\\s+related\\s+applications?",
+    "related\\s+(?:art|applications?)",
+    "objects?\\s+of\\s+the\\s+invention",
+    "abstract",
+  ].join("|")})`,
+  "i",
+);
 
 function isHeading(text: string): boolean {
   const t = text.trim();
@@ -28,27 +46,69 @@ function isHeading(text: string): boolean {
   return words >= 2 ? words <= 8 : SINGLE_WORD_HEADINGS.has(t);
 }
 
+function isHeadingFragment(text: string): boolean {
+  const value = text.trim();
+  return (
+    value === value.toUpperCase() &&
+    value.replace(/[^A-Za-z]/g, "").length >= 3 &&
+    /^[A-Z][A-Z0-9 ,.'()\-/&]{2,80}$/.test(value)
+  );
+}
+
+function adjacentHeadingLine(left: EntryDto, right: EntryDto): boolean {
+  if (left.page_index !== right.page_index || left.locator.kind !== right.locator.kind) return false;
+  if (left.locator.kind === "grant") {
+    return (
+      left.locator.column === right.locator.column &&
+      (right.locator.printed_line ?? 0) - (left.locator.printed_line ?? 0) <= 2
+    );
+  }
+  return true;
+}
+
 /** Section headings (from all-caps lines) plus a jump-to-first entry per figure. */
 export function detectOutline(
   entries: EntryDto[],
   figureFirstOrdinal: Map<string, number>,
 ): OutlineItem[] {
   const items: OutlineItem[] = [];
-  for (const e of entries) {
-    if (isHeading(e.display_text)) {
+  const claimsStart = claimsStartOrdinal(entries);
+  const specificationEntries = entries.filter(
+    (entry) => claimsStart === null || entry.ordinal < claimsStart,
+  );
+  for (let index = 0; index < specificationEntries.length; index += 1) {
+    const entry = specificationEntries[index];
+    if (!isHeadingFragment(entry.display_text)) continue;
+    const fragments = [entry.display_text.trim()];
+    let end = index;
+    while (
+      end + 1 < specificationEntries.length &&
+      fragments.length < 3 &&
+      isHeadingFragment(specificationEntries[end + 1].display_text) &&
+      adjacentHeadingLine(specificationEntries[end], specificationEntries[end + 1])
+    ) {
+      end += 1;
+      fragments.push(specificationEntries[end].display_text.trim());
+    }
+    const label = fragments.join(" ").replace(/\s+/g, " ");
+    // Start the outline at the specification itself, excluding the all-caps
+    // patent title that precedes FIELD/BACKGROUND on grant cover pages.
+    if (SPECIFICATION_HEADING.test(label) || (items.length > 0 && isHeading(label))) {
       items.push({
-        ordinal: e.ordinal,
-        label: e.display_text.trim(),
-        ref: refShort(e.locator),
+        ordinal: entry.ordinal,
+        label,
+        ref: refShort(entry.locator),
         kind: "heading",
       });
     }
+    index = end;
   }
   const byOrdinal = new Map(entries.map((e) => [e.ordinal, e]));
   const figures = [...figureFirstOrdinal.entries()].sort((a, b) =>
     a[0].localeCompare(b[0], undefined, { numeric: true }),
   );
   for (const [figId, ordinal] of figures) {
+    if (claimsStart !== null && ordinal >= claimsStart) continue;
     const e = byOrdinal.get(ordinal);
     if (e) {
       items.push({ ordinal, label: `FIG. ${figId}`, ref: refShort(e.locator), kind: "figure" });
@@ -65,8 +125,6 @@ export function searchEntries(entries: EntryDto[], query: string): number[] {
 }
 
 export type SearchScope = "all" | "claims" | "figures";
-
-const CLAIMS_START = /^(claims?|what is claimed|i claim)\b/i;
 
 /** The ordinal where the claims section begins, or null if none is detected. */
 export function claimsStartOrdinal(entries: EntryDto[]): number | null {

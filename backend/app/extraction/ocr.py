@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .config import ExtractionConfig
 from .model import Word
@@ -177,6 +177,7 @@ def _tesseract_words(
     *,
     psm: int,
     thresholding_method: int = 2,
+    char_whitelist: str | None = None,
 ) -> list[Word]:
     import pytesseract
     from pytesseract import Output
@@ -186,6 +187,8 @@ def _tesseract_words(
         f"-c thresholding_method={thresholding_method} "
         "-c preserve_interword_spaces=1"
     )
+    if char_whitelist:
+        tess_config += f" -c tessedit_char_whitelist={char_whitelist}"
     data = pytesseract.image_to_data(
         image,
         lang="+".join(config.ocr_languages),
@@ -404,6 +407,43 @@ def dedupe_words(words: Iterable[Word]) -> list[Word]:
     return sorted(kept, key=lambda item: (item.cy, item.x0))
 
 
+def fuse_drawing_words(words: Iterable[Word]) -> list[Word]:
+    """Fuse overlapping drawing OCR results and reward cross-pass agreement.
+
+    Figure and callout profiles intentionally overlap. Repeated recognition at
+    the same coordinates is useful evidence, so the retained word receives a
+    small confidence boost instead of merely discarding its duplicates.
+    """
+    groups: list[list[Word]] = []
+    for word in words:
+        token = word.text.strip().casefold()
+        group = next(
+            (
+                candidate
+                for candidate in groups
+                if candidate[0].text.strip().casefold() == token
+                and (
+                    _box_iou(candidate[0], word) >= 0.25
+                    or math.hypot(candidate[0].cx - word.cx, candidate[0].cy - word.cy) <= 0.008
+                )
+            ),
+            None,
+        )
+        if group is None:
+            groups.append([word])
+        else:
+            group.append(word)
+
+    fused: list[Word] = []
+    for group in groups:
+        best = max(group, key=lambda item: item.confidence or 0.0)
+        if best.confidence is not None and len(group) > 1:
+            boost = min(8.0, 2.0 * (len(group) - 1))
+            best = replace(best, confidence=min(100.0, best.confidence + boost))
+        fused.append(best)
+    return sorted(fused, key=lambda item: (item.cy, item.x0))
+
+
 def ocr_page_words(
     pdf_bytes: bytes, page_index: int, config: ExtractionConfig, *, psm: int | None = None
 ) -> list[Word]:
@@ -477,27 +517,77 @@ def ocr_specification_words(
 def ocr_drawing_words(
     pdf_bytes: bytes, page_index: int, config: ExtractionConfig
 ) -> list[Word]:
-    """OCR a drawing sheet at high resolution and all configured orientations."""
+    """OCR drawing labels with independent figure and callout profiles.
+
+    General prose OCR is a poor fit for sparse patent drawings. Each configured
+    orientation therefore gets two constrained passes: an alphanumeric figure
+    pass (``FIG. 14B``) and a numeric reference-callout pass (``104A``). Their
+    source-coordinate boxes are fused only after rotation is undone.
+    """
     image = render_page(pdf_bytes, page_index, config.ocr_drawing_dpi)
     clean, deskew_angle = preprocess_image(image, config)
+
+    figure_chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz."
+    callout_chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+    def tiled_figure_pass() -> list[Word]:
+        """Recover small horizontal figure captions from diagram-heavy sheets.
+
+        Full-page sparse segmentation can lose a caption amid connector lines and
+        halftoning. Overlapping half-width bands give Tesseract a local text block
+        without changing the PDF coordinate system.
+        """
+        tiled: list[Word] = []
+        for y0 in (0.10, 0.30, 0.50, 0.70):
+            for x0 in (0.03, 0.47):
+                crop = (x0, y0, min(0.97, x0 + 0.53), min(0.96, y0 + 0.25))
+                pixels = (
+                    round(crop[0] * clean.width),
+                    round(crop[1] * clean.height),
+                    round(crop[2] * clean.width),
+                    round(crop[3] * clean.height),
+                )
+                recognized = _tesseract_words(
+                    clean.crop(pixels),
+                    config,
+                    psm=6,
+                    thresholding_method=2,
+                    char_whitelist=figure_chars,
+                )
+                tiled.extend(_map_crop_words(recognized, crop))
+        return tiled
 
     def orientation_pass(thresholding_method: int) -> list[Word]:
         recognized: list[Word] = []
         for rotation in config.ocr_drawing_rotations:
             rotated = clean.rotate(rotation, expand=True, fillcolor=255)
-            oriented = _tesseract_words(
+            figures = _tesseract_words(
                 rotated,
                 config,
-                psm=config.ocr_sparse_psm,
+                psm=config.ocr_drawing_figure_psm,
                 thresholding_method=thresholding_method,
+                char_whitelist=figure_chars,
             )
-            recognized.extend(_unrotate_right_angle_words(oriented, rotation))
-        return dedupe_words(recognized)
+            callouts = _tesseract_words(
+                rotated,
+                config,
+                psm=config.ocr_drawing_callout_psm,
+                thresholding_method=thresholding_method,
+                char_whitelist=callout_chars,
+            )
+            recognized.extend(
+                _unrotate_right_angle_words([*figures, *callouts], rotation)
+            )
+        return fuse_drawing_words(recognized)
 
-    candidates = [orientation_pass(2)]
-    # Drawing sheets are already four orientation passes. Only repeat that set
-    # when the combined result is empty or demonstrably low-confidence.
-    if _needs_retry(candidates[0], config, minimum_words=1):
+    primary = orientation_pass(2)
+    if not any("fig" in word.text.casefold() for word in primary):
+        primary = fuse_drawing_words([*primary, *tiled_figure_pass()])
+    candidates = [primary]
+    # Eight specialized orientation/profile passes already provide substantial
+    # coverage. Repeat them with alternate thresholding only when they found no
+    # text at all; generic prose confidence is not meaningful on line drawings.
+    if not candidates[0]:
         candidates.append(orientation_pass(1))
     recognized = max(candidates, key=lambda words: _candidate_score(words, config))
     return _unrotate_words(recognized, deskew_angle, clean.size)

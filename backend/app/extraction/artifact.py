@@ -56,6 +56,7 @@ class Entry:
     reference_confidence: Confidence = "high"
     section: str | None = None
     paragraph_start: bool = False
+    paragraph_source: str | None = None  # layout | printed_marker | uspto_numbered
     indent_level: int = 0
     warnings: list[str] = field(default_factory=list)
 
@@ -92,6 +93,7 @@ class FigureOccurrence:
     page_index: int
     box: Box
     confidence: float | None = None
+    detection_score: float | None = None
     method: str = "sparse_ocr"
 
 
@@ -105,6 +107,7 @@ class CalloutOccurrence:
     box: Box
     figure_id: str | None = None
     confidence: float | None = None
+    detection_score: float | None = None
     method: str = "sparse_ocr"
 
 

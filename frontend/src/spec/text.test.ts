@@ -4,6 +4,7 @@ import type { EntryDto } from "../api/types";
 import {
   dehyphenateLineBreaks,
   deriveIndentLevels,
+  deriveParagraphStarts,
   formatSelectionWithCitation,
   joinEntryText,
   normalizeCopiedText,
@@ -67,6 +68,29 @@ describe("text reconstruction", () => {
       entry("e2", "indented", [0.114, 0.16, 0.4, 0.18]),
     ];
     expect(deriveIndentLevels(entries).get("e2")).toBe(1);
+  });
+
+  it("keeps the real 1:31 indent and suppresses legacy false breaks in US 7,840,427", () => {
+    const lines = [30, 31, 38, 39, 40, 43, 44].map((line, index) =>
+      entry(`e${line}`, `line ${line}`, [line === 31 ? 0.143 : 0.128, 0.46 + index * 0.013, 0.44, 0.48 + index * 0.013], {
+        locator: { kind: "grant", column: 1, printed_line: line },
+        paragraph_start: [31, 39, 40, 44].includes(line),
+        indent_level: line === 31 ? 2 : 0,
+      }),
+    );
+
+    expect([...deriveParagraphStarts(lines)]).toEqual(["e31"]);
+  });
+
+  it("trusts an explicitly numbered USPTO paragraph even when it is flush left", () => {
+    const entries = [
+      entry("e0", "prior", [0.1, 0.1, 0.4, 0.12]),
+      entry("e1", "numbered paragraph", [0.1, 0.12, 0.4, 0.14], {
+        paragraph_start: true,
+        paragraph_source: "uspto_numbered",
+      }),
+    ];
+    expect(deriveParagraphStarts(entries).has("e1")).toBe(true);
   });
 });
 

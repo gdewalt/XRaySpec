@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from app.enrichment import (
     align_entries,
     enrich_from_page_html,
@@ -131,6 +133,11 @@ def test_ppubs_alignment_uses_clean_text_and_paragraph_boundaries():
     entries = [
         _entry("The houslng 104 receives the shaft 108.", 1),
         _entry("The shaft rotates freely.", 2),
+        replace(
+            _entry("continued without a marker.", 3),
+            paragraph_start=True,
+            paragraph_source="layout",
+        ),
     ]
     aligned, identity = enrich_from_ppubs_html(
         entries, PPUBS_HTML, "US7840427B2", DEFAULT_CONFIG
@@ -138,4 +145,10 @@ def test_ppubs_alignment_uses_clean_text_and_paragraph_boundaries():
     assert identity.status == "verified"
     assert aligned[0].provenance.provider == "uspto_ppubs"
     assert aligned[0].paragraph_start is True
+    assert aligned[0].paragraph_source == "uspto_numbered"
     assert aligned[1].paragraph_start is True
+    assert aligned[1].paragraph_source == "uspto_numbered"
+    # This line is still inside USPTO paragraph (3), so its layout guess must
+    # not create the kind of false extra spacing seen between grant lines.
+    assert aligned[2].paragraph_start is False
+    assert aligned[2].paragraph_source is None

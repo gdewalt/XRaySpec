@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from PIL import Image
 
@@ -14,7 +16,9 @@ from app.extraction.ocr import (
     _map_crop_words,
     _unrotate_right_angle_words,
     dedupe_words,
+    fuse_drawing_words,
     ocr_available,
+    ocr_drawing_words,
     ocr_quality,
     words_from_tsv,
 )
@@ -141,6 +145,78 @@ def test_orientation_passes_deduplicate_the_same_label_by_confidence():
     assert result[0].confidence == 94.0
 
 
+def test_drawing_fusion_rewards_agreement_between_specialized_passes():
+    words = [
+        Word("104", 0.10, 0.20, 0.15, 0.23, confidence=82.0),
+        Word("104", 0.101, 0.201, 0.151, 0.231, confidence=90.0),
+    ]
+    result = fuse_drawing_words(words)
+    assert len(result) == 1
+    assert result[0].confidence == 92.0
+
+
+def test_drawing_ocr_runs_separate_figure_and_callout_profiles(monkeypatch):
+    image = Image.new("L", (100, 120), 255)
+    calls: list[tuple[int, str | None]] = []
+
+    monkeypatch.setattr(ocr_module, "render_page", lambda *_args: image)
+    monkeypatch.setattr(ocr_module, "preprocess_image", lambda value, _config: (value, 0.0))
+
+    def recognize(
+        _image,
+        _config,
+        *,
+        psm,
+        thresholding_method,
+        char_whitelist=None,
+    ):
+        del thresholding_method
+        calls.append((psm, char_whitelist))
+        if char_whitelist and "." in char_whitelist:
+            return [Word("FIG.", 0.1, 0.1, 0.2, 0.15, confidence=92.0)]
+        return [Word("104", 0.4, 0.4, 0.5, 0.45, confidence=94.0)]
+
+    monkeypatch.setattr(ocr_module, "_tesseract_words", recognize)
+    config = replace(DEFAULT_CONFIG, ocr_drawing_rotations=(0,))
+    words = ocr_drawing_words(b"pdf", 0, config)
+
+    assert [word.text for word in words] == ["FIG.", "104"]
+    assert [psm for psm, _ in calls] == [
+        config.ocr_drawing_figure_psm,
+        config.ocr_drawing_callout_psm,
+    ]
+    assert "." in (calls[0][1] or "")
+    assert "." not in (calls[1][1] or "")
+
+
+def test_drawing_ocr_falls_back_to_local_tiles_when_full_page_misses_figure(monkeypatch):
+    image = Image.new("L", (100, 120), 255)
+    calls: list[int] = []
+    monkeypatch.setattr(ocr_module, "render_page", lambda *_args: image)
+    monkeypatch.setattr(ocr_module, "preprocess_image", lambda value, _config: (value, 0.0))
+
+    def recognize(
+        _image,
+        _config,
+        *,
+        psm,
+        thresholding_method,
+        char_whitelist=None,
+    ):
+        del thresholding_method, char_whitelist
+        calls.append(psm)
+        if psm == 6:
+            return [Word("Fig12a", 0.1, 0.1, 0.3, 0.2, confidence=70.0)]
+        return [Word("104", 0.4, 0.4, 0.5, 0.45, confidence=90.0)]
+
+    monkeypatch.setattr(ocr_module, "_tesseract_words", recognize)
+    config = replace(DEFAULT_CONFIG, ocr_drawing_rotations=(0,))
+    words = ocr_drawing_words(b"pdf", 0, config)
+
+    assert any("fig12a" in word.text.casefold() for word in words)
+    assert calls.count(6) == 8
+
+
 def test_route_page_uses_separate_column_ocr_for_scanned_specification():
     full_words = [
         Word(f"word{i}", 0.10, 0.10 + (i % 60) * 0.01, 0.20, 0.11 + (i % 60) * 0.01)
@@ -250,7 +326,7 @@ def test_hybrid_mode_when_pages_mixed():
     assert art.quality["ocr_pages"] == 1
 
 
-def test_ocr_paragraph_hierarchy_marks_breaks():
+def test_ocr_paragraph_hierarchy_alone_does_not_create_random_breaks():
     words = [
         Word("1", 0.28, 0.045, 0.30, 0.062, confidence=95.0),
         Word("2", 0.70, 0.045, 0.72, 0.062, confidence=95.0),
@@ -280,4 +356,4 @@ def test_ocr_paragraph_hierarchy_marks_breaks():
     )
     left = [entry for entry in art.entries if entry.locator.column == 1]
     assert left[0].paragraph_start is False
-    assert left[5].paragraph_start is True
+    assert left[5].paragraph_start is False

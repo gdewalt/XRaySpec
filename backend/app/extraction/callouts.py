@@ -6,10 +6,10 @@ callouts (``104``) with boxes. This module:
   1. classifies a page as a drawing (sparse, numeric-heavy);
   2. detects the figure a drawing page shows (when unambiguous);
   3. extracts callout occurrences (numeral labels + boxes);
-  4. associates each text numeral mention to callout(s) at the **simple tier**
-     (exact value + figure context), returning verified / probable / ambiguous /
-     unresolved — never a silent guess (the ambiguous case is a chooser). The
-     calibrated multi-signal ranker is deferred (§12.7, Q20).
+  4. scores candidates from OCR confidence and specification evidence; and
+  5. associates each text numeral mention to callout(s), returning verified /
+     probable / ambiguous / unresolved — never a silent guess (the ambiguous
+     case is a chooser).
 
 Pure over the abstract word model, unit-testable; drawing OCR is an adapter.
 
@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 
 from .artifact import (
@@ -46,6 +46,10 @@ _DRAWING_FIG_REF = re.compile(
     r"([0-9ILOilo]+(?:[A-Za-z]|\s+[A-Za-z](?![A-Za-z]))?)",
     re.IGNORECASE,
 )
+_DRAWING_CALLOUT = re.compile(r"^[0-9ILOQSBZ]{2,4}[A-Z]?$", re.IGNORECASE)
+_DIGIT_CONFUSIONS = str.maketrans(
+    {"I": "1", "L": "1", "O": "0", "Q": "0", "S": "5", "B": "8", "Z": "2"}
+)
 
 
 def _is_year(token: str) -> bool:
@@ -55,12 +59,20 @@ def _is_year(token: str) -> bool:
 def _sheet_header_word_ids(words: list[Word]) -> set[int]:
     """Return words belonging to a top-of-page ``Sheet X of Y`` header."""
     excluded: set[int] = set()
+    top_words = [word for word in words if word.cy <= 0.18]
     for line in group_lines(words):
         if line.cy > 0.18:
             continue
         text = " ".join(word.text.strip() for word in line.words).strip()
         if _SHEET_HEADER.search(text):
             excluded.update(id(word) for word in line.words)
+    # Multi-orientation OCR can interleave duplicate tokens enough to disrupt the
+    # phrase regex even though the authoritative native header is present. The
+    # simultaneous top-band words "Sheet" and "of" are still a strong patent-
+    # drawing signature; in that case discard the complete masthead band.
+    top_tokens = {word.text.strip().strip(_SPEC_TOKEN_TRIM).casefold() for word in top_words}
+    if "sheet" in top_tokens and "of" in top_tokens:
+        excluded.update(id(word) for word in top_words if word.y0 < 0.12)
     return excluded
 
 
@@ -74,26 +86,23 @@ def _without_sheet_headers(words: list[Word]) -> list[Word]:
     return [word for word in words if id(word) not in excluded and word.y0 >= cutoff]
 
 
-def specification_callout_values(
+def specification_callout_evidence(
     pages: Iterable[Page], *, fallback_values: Iterable[str] = ()
-) -> set[str]:
+) -> dict[str, float]:
     """Find the bold reference numerals printed in specification columns.
 
-    Native PDFs carry font-weight evidence. Scanned/OCR-only specifications do
-    not, so those fall back to already-vetted textual numeral mentions rather
-    than accepting arbitrary numbers from drawings.
+    Bold native text is the strongest signal. Already-vetted textual mentions
+    are retained as a softer signal even when some font metadata exists; using
+    font weight as an all-or-nothing gate caused valid drawing labels to vanish
+    whenever one page exposed incomplete or generic font information.
     """
     words = [word for page in pages for word in page.words]
-    styled = [word for word in words if word.is_bold is not None]
-    if not styled:
-        return {
-            value.strip().upper()
-            for value in fallback_values
-            if _CALLOUT.fullmatch(value.strip()) and not _is_year(value.strip())
-        }
-
-    values: set[str] = set()
-    for word in styled:
+    evidence = {
+        value.strip().upper(): 0.72
+        for value in fallback_values
+        if _CALLOUT.fullmatch(value.strip()) and not _is_year(value.strip())
+    }
+    for word in words:
         # The column bounds omit running headers, page/line-number gutters, and
         # the centre gutter while retaining both prose columns.
         if not word.is_bold or not (0.075 <= word.cy <= 0.95):
@@ -102,21 +111,173 @@ def specification_callout_values(
             continue
         token = word.text.strip().strip(_SPEC_TOKEN_TRIM).upper()
         if _CALLOUT.fullmatch(token) and not _is_year(token):
-            values.add(token)
-    return values
+            evidence[token] = 1.0
+    return evidence
+
+
+def specification_callout_values(
+    pages: Iterable[Page], *, fallback_values: Iterable[str] = ()
+) -> set[str]:
+    """Compatibility view of :func:`specification_callout_evidence`."""
+    return set(specification_callout_evidence(pages, fallback_values=fallback_values))
+
+
+def _ocr_strength(confidence: float | None) -> float:
+    # Native PDF text has no OCR confidence and is more reliable than OCR.
+    return 0.96 if confidence is None else max(0.0, min(1.0, confidence / 100.0))
+
+
+def _callout_candidates(raw: str) -> set[str]:
+    """Plausible normalized values for one drawing token.
+
+    Tesseract commonly substitutes I/l for 1, O/Q for 0, S for 5, B for 8,
+    and Z for 2. A trailing letter is also retained as a possible real suffix
+    (``104A``), with the specification vocabulary deciding ambiguous cases.
+    """
+    candidates: set[str] = set()
+    token = raw.strip().upper()
+    # Sparse OCR often leaves a parenthesis/replacement glyph attached or joins
+    # a short label to a neighboring letter. Analyze bounded numeric-ish runs
+    # rather than requiring the whole OCR token to be clean.
+    for fragment in re.findall(
+        r"(?<![A-Z0-9])[0-9ILOQSBZ]{2,4}[A-Z]?(?![A-Z0-9])", token
+    ):
+        if not _DRAWING_CALLOUT.fullmatch(fragment) or not any(
+            char.isdigit() for char in fragment
+        ):
+            continue
+        if _CALLOUT.fullmatch(fragment) and not _is_year(fragment):
+            candidates.add(fragment)
+        translated = fragment.translate(_DIGIT_CONFUSIONS)
+        if translated.isdigit() and 2 <= len(translated) <= 4 and not _is_year(translated):
+            candidates.add(translated)
+        if len(fragment) >= 3 and fragment[-1].isalpha():
+            prefix = fragment[:-1].translate(_DIGIT_CONFUSIONS)
+            suffixed = f"{prefix}{fragment[-1]}"
+            if prefix.isdigit() and _CALLOUT.fullmatch(suffixed) and not _is_year(prefix):
+                candidates.add(suffixed)
+    return candidates
+
+
+def _edit_distance(left: str, right: str) -> int:
+    previous = list(range(len(right) + 1))
+    for row, left_char in enumerate(left, start=1):
+        current = [row]
+        for column, right_char in enumerate(right, start=1):
+            current.append(
+                min(
+                    current[-1] + 1,
+                    previous[column] + 1,
+                    previous[column - 1] + (left_char != right_char),
+                )
+            )
+        previous = current
+    return previous[-1]
+
+
+def _box_iou(
+    left: tuple[float, float, float, float], right: tuple[float, float, float, float]
+) -> float:
+    ix0, iy0 = max(left[0], right[0]), max(left[1], right[1])
+    ix1, iy1 = min(left[2], right[2]), min(left[3], right[3])
+    intersection = max(0.0, ix1 - ix0) * max(0.0, iy1 - iy0)
+    left_area = max(0.0, left[2] - left[0]) * max(0.0, left[3] - left[1])
+    right_area = max(0.0, right[2] - right[0]) * max(0.0, right[3] - right[1])
+    union = left_area + right_area - intersection
+    return intersection / union if union else 0.0
 
 
 def filter_callouts_by_values(
-    callouts: Iterable[CalloutOccurrence], allowed_values: set[str]
+    callouts: Iterable[CalloutOccurrence], allowed_values: set[str] | Mapping[str, float]
 ) -> list[CalloutOccurrence]:
-    """Keep only clearly numeric drawing labels supported by specification text."""
-    return [
-        callout
-        for callout in callouts
-        if callout.value.strip().upper() in allowed_values
-        and _CALLOUT.fullmatch(callout.value.strip())
-        and not _is_year(callout.value.strip())
-    ]
+    """Rank drawing labels using OCR quality and specification evidence.
+
+    Specification matches are a strong prior, not a destructive allow-list.
+    High-confidence drawing-only candidates survive with a lower score so one
+    missed text reference cannot erase a real callout.
+    """
+    if isinstance(allowed_values, Mapping):
+        evidence = {value.upper(): float(score) for value, score in allowed_values.items()}
+    else:
+        evidence = {value.upper(): 1.0 for value in allowed_values}
+
+    ranked: list[CalloutOccurrence] = []
+    for callout in callouts:
+        raw = callout.value.strip().upper()
+        forms = _callout_candidates(raw)
+        if not forms:
+            continue
+        exact = raw if raw in evidence else None
+        matched = exact or max(
+            forms.intersection(evidence), key=lambda value: evidence[value], default=None
+        )
+        edit_match = False
+        if matched is None and evidence:
+            distances = {
+                expected: min(
+                    (
+                        _edit_distance(form, expected)
+                        for form in forms
+                        # Only repair a single missing/extra glyph here. Same-
+                        # length substitutions are too easy to mis-map among a
+                        # dense series such as 1201..1209; direct confusion
+                        # normalization above already handles I/1, O/0, etc.
+                        if abs(len(form) - len(expected)) == 1
+                    ),
+                    default=99,
+                )
+                for expected in evidence
+            }
+            best_distance = min(distances.values())
+            closest = [value for value, distance in distances.items() if distance == best_distance]
+            if best_distance == 1 and len(closest) == 1:
+                matched = closest[0]
+                edit_match = True
+        value = matched or max(
+            forms, key=lambda item: (_CALLOUT.fullmatch(item) is not None, len(item))
+        )
+        support = evidence.get(value, 0.0) * (0.75 if edit_match else 1.0)
+        ocr = _ocr_strength(callout.confidence)
+        score = 0.60 * ocr + 0.40 * support if support else 0.82 * ocr
+        if support:
+            method = "spec_exact" if exact else "spec_fuzzy"
+        else:
+            method = "drawing_only"
+        # Supported candidates tolerate weak OCR; unsupported candidates must be
+        # especially clear to avoid promoting arbitrary drawing dimensions.
+        if (support and score < 0.34) or (not support and score < 0.70):
+            continue
+        ranked.append(
+            replace(
+                callout,
+                value=value,
+                detection_score=round(score, 3),
+                method=method,
+            )
+        )
+
+    # Multiple OCR profiles may propose different readings for the same glyph.
+    # Keep the strongest spatial candidate rather than drawing stacked boxes.
+    kept: list[CalloutOccurrence] = []
+    for candidate in sorted(
+        ranked, key=lambda item: item.detection_score or 0.0, reverse=True
+    ):
+        cx = (candidate.box[0] + candidate.box[2]) / 2
+        cy = (candidate.box[1] + candidate.box[3]) / 2
+        duplicate = any(
+            existing.page_index == candidate.page_index
+            and (
+                _box_iou(existing.box, candidate.box) >= 0.25
+                or math.hypot(
+                    cx - (existing.box[0] + existing.box[2]) / 2,
+                    cy - (existing.box[1] + existing.box[3]) / 2,
+                ) <= 0.008
+            )
+            for existing in kept
+        )
+        if not duplicate:
+            kept.append(candidate)
+    return sorted(kept, key=lambda item: (item.page_index, item.box[1], item.box[0]))
 
 
 def is_drawing_page(words: list[Word], *, max_words: int = 120, min_numeric: float = 0.30) -> bool:
@@ -234,26 +395,45 @@ def detect_figure_occurrences(words: list[Word], page_index: int) -> list[Figure
 def filter_figure_occurrences(
     occurrences: Iterable[FigureOccurrence], expected_ids: set[str]
 ) -> list[FigureOccurrence]:
-    """Select the strongest drawing label for each specification figure per page."""
+    """Score and canonicalize drawing labels against specification references.
+
+    Expected identifiers substantially raise confidence but do not form a hard
+    allow-list. A clear label can therefore survive when the specification OCR
+    missed its textual reference.
+    """
     expected = {re.sub(r"\s+", "", value).upper(): value.upper() for value in expected_ids}
     strongest: dict[tuple[int, str], FigureOccurrence] = {}
     for occurrence in occurrences:
         normalized = re.sub(r"\s+", "", occurrence.figure_id).upper()
-        canonical = expected.get(normalized)
-        if canonical is None:
+        exact = expected.get(normalized)
+        fuzzy = next(
+            (
+                expected[candidate]
+                for candidate in _drawing_figure_candidates(normalized)
+                if candidate in expected
+            ),
+            None,
+        )
+        canonical = exact or fuzzy or normalized
+        ocr = _ocr_strength(occurrence.confidence)
+        if occurrence.method == "sparse_ocr_confusable":
+            ocr *= 0.92
+        support = 1.0 if exact else (0.82 if fuzzy else 0.0)
+        score = 0.62 * ocr + 0.38 * support if support else 0.82 * ocr
+        if (support and score < 0.34) or (not support and score < 0.70):
             continue
-        candidate = replace(occurrence, figure_id=canonical)
+        match_method = "spec_exact" if exact else ("spec_fuzzy" if fuzzy else "drawing_only")
+        candidate = replace(
+            occurrence,
+            figure_id=canonical,
+            detection_score=round(score, 3),
+            method=match_method,
+        )
         key = (candidate.page_index, canonical)
         current = strongest.get(key)
-        score = (
-            candidate.method != "sparse_ocr_confusable",
-            candidate.confidence if candidate.confidence is not None else -1.0,
-        )
-        current_score = (
-            current.method != "sparse_ocr_confusable",
-            current.confidence if current.confidence is not None else -1.0,
-        ) if current else None
-        if current_score is None or score > current_score:
+        if current is None or (candidate.detection_score or 0.0) > (
+            current.detection_score or 0.0
+        ):
             strongest[key] = candidate
     return sorted(strongest.values(), key=lambda item: (item.page_index, item.figure_id))
 
@@ -297,13 +477,21 @@ def assign_callouts_to_figures(
 
 
 def detect_callouts(
-    words: list[Word], page_index: int, figure_id: str | None
+    words: list[Word],
+    page_index: int,
+    figure_id: str | None,
+    figure_occurrences: Iterable[FigureOccurrence] = (),
 ) -> list[CalloutOccurrence]:
     words = _without_sheet_headers(words)
+    figure_boxes = [figure.box for figure in figure_occurrences if figure.page_index == page_index]
     callouts: list[CalloutOccurrence] = []
     for i, w in enumerate(words):
-        token = w.text.strip().upper()
-        if not _CALLOUT.match(token) or _is_year(token):
+        token = w.text.strip().strip(_SPEC_TOKEN_TRIM).upper()
+        if not _callout_candidates(token):
+            continue
+        # The numeric part of "FIG. 14B" is a navigation label, not a component
+        # callout. Its center falls inside the combined figure-label box.
+        if any(box[0] <= w.cx <= box[2] and box[1] <= w.cy <= box[3] for box in figure_boxes):
             continue
         callouts.append(
             CalloutOccurrence(
