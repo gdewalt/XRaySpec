@@ -1347,6 +1347,12 @@ mark.mention.clickable:hover {
   background: var(--surface-raised);
   box-shadow: var(--shadow-lg);
 }
+/* The panel clips its rounded contents. Flip menus on the final rows upward so
+   the complete action surface remains visible inside the library panel. */
+.document-row:nth-last-child(-n + 2) .document-menu-popover {
+  top: auto;
+  bottom: calc(100% + 0.35rem);
+}
 .document-menu-move {
   display: grid;
   gap: 0.4rem;
