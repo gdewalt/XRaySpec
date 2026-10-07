@@ -32,7 +32,9 @@ class ProviderText:
 
     @property
     def clean_text(self) -> str:
-        return "\n".join(p for p in (self.description, self.claims) if p)
+        # Provider-specific paragraph boundaries are already embedded within each
+        # section. A section boundary alone must not create viewer paragraph spacing.
+        return " ".join(p for p in (self.description, self.claims) if p)
 
 
 def _strip(fragment: str) -> str:

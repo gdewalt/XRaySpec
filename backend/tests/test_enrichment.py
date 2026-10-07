@@ -105,7 +105,8 @@ PPUBS_HTML = """
 <section><h3>Background/Summary</h3>
 <p>(1) FIELD OF THE INVENTION<br>(2) The houslng 104 receives the shaft 108.</p></section>
 <section><h3>Description</h3>
-<p>(3) The shaft rotates freely.<br>(4) A final paragraph follows.</p></section>
+<p>(3) The shaft rotates freely.<br>continued without a marker.<br>
+(4) A final paragraph follows.</p><p>still the same numbered paragraph.</p></section>
 <section><h3>Claims</h3>
 <p>1. A transport method.<br>2. The method of claim 1.</p></section>
 </body></html>
@@ -120,13 +121,10 @@ def test_extract_ppubs_text_removes_markers_and_preserves_paragraphs():
     assert provider.description.splitlines() == [
         "FIELD OF THE INVENTION",
         "The houslng 104 receives the shaft 108.",
-        "The shaft rotates freely.",
-        "A final paragraph follows.",
+        "The shaft rotates freely. continued without a marker.",
+        "A final paragraph follows. still the same numbered paragraph.",
     ]
-    assert provider.claims.splitlines() == [
-        "1. A transport method.",
-        "2. The method of claim 1.",
-    ]
+    assert provider.claims == "1. A transport method. 2. The method of claim 1."
 
 
 def test_ppubs_alignment_uses_clean_text_and_paragraph_boundaries():

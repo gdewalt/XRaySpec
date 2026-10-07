@@ -86,20 +86,12 @@ class _PpubsParser(HTMLParser):
     def _finish_block(self) -> None:
         if not self._section or not self._block:
             return
-        if self._section == "claims":
-            self.sections[self._section].extend(text for text, _marker in self._block)
-            return
-        paragraphs: list[str] = []
-        current = ""
         for text, starts_numbered_paragraph in self._block:
-            if starts_numbered_paragraph and current:
-                paragraphs.append(current)
-                current = text
+            paragraphs = self.sections[self._section]
+            if starts_numbered_paragraph or not paragraphs:
+                paragraphs.append(text)
             else:
-                current = f"{current} {text}".strip()
-        if current:
-            paragraphs.append(current)
-        self.sections[self._section].extend(paragraphs)
+                paragraphs[-1] = f"{paragraphs[-1]} {text}".strip()
 
 
 def extract_ppubs_text(page_html: str) -> ProviderText:
