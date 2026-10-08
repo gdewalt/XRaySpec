@@ -34,7 +34,7 @@ export function App() {
   const body = !token ? (
     <Login />
   ) : view.mode === "viewer" ? (
-    <Viewer documentId={view.documentId} onBack={back} />
+    <Viewer documentId={view.documentId} />
   ) : (
     <DocumentsView onOpen={open} />
   );
@@ -72,7 +72,7 @@ export function App() {
             </button>
           )}
           {token && (
-            <button type="button" className="quiet-button sign-out" onClick={() => void signOut()}>
+            <button type="button" className="quiet-button sign-out" onClick={() => void signOut()} aria-label="Sign out" title="Sign out">
               <Icon name="log-out" size={17} />
               <span>Sign out</span>
             </button>

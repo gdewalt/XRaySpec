@@ -22,6 +22,7 @@ import type {
 } from "../api/types";
 import { getToken } from "../auth/session";
 import { formatSelectionWithCitation, normalizeCopiedText } from "../spec/text";
+import { Icon, type IconName } from "./Icon";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
 
@@ -31,13 +32,13 @@ type AnnotationDraft =
   | { kind: "highlight"; start: Point; end: Point }
   | { kind: "drawing"; points: Point[] };
 
-const PDF_TOOLS: { id: PdfTool; label: string }[] = [
-  { id: "select", label: "Select" },
-  { id: "bookmark", label: "Bookmark" },
-  { id: "note", label: "Note" },
-  { id: "highlight", label: "Highlight" },
-  { id: "drawing", label: "Draw" },
-  { id: "delete", label: "Delete" },
+const PDF_TOOLS: { id: PdfTool; label: string; icon: IconName }[] = [
+  { id: "select", label: "Select text", icon: "mouse-pointer" },
+  { id: "bookmark", label: "Add bookmark", icon: "bookmark" },
+  { id: "note", label: "Add note", icon: "message-square" },
+  { id: "highlight", label: "Highlight", icon: "highlighter" },
+  { id: "drawing", label: "Draw", icon: "pencil" },
+  { id: "delete", label: "Delete annotation", icon: "trash" },
 ];
 
 const PDF_MARK_COLORS = [
@@ -770,28 +771,30 @@ export function PdfPane({
         </span>
         <button
           type="button"
-          className="secondary"
+          className="icon-button"
           onClick={() => setScale((value) => Math.max(0.5, value - 0.15))}
           aria-label="Zoom out"
+          title="Zoom out"
         >
-          −
+          <Icon name="zoom-out" size={17} />
         </button>
         <button
           type="button"
-          className="secondary"
+          className="icon-button"
           onClick={() => setScale((value) => Math.min(3, value + 0.15))}
           aria-label="Zoom in"
+          title="Zoom in"
         >
-          +
+          <Icon name="zoom-in" size={17} />
         </button>
         <button
           type="button"
-          className="secondary"
+          className="icon-button"
           onClick={() => setRotation((value) => (value + 90) % 360)}
           title="Rotate 90°"
           aria-label="Rotate PDF 90 degrees"
         >
-          ⟳
+          <Icon name="rotate-cw" size={17} />
         </button>
         <div className="pdf-annotation-tools" role="toolbar" aria-label="PDF annotation tools">
           {PDF_TOOLS.map((item) => (
@@ -800,14 +803,16 @@ export function PdfPane({
               type="button"
               className={`secondary${tool === item.id ? " active" : ""}${item.id === "delete" ? " danger-icon" : ""}`}
               aria-pressed={tool === item.id}
+              aria-label={item.label}
+              title={item.label}
               onClick={() => setTool(item.id)}
             >
-              {item.label}
+              <Icon name={item.icon} size={16} />
             </button>
           ))}
           {(tool === "highlight" || tool === "drawing") && (
             <label className="pdf-color-control">
-              <span>Color</span>
+              <span className="pdf-color-swatch" style={{ backgroundColor: activeMarkColor }} aria-hidden="true" />
               <select
                 value={activeMarkColor}
                 aria-label={`${tool === "drawing" ? "Drawing" : "Highlight"} color`}

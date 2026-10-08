@@ -91,11 +91,13 @@ function PatentRow({
       <div className="row-actions">
         <button
           type="button"
-          className="secondary"
+          className="icon-button document-open-button"
           onClick={() => onOpen(doc.id)}
           disabled={!canOpen}
+          aria-label={`Open ${doc.title}`}
+          title="Open patent"
         >
-          Open <Icon name="arrow-up-right" size={16} />
+          <Icon name="arrow-up-right" size={18} />
         </button>
         <div
           className="document-menu"
@@ -307,9 +309,8 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
             <h2 id="docs-h">Patents</h2>
             <p>Grouped by workspace for faster review.</p>
           </div>
-          <button type="button" className="icon-button" onClick={load} aria-label="Refresh patents">
+          <button type="button" className="icon-button" onClick={load} aria-label="Refresh patents" title="Refresh patents">
             <Icon name="refresh" size={17} />
-            <span>Refresh</span>
           </button>
         </div>
         <form className="workspace-create" onSubmit={createWorkspace}>

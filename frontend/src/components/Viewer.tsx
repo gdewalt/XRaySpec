@@ -54,6 +54,7 @@ import {
   normalizeCopiedText,
 } from "../spec/text";
 import { PdfPane } from "./PdfPane";
+import { Icon, type IconName } from "./Icon";
 
 type Layout = "text" | "pdf" | "split" | "details";
 type Selection = { start: number; end: number } | null;
@@ -312,7 +313,7 @@ function PatentFrontMatter({
   );
 }
 
-export function Viewer({ documentId, onBack }: { documentId: string; onBack: () => void }) {
+export function Viewer({ documentId }: { documentId: string }) {
   const [doc, setDoc] = useState<DocumentRead | null>(null);
   const [artifact, setArtifact] = useState<ArtifactEntries | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -774,8 +775,8 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   const showText = layout === "text" || layout === "split";
   const showPdf = layout === "pdf" || layout === "split";
   const paneButtons = [
-    { id: "text" as const, label: "Text", icon: "≡" },
-    { id: "pdf" as const, label: "PDF", icon: "▣" },
+    { id: "text" as const, label: "Text", icon: "text" as IconName },
+    { id: "pdf" as const, label: "PDF", icon: "file" as IconName },
   ];
 
   function togglePane(pane: "text" | "pdf") {
@@ -866,9 +867,6 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   return (
     <div className="viewer">
       <div className="viewer-bar">
-        <button type="button" className="secondary" onClick={onBack}>
-          ← Documents
-        </button>
         <strong className="viewer-title">{viewerTitle}</strong>
 
         {artifact && (
@@ -884,9 +882,9 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                 setOutlineOpen((value) => !value);
               }}
               title="Toggle outline"
+              aria-label="Toggle outline"
             >
-              <span className="viewer-tab-icon" aria-hidden="true">☷</span>
-              Outline
+              <Icon name="panel-left" size={17} className="viewer-tab-icon" />
             </button>
             <div className="tabs viewer-pane-controls" role="group" aria-label="Visible panes">
               {paneButtons.map((pane) => {
@@ -896,6 +894,13 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                     key={pane.id}
                     type="button"
                     aria-pressed={active}
+                    aria-label={
+                      active && layout === "split"
+                        ? `Hide ${pane.label.toLowerCase()} pane`
+                        : active
+                          ? `${pane.label} pane is visible`
+                          : `Show ${pane.label.toLowerCase()} pane`
+                    }
                     className={`tab${active ? " active" : ""}`}
                     onClick={() => togglePane(pane.id)}
                     title={
@@ -906,8 +911,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                           : `Show ${pane.label.toLowerCase()} pane`
                     }
                   >
-                    <span className="viewer-tab-icon" aria-hidden="true">{pane.icon}</span>
-                    {pane.label}
+                    <Icon name={pane.icon} size={17} className="viewer-tab-icon" />
                   </button>
                 );
               })}
@@ -916,9 +920,10 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                 aria-pressed={layout === "details"}
                 className={`tab${layout === "details" ? " active" : ""}`}
                 onClick={() => setLayout((current) => current === "details" ? "text" : "details")}
+                aria-label="Toggle document details"
+                title="Document details"
               >
-                <span className="viewer-tab-icon" aria-hidden="true">ⓘ</span>
-                Details
+                <Icon name="circle-info" size={17} className="viewer-tab-icon" />
               </button>
             </div>
           </div>
@@ -927,6 +932,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
         {artifact && showText && (
           <>
             <div className="search" role="search">
+              <Icon name="search" size={16} className="search-leading-icon" />
               <input
                 ref={searchRef}
                 type="search"
@@ -961,7 +967,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                     onClick={() => gotoMatch(matchIdx - 1)}
                     aria-label="Previous match"
                   >
-                    ↑
+                    <Icon name="chevron-up" size={16} />
                   </button>
                   <button
                     type="button"
@@ -970,7 +976,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                     onClick={() => gotoMatch(matchIdx + 1)}
                     aria-label="Next match"
                   >
-                    ↓
+                    <Icon name="chevron-down" size={16} />
                   </button>
                 </>
               )}
@@ -980,8 +986,14 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
 
         {artifact && (
           <div className="export-menu">
-            <button type="button" className="secondary" aria-haspopup="true">
-              Export ▾
+            <button
+              type="button"
+              className="icon-button"
+              aria-haspopup="true"
+              aria-label="Export patent"
+              title="Export patent"
+            >
+              <Icon name="download" size={17} />
             </button>
             <div className="export-pop">
               <button
@@ -1434,7 +1446,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                     onClick={() => beginEditAnnotation(a)}
                     aria-label="Edit note"
                   >
-                    ✎
+                    <Icon name="pencil" size={15} />
                   </button>
                   <button
                     type="button"
@@ -1442,7 +1454,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                     onClick={() => removeAnnotation(a.id)}
                     aria-label="Delete note"
                   >
-                    ×
+                    <Icon name="trash" size={15} />
                   </button>
                 </li>
               ))}
@@ -1540,38 +1552,54 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
             {selectedStartEntry && (
               <button
                 type="button"
-                className={`secondary${selectedBookmarked ? " active" : ""}`}
+                className={`icon-button${selectedBookmarked ? " active" : ""}`}
                 onClick={() => toggleBookmark(selectedStartEntry)}
                 title={selectedBookmarked ? "Remove bookmark" : "Bookmark this line"}
+                aria-label={selectedBookmarked ? "Remove bookmark" : "Bookmark this line"}
               >
-                {selectedBookmarked ? "★ Bookmarked" : "☆ Bookmark"}
+                <Icon name="bookmark" size={17} />
               </button>
             )}
             <button
               type="button"
-              className="secondary"
+              className="icon-button"
               onClick={() => {
                 setEditingAnnotationId(null);
                 setNoteDraft("");
                 setNoteOpen((v) => !v);
               }}
               disabled={!selectedStartEntry}
+              aria-label="Add note"
+              title="Add note"
             >
-              Add note
+              <Icon name="message-square" size={17} />
             </button>
             <button
               type="button"
-              className={`secondary${citeSettingsOpen ? " active" : ""}`}
+              className={`icon-button${citeSettingsOpen ? " active" : ""}`}
               onClick={() => setCiteSettingsOpen((v) => !v)}
               title="Citation format"
+              aria-label="Citation format"
             >
-              ⚙ Format
+              <Icon name="settings" size={17} />
             </button>
-            <button type="button" onClick={() => copy("selection", activeSelectionText)}>
-              Copy selection
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => copy("selection", activeSelectionText)}
+              aria-label="Copy selection"
+              title="Copy selection"
+            >
+              <Icon name="copy" size={17} />
             </button>
-            <button type="button" onClick={() => copy("cite", citation)}>
-              Copy citation
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => copy("cite", citation)}
+              aria-label="Copy citation"
+              title="Copy citation"
+            >
+              <Icon name="quote" size={17} />
             </button>
             <button
               type="button"
@@ -1581,11 +1609,12 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
             </button>
             <button
               type="button"
-              className="secondary"
+              className="icon-button"
               onClick={() => copy("link", window.location.href)}
               title="Copy a deep link to this line"
+              aria-label="Copy a deep link to this line"
             >
-              Copy link
+              <Icon name="link" size={17} />
             </button>
             {copied && <span className="copied">Copied {copied}</span>}
           </div>
