@@ -4,9 +4,9 @@ export type IconName =
   | "arrow-left" | "arrow-up-right" | "bookmark" | "check" | "chevron-down"
   | "chevron-right" | "chevron-up" | "circle-info" | "copy" | "download"
   | "columns" | "file" | "file-text" | "folder" | "import" | "library"
-  | "highlighter" | "link" | "lock" | "log-out" | "message-square" | "more-horizontal"
+  | "highlighter" | "link" | "lock" | "log-out" | "message-square" | "moon" | "more-horizontal"
   | "mouse-pointer" | "panel-left" | "pencil" | "plus" | "quote" | "refresh"
-  | "rotate-cw" | "scan" | "search" | "settings" | "text" | "trash" | "upload"
+  | "rotate-cw" | "scan" | "search" | "settings" | "sun" | "text" | "trash" | "upload"
   | "zoom-in" | "zoom-out";
 
 const PATHS: Record<IconName, string[]> = {
@@ -31,6 +31,7 @@ const PATHS: Record<IconName, string[]> = {
   lock: ["M6 10h12v10H6z", "M8 10V7a4 4 0 0 1 8 0v3"],
   "log-out": ["M10 17l5-5-5-5", "M15 12H3", "M15 4h5v16h-5"],
   "message-square": ["M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"],
+  moon: ["M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"],
   "more-horizontal": ["M5 12h.01", "M12 12h.01", "M19 12h.01"],
   "mouse-pointer": ["m3 3 7.1 17 2.15-6.2L18 12Z", "m13.2 13.2 4.8 4.8"],
   "panel-left": ["M3 4h18v16H3z", "M9 4v16", "M5.5 8h1", "M5.5 12h1"],
@@ -42,6 +43,7 @@ const PATHS: Record<IconName, string[]> = {
   scan: ["M4 8V4h4", "M16 4h4v4", "M20 16v4h-4", "M8 20H4v-4", "M8 12h8"],
   search: ["M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16Z", "m21 21-4.35-4.35"],
   settings: ["M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z", "M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.12 2.12-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.02 1.55V20h-3v-.09a1.7 1.7 0 0 0-1.02-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06-2.12-2.12.06-.06A1.7 1.7 0 0 0 7 14.7a1.7 1.7 0 0 0-1.55-1.02H5.3v-3h.09A1.7 1.7 0 0 0 7 9.66a1.7 1.7 0 0 0-.34-1.88l-.06-.06L8.72 5.6l.06.06A1.7 1.7 0 0 0 10.66 6a1.7 1.7 0 0 0 1.02-1.55V4.3h3v.09A1.7 1.7 0 0 0 15.7 6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.12 2.12-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.55 1.02H21v3h-.09A1.7 1.7 0 0 0 19.4 15Z"],
+  sun: ["M12 4V2", "M12 22v-2", "m4.93 4.93 1.42-1.42", "m5.66 18.49 1.42-1.42", "M20 12h2", "M2 12h2", "m16.93 17.07 1.42 1.42", "m3.51 3.51 1.42 1.42", "M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z"],
   text: ["M4 5h16", "M8 5v14", "M16 5v14", "M6 19h4", "M14 19h4"],
   trash: ["M4 7h16", "M9 7V4h6v3", "M7 7l1 14h8l1-14", "M10 11v6", "M14 11v6"],
   upload: ["M12 21V9", "m7 14 5-5 5 5", "M5 3h14"],

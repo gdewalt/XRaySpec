@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from "react";
 
 import { getToken, initializeAuth, signOut, subscribe } from "./auth/session";
 import { DocumentsView } from "./components/DocumentsView";
@@ -8,6 +8,18 @@ import { Viewer } from "./components/Viewer";
 import { parseViewHash } from "./spec/navigation";
 
 type View = { mode: "list" } | { mode: "viewer"; documentId: string };
+type Theme = "light" | "dark";
+const THEME_STORAGE_KEY = "xray.theme";
+
+function initialTheme(): Theme {
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    if (saved === "light" || saved === "dark") return saved;
+  } catch {
+    // Storage can be unavailable in locked-down browsers; system preference is a safe fallback.
+  }
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
 
 function initialView(): View {
   const { documentId } = parseViewHash(window.location.hash);
@@ -17,6 +29,17 @@ function initialView(): View {
 export function App() {
   const token = useSyncExternalStore(subscribe, getToken);
   const [view, setView] = useState<View>(initialView);
+  const [theme, setTheme] = useState<Theme>(initialTheme);
+
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // The visible theme still works when persistence is unavailable.
+    }
+  }, [theme]);
 
   useEffect(() => {
     void initializeAuth();
@@ -65,6 +88,16 @@ export function App() {
           )}
         </div>
         <div className="header-actions">
+          <button
+            type="button"
+            className="icon-button theme-toggle"
+            onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")}
+            aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+            title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+            aria-pressed={theme === "dark"}
+          >
+            <Icon name={theme === "dark" ? "sun" : "moon"} size={18} />
+          </button>
           {token && view.mode === "viewer" && (
             <button type="button" className="secondary header-back" onClick={back}>
               <Icon name="arrow-left" size={17} />

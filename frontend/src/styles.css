@@ -3052,3 +3052,139 @@ button:active:not(:disabled) { transform: translateY(1px); }
   .pdf-controls,
   .outline { transition: none; }
 }
+
+/* --- user-controlled color theme --- */
+.theme-toggle {
+  width: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 9px;
+}
+.theme-toggle:hover:not(:disabled) { border-color: var(--border); }
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e1420;
+  --surface: #161e2a;
+  --surface-raised: #1b2533;
+  --surface-subtle: #202b3a;
+  --border: #354258;
+  --border-strong: #68778f;
+  --text: #f3f6fb;
+  --muted: #b4bfce;
+  --accent: #8eb0ff;
+  --accent-hover: #adc5ff;
+  --accent-soft: #263859;
+  --accent-text: #101725;
+  --danger: #ff9a92;
+  --ok-bg: #17372b;
+  --ok-text: #82daa9;
+  --err-bg: #402523;
+  --err-text: #ffb5ae;
+  --badge-bg: #263140;
+  --badge-text: #ccd4df;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.28), 0 8px 24px rgba(0,0,0,.13);
+  --shadow-lg: 0 20px 54px rgba(0,0,0,.42);
+}
+:root[data-theme="dark"] ::selection { background: #496aa8; color: #fff; }
+:root[data-theme="dark"] .app-header {
+  border-color: var(--border);
+  background: rgba(14,20,32,.9);
+  box-shadow: 0 1px 0 rgba(255,255,255,.025);
+}
+:root[data-theme="dark"] .brand-mark {
+  color: var(--accent-text);
+  box-shadow: 0 5px 16px rgba(0,0,0,.3);
+}
+:root[data-theme="dark"] .header-context,
+:root[data-theme="dark"] .quiet-button,
+:root[data-theme="dark"] .icon-button,
+:root[data-theme="dark"] .link-btn,
+:root[data-theme="dark"] .tab,
+:root[data-theme="dark"] .viewer-title,
+:root[data-theme="dark"] .search-leading-icon,
+:root[data-theme="dark"] .pdf-pageno { color: var(--muted); }
+:root[data-theme="dark"] .panel,
+:root[data-theme="dark"] .documents-panel,
+:root[data-theme="dark"] .ingest-panel { border-color: var(--border); }
+:root[data-theme="dark"] .panel:hover { border-color: #46546a; }
+:root[data-theme="dark"] .eyebrow,
+:root[data-theme="dark"] .login-kicker,
+:root[data-theme="dark"] .auth-mode-tabs button.active,
+:root[data-theme="dark"] .feature-icon,
+:root[data-theme="dark"] .login-lock,
+:root[data-theme="dark"] .panel-heading-icon,
+:root[data-theme="dark"] .workspace-create-icon,
+:root[data-theme="dark"] .workspace-folder,
+:root[data-theme="dark"] .document-icon,
+:root[data-theme="dark"] .empty-illustration,
+:root[data-theme="dark"] .viewer-mode-nav .tab.active,
+:root[data-theme="dark"] .viewer-pane-controls .tab[aria-pressed="true"],
+:root[data-theme="dark"] .pdf-annotation-tools button.active,
+:root[data-theme="dark"] .cite-actions .icon-button.active,
+:root[data-theme="dark"] .spec-gutter .mark-note { color: var(--accent); }
+:root[data-theme="dark"] input::placeholder,
+:root[data-theme="dark"] textarea::placeholder { color: #8f9bad; }
+:root[data-theme="dark"] input:hover,
+:root[data-theme="dark"] textarea:hover,
+:root[data-theme="dark"] select:hover { border-color: #8190a6; }
+:root[data-theme="dark"] .status.ok { border-color: #2f6b50; }
+:root[data-theme="dark"] .status.err { border-color: #80413d; }
+:root[data-theme="dark"] .login-kicker { border-color: #405783; }
+:root[data-theme="dark"] .auth-mode-tabs button.active,
+:root[data-theme="dark"] .viewer-mode-nav .tab.active,
+:root[data-theme="dark"] .viewer-pane-controls .tab[aria-pressed="true"] {
+  border-color: var(--border);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-sm);
+}
+:root[data-theme="dark"] .workspace-create,
+:root[data-theme="dark"] .document-row:hover { background: #192331; }
+:root[data-theme="dark"] .workspace-toggle:hover:not(:disabled),
+:root[data-theme="dark"] .spec-line:hover { background: var(--surface-subtle); }
+:root[data-theme="dark"] .document-row:hover { box-shadow: inset 3px 0 0 var(--accent); }
+:root[data-theme="dark"] .document-icon { border-color: #405783; }
+:root[data-theme="dark"] .file-icon { background: #452b2f; color: #ffaaa3; }
+:root[data-theme="dark"] .file-icon.json { color: var(--accent); }
+:root[data-theme="dark"] .job-track { background: #334056; }
+:root[data-theme="dark"] .document-open-button,
+:root[data-theme="dark"] .export-menu > .icon-button,
+:root[data-theme="dark"] .search,
+:root[data-theme="dark"] .pdf-controls,
+:root[data-theme="dark"] .pdf-note-editor {
+  border-color: var(--border);
+  background: var(--surface);
+}
+:root[data-theme="dark"] .document-open-button { color: var(--accent); }
+:root[data-theme="dark"] .document-open-button:hover:not(:disabled) {
+  border-color: #526b9c;
+  background: var(--accent-soft);
+}
+:root[data-theme="dark"] .document-menu-popover,
+:root[data-theme="dark"] .export-pop,
+:root[data-theme="dark"] .chooser { border-color: var(--border); }
+:root[data-theme="dark"] .viewer-bar {
+  border-color: var(--border);
+  background: rgba(14,20,32,.91);
+}
+:root[data-theme="dark"] .viewer-title { color: var(--text); }
+:root[data-theme="dark"] .viewer-mode-nav > .tab:hover,
+:root[data-theme="dark"] .viewer-pane-controls .tab:hover { background: var(--surface-subtle); }
+:root[data-theme="dark"] .search input[type=search] { background: transparent; }
+:root[data-theme="dark"] .quality-banner {
+  border-color: #7e5d2f;
+  background: #382b18;
+  color: #f1c987;
+}
+:root[data-theme="dark"] .mention.figure { background: #2a416c; color: #c8d7ff; }
+:root[data-theme="dark"] .mention.numeral { background: #1d4938; color: #a9e4c3; }
+:root[data-theme="dark"] .mention.numeral.ambiguous { background: #523b18; color: #f8d28a; }
+:root[data-theme="dark"] mark.search-hit { background: #674c16; color: #fff0bd; }
+:root[data-theme="dark"] .cite-bar {
+  border-color: var(--border);
+  background: rgba(22,30,42,.97);
+  box-shadow: 0 -10px 28px rgba(0,0,0,.3);
+}
+:root[data-theme="dark"] .pdf-color-swatch { border-color: var(--surface); }
