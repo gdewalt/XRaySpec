@@ -753,14 +753,57 @@ mark.search-hit {
   font-size: 0.9rem;
 }
 .outline-head {
-  margin: 0.5rem 0 0.15rem;
+  margin: 0;
+}
+.outline-section + .outline-section {
+  margin-top: 0.35rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--border);
+}
+.outline-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  width: 100%;
+  min-height: 32px;
+  padding: 0.25rem 0.35rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
   font-size: 0.72rem;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--muted);
+  cursor: pointer;
 }
-.outline-head:first-child {
-  margin-top: 0;
+.outline-section-toggle:hover {
+  background: var(--surface-subtle);
+  color: var(--text);
+}
+.outline-section-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.outline-chevron {
+  display: inline-grid;
+  width: 0.9rem;
+  place-items: center;
+  font-size: 0.9rem;
+  line-height: 1;
+  transform: rotate(0deg);
+  transition: transform 120ms ease;
+}
+.outline-section-toggle[aria-expanded="false"] .outline-chevron {
+  transform: rotate(-90deg);
+}
+.outline-section-content {
+  display: grid;
+  gap: 0.1rem;
+}
+.outline-section-content[hidden] {
+  display: none;
 }
 .outline-item.bookmark,
 .outline-item.note {

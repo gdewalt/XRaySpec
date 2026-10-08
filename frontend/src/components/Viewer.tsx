@@ -56,6 +56,7 @@ import { PdfPane } from "./PdfPane";
 
 type Layout = "text" | "pdf" | "split" | "details";
 type Selection = { start: number; end: number } | null;
+type OutlineSectionKey = "specification" | "bookmarks" | "notes" | "claims";
 const VIEWER_PREFERENCES_KEY = "xray.viewer.preferences.v1";
 
 function loadViewerPreferences(): {
@@ -327,6 +328,9 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   const [outlineOpen, setOutlineOpen] = useState(
     () => loadViewerPreferences().outlineOpen,
   );
+  const [collapsedOutlineSections, setCollapsedOutlineSections] = useState<
+    Set<OutlineSectionKey>
+  >(() => new Set());
   const [bookmarks, setBookmarks] = useState<BookmarkRead[]>([]);
   const [annotations, setAnnotations] = useState<AnnotationRead[]>([]);
   const [overrides, setOverrides] = useState<OverrideRead[]>([]);
@@ -415,6 +419,15 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
     return detectOutline(entries, figFirst);
   }, [entries, artifact]);
   const claims = useMemo(() => detectClaims(entries), [entries]);
+
+  const toggleOutlineSection = useCallback((section: OutlineSectionKey) => {
+    setCollapsedOutlineSections((current) => {
+      const next = new Set(current);
+      if (next.has(section)) next.delete(section);
+      else next.add(section);
+      return next;
+    });
+  }, []);
 
   const ordByEntryId = useMemo(
     () => new Map(entries.map((e) => [e.entry_id, e.ordinal])),
@@ -1048,9 +1061,25 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
           {showText && outlineOpen && (
             <nav className="outline" aria-label="Outline">
               {outline.length > 0 && (
-                <>
-                  <h3 className="outline-head">Specification</h3>
-                  {outline.map((item) => (
+                <section className="outline-section">
+                  <h3 className="outline-head">
+                    <button
+                      type="button"
+                      className="outline-section-toggle"
+                      aria-expanded={!collapsedOutlineSections.has("specification")}
+                      aria-controls="outline-specification"
+                      onClick={() => toggleOutlineSection("specification")}
+                    >
+                      <span className="outline-chevron" aria-hidden="true">▾</span>
+                      <span>Specification</span>
+                    </button>
+                  </h3>
+                  <div
+                    id="outline-specification"
+                    className="outline-section-content"
+                    hidden={collapsedOutlineSections.has("specification")}
+                  >
+                    {outline.map((item) => (
                     <button
                       key={`${item.kind}-${item.ordinal}-${item.label}`}
                       type="button"
@@ -1060,13 +1089,30 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                       <span className="outline-label">{item.label}</span>
                       <span className="outline-ref">{item.ref}</span>
                     </button>
-                  ))}
-                </>
+                    ))}
+                  </div>
+                </section>
               )}
               {bookmarks.length > 0 && (
-                <>
-                  <h3 className="outline-head">Bookmarks</h3>
-                  {bookmarks.map((b) => {
+                <section className="outline-section">
+                  <h3 className="outline-head">
+                    <button
+                      type="button"
+                      className="outline-section-toggle"
+                      aria-expanded={!collapsedOutlineSections.has("bookmarks")}
+                      aria-controls="outline-bookmarks"
+                      onClick={() => toggleOutlineSection("bookmarks")}
+                    >
+                      <span className="outline-chevron" aria-hidden="true">▾</span>
+                      <span>Bookmarks</span>
+                    </button>
+                  </h3>
+                  <div
+                    id="outline-bookmarks"
+                    className="outline-section-content"
+                    hidden={collapsedOutlineSections.has("bookmarks")}
+                  >
+                    {bookmarks.map((b) => {
                     const ord = ordByEntryId.get(b.entry_id);
                     return (
                       <div key={b.id} className="outline-item bookmark">
@@ -1088,13 +1134,30 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                         </button>
                       </div>
                     );
-                  })}
-                </>
+                    })}
+                  </div>
+                </section>
               )}
               {annotations.length > 0 && (
-                <>
-                  <h3 className="outline-head">Notes</h3>
-                  {annotations.map((a) => {
+                <section className="outline-section">
+                  <h3 className="outline-head">
+                    <button
+                      type="button"
+                      className="outline-section-toggle"
+                      aria-expanded={!collapsedOutlineSections.has("notes")}
+                      aria-controls="outline-notes"
+                      onClick={() => toggleOutlineSection("notes")}
+                    >
+                      <span className="outline-chevron" aria-hidden="true">▾</span>
+                      <span>Notes</span>
+                    </button>
+                  </h3>
+                  <div
+                    id="outline-notes"
+                    className="outline-section-content"
+                    hidden={collapsedOutlineSections.has("notes")}
+                  >
+                    {annotations.map((a) => {
                     const ord = ordByEntryId.get(a.target_entry_id);
                     return (
                       <div key={a.id} className="outline-item note">
@@ -1128,13 +1191,30 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                         </button>
                       </div>
                     );
-                  })}
-                </>
+                    })}
+                  </div>
+                </section>
               )}
               {claims.length > 0 && (
-                <>
-                  <h3 className="outline-head">Claims ({claims.length})</h3>
-                  {claims.map((item) => (
+                <section className="outline-section">
+                  <h3 className="outline-head">
+                    <button
+                      type="button"
+                      className="outline-section-toggle"
+                      aria-expanded={!collapsedOutlineSections.has("claims")}
+                      aria-controls="outline-claims"
+                      onClick={() => toggleOutlineSection("claims")}
+                    >
+                      <span className="outline-chevron" aria-hidden="true">▾</span>
+                      <span>Claims ({claims.length})</span>
+                    </button>
+                  </h3>
+                  <div
+                    id="outline-claims"
+                    className="outline-section-content"
+                    hidden={collapsedOutlineSections.has("claims")}
+                  >
+                    {claims.map((item) => (
                     <button
                       key={`claim-${item.ordinal}`}
                       type="button"
@@ -1144,8 +1224,9 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
                       <span className="outline-label">{item.label}</span>
                       <span className="outline-ref">{item.ref}</span>
                     </button>
-                  ))}
-                </>
+                    ))}
+                  </div>
+                </section>
               )}
               {outline.length === 0 && bookmarks.length === 0 && annotations.length === 0 &&
                 claims.length === 0 && <p className="muted small">No sections detected.</p>}
