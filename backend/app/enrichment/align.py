@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 from difflib import SequenceMatcher
+from typing import Any
 
 from ..extraction.artifact import Entry
 from ..extraction.config import ExtractionConfig
@@ -49,10 +50,10 @@ def _clean_tokens(clean_text: str) -> tuple[list[str], list[str], list[int]]:
 
 
 def _best_window(
-    clean_norm: list[str], cursor: int, n: int, src_join: str, slack: int
+    clean_norm: list[str], cursor: int, n: int, src_join: str, slack: int, *, backtrack: int = 2
 ) -> tuple[float, int, int]:
     best_ratio, best_start, best_end = 0.0, cursor, cursor
-    lo = max(0, cursor - 2)
+    lo = max(0, cursor - backtrack)
     hi = min(len(clean_norm), cursor + n + slack)
     for start in range(lo, hi):
         for length in (n - 1, n, n + 1):
@@ -66,6 +67,80 @@ def _best_window(
             if ratio > best_ratio:
                 best_ratio, best_start, best_end = ratio, start, end
     return best_ratio, best_start, best_end
+
+
+def _is_truncated_repeat(previous: str, current: str) -> bool:
+    """Return true for a clipped repeat such as ``transport`` / ``ansport``.
+
+    Column OCR can recognize the same word at the end of one row and again at
+    the start of the next, with one or two leading characters clipped by the
+    crop. Requiring a long common suffix keeps ordinary repeated or inflected
+    words intact.
+    """
+    left = "".join(_normalize(previous).split())
+    right = "".join(_normalize(current).split())
+    if (
+        left == right
+        or len(left) < 7
+        or len(right) < 5
+        or len(right) > len(left)
+        or len(left) - len(right) > 2
+    ):
+        return False
+    suffix = 0
+    for left_char, right_char in zip(reversed(left), reversed(right), strict=False):
+        if left_char != right_char:
+            break
+        suffix += 1
+    return suffix >= max(5, (len(right) * 7 + 9) // 10)
+
+
+def strip_leading_line_overlap(previous_text: str, current_text: str) -> str:
+    """Remove one OCR-clipped repeat from the beginning of the next line."""
+    previous_words = re.findall(r"[A-Za-z0-9]+", previous_text)
+    first = re.match(
+        r"^(\s*)([A-Za-z0-9]+)[.,;:!?\"')\]]*(\s+)(.*)$",
+        current_text,
+        re.DOTALL,
+    )
+    if not previous_words or first is None:
+        return current_text
+    if not _is_truncated_repeat(previous_words[-1], first.group(2)):
+        return current_text
+    return f"{first.group(1)}{first.group(4)}"
+
+
+def repair_serialized_display_overlaps(
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Repair legacy artifact display text without mutating its stored source.
+
+    This compatibility view makes already-published artifacts benefit from the
+    overlap fix. Only consecutive lines on the same page and in the same grant
+    column are considered.
+    """
+    repaired: list[dict[str, Any]] = []
+    for raw in entries:
+        current = raw
+        if repaired:
+            previous = repaired[-1]
+            previous_locator = previous.get("locator") or {}
+            current_locator = raw.get("locator") or {}
+            same_flow = (
+                raw.get("ordinal") == previous.get("ordinal", -2) + 1
+                and raw.get("page_index") == previous.get("page_index")
+                and current_locator.get("kind") == previous_locator.get("kind")
+                and current_locator.get("column") == previous_locator.get("column")
+            )
+            if same_flow:
+                display = strip_leading_line_overlap(
+                    str(previous.get("display_text", "")),
+                    str(raw.get("display_text", "")),
+                )
+                if display != raw.get("display_text"):
+                    current = {**raw, "display_text": display}
+        repaired.append(current)
+    return repaired
 
 
 def align_entries(
@@ -94,6 +169,22 @@ def align_entries(
         ratio, start, end = _best_window(
             normalized, cursor, len(src_norm), " ".join(src_norm), config.alignment_search_slack
         )
+        # If the crop repeated the previous provider word with its first one or
+        # two characters missing, align the rest strictly forward. This avoids
+        # both keeping the fragment and pulling the complete word into two rows.
+        if cursor > 0 and len(src_norm) > 1 and _is_truncated_repeat(
+            normalized[cursor - 1], src_norm[0]
+        ):
+            trimmed_ratio, trimmed_start, trimmed_end = _best_window(
+                normalized,
+                cursor,
+                len(src_norm) - 1,
+                " ".join(src_norm[1:]),
+                config.alignment_search_slack,
+                backtrack=0,
+            )
+            if trimmed_ratio >= config.alignment_min_ratio:
+                ratio, start, end = trimmed_ratio, trimmed_start, trimmed_end
         if ratio >= config.alignment_min_ratio:
             display = " ".join(original[start:end])
             method = "exact" if ratio >= config.alignment_exact_ratio else "fuzzy"
@@ -119,6 +210,17 @@ def align_entries(
             previous_paragraph = paragraph
         else:
             display = entry.source_text  # reject substitution; keep the source line
+            same_flow = bool(
+                out
+                and out[-1].page_index == entry.page_index
+                and out[-1].locator.kind == entry.locator.kind
+                and (
+                    entry.locator.kind != "grant"
+                    or out[-1].locator.column == entry.locator.column
+                )
+            )
+            if same_flow:
+                display = strip_leading_line_overlap(out[-1].display_text, display)
             method = "unmatched"
             if provider_paragraph_source:
                 paragraph_start = entry.paragraph_source == provider_paragraph_source

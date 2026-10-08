@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from ...config import get_settings
 from ...db.models import ExtractionArtifact, SourceDocument
+from ...enrichment.align import repair_serialized_display_overlaps
 from ...schemas.artifacts import ArtifactEntriesResponse, ArtifactRead
 from ..deps import CurrentUser, DbSession, Storage
 
@@ -52,7 +53,7 @@ async def get_artifact_entries(
         page_count=data.get("page_count"),
         warnings=data.get("warnings", []),
         front_matter=data.get("front_matter"),
-        entries=data.get("entries", []),
+        entries=repair_serialized_display_overlaps(data.get("entries", [])),
         figure_mentions=data.get("figure_mentions", []),
         numeral_mentions=data.get("numeral_mentions", []),
         figure_occurrences=data.get("figure_occurrences", []),

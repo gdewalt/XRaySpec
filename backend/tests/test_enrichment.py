@@ -10,6 +10,8 @@ from app.enrichment import (
     enrich_from_ppubs_html,
     extract_ppubs_text,
     extract_provider_text,
+    repair_serialized_display_overlaps,
+    strip_leading_line_overlap,
     verify_identity,
 )
 from app.extraction.artifact import Entry, Provenance
@@ -53,6 +55,66 @@ def test_alignment_corrects_ocr_and_preserves_source():
     # Line 3: not in the clean text -> substitution rejected, source kept.
     assert aligned[2].provenance.alignment_method == "unmatched"
     assert aligned[2].display_text == aligned[2].source_text
+
+
+def test_alignment_drops_clipped_repeats_at_column_line_boundaries():
+    clean = (
+        "It is an object of the invention to provide a system that enables regular "
+        "highway traffic and privately owned personal transport systems to augment "
+        "and enable public mass transit networks."
+    )
+    entries = [
+        _entry("It is an object of the invention to provide a system that enables", 1),
+        _entry("nables regular highway traffic and privately owned personal transport", 2),
+        _entry("ansport systems to augment and enable public mass transit networks.", 3),
+    ]
+
+    aligned = align_entries(entries, clean, DEFAULT_CONFIG, identity_verified=True)
+
+    assert aligned[0].display_text.endswith("that enables")
+    assert aligned[1].display_text == (
+        "regular highway traffic and privately owned personal transport"
+    )
+    assert aligned[2].display_text == (
+        "systems to augment and enable public mass transit networks."
+    )
+    assert aligned[1].source_text.startswith("nables ")
+    assert aligned[2].source_text.startswith("ansport ")
+
+
+def test_overlap_repair_is_conservative_and_supports_legacy_artifacts():
+    assert strip_leading_line_overlap("that enables", "nables regular traffic") == (
+        "regular traffic"
+    )
+    assert strip_leading_line_overlap("network matches", "1atches the supply") == (
+        "the supply"
+    )
+    assert strip_leading_line_overlap("mass transit networks.", "etworks. It follows") == (
+        "It follows"
+    )
+    assert strip_leading_line_overlap("public transport", "transport remains available") == (
+        "transport remains available"
+    )
+
+    entries = [
+        {
+            "entry_id": "line_1",
+            "ordinal": 1,
+            "page_index": 4,
+            "locator": {"kind": "grant", "column": 2, "printed_line": 54},
+            "display_text": "a system that enables",
+        },
+        {
+            "entry_id": "line_2",
+            "ordinal": 2,
+            "page_index": 4,
+            "locator": {"kind": "grant", "column": 2, "printed_line": 55},
+            "display_text": "nables regular highway traffic",
+        },
+    ]
+    repaired = repair_serialized_display_overlaps(entries)
+    assert repaired[1]["display_text"] == "regular highway traffic"
+    assert entries[1]["display_text"] == "nables regular highway traffic"
 
 
 def test_identity_verification():

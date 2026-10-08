@@ -49,6 +49,15 @@ describe("text reconstruction", () => {
     expect(joinEntryText(entries)).toBe("A transmitter operates. A new paragraph.");
   });
 
+  it("copies provider-corrected text instead of noisy OCR source text", () => {
+    const entries = [
+      entry("e0", "nables regular traffic", [0.1, 0.1, 0.4, 0.12], {
+        display_text: "regular traffic",
+      }),
+    ];
+    expect(joinEntryText(entries)).toBe("regular traffic");
+  });
+
   it("flattens line, paragraph, and tab whitespace only for copied text", () => {
     expect(normalizeCopiedText("\tFirst line\n\nSecond\tline  here ")).toBe(
       "First line Second line here",

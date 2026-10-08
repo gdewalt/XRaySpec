@@ -20,7 +20,7 @@ export function formatSelectionWithCitation(text: string, citation: string): str
   return `“${selection}”${reference ? ` ${reference}` : ""}`;
 }
 
-/** Plain selected prose for the clipboard. Source/display text is never changed. */
+/** Plain selected prose for the clipboard, using provider-corrected display text. */
 export function joinEntryText(entries: EntryDto[]): string {
   let text = "";
   entries.forEach((entry, index) => {
@@ -31,7 +31,7 @@ export function joinEntryText(entries: EntryDto[]): string {
         (!!entry.locator.paragraph && entry.locator.paragraph !== previous.locator.paragraph);
       text += newParagraph ? "\n\n" : "\n";
     }
-    text += entry.source_text;
+    text += entry.display_text;
   });
   return normalizeCopiedText(text);
 }
