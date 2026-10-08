@@ -568,12 +568,16 @@ def ocr_drawing_words(
                 thresholding_method=thresholding_method,
                 char_whitelist=figure_chars,
             )
-            callouts = _tesseract_words(
-                rotated,
-                config,
-                psm=config.ocr_drawing_callout_psm,
-                thresholding_method=thresholding_method,
-                char_whitelist=callout_chars,
+            callouts = (
+                _tesseract_words(
+                    rotated,
+                    config,
+                    psm=config.ocr_drawing_callout_psm,
+                    thresholding_method=thresholding_method,
+                    char_whitelist=callout_chars,
+                )
+                if config.callout_detection_enabled
+                else []
             )
             recognized.extend(
                 _unrotate_right_angle_words([*figures, *callouts], rotation)

@@ -86,8 +86,10 @@ async def test_get_artifact_entries(client, make_token, auth):
     }
     assert len(body["entries"]) >= 2
     assert body["entries"][0]["locator"] == {"column": 1, "printed_line": 1, "kind": "grant"}
-    # detection ran: "housing 104" numeral + "FIG. 3" figure reference.
-    assert any(m["value"] == "104" for m in body["numeral_mentions"])
+    # Component-number callout identification is temporarily disabled, while
+    # explicit FIG. references remain available for drawing navigation.
+    assert body["numeral_mentions"] == []
+    assert body["callout_occurrences"] == []
     assert any("3" in m["figure_ids"] for m in body["figure_mentions"])
 
 

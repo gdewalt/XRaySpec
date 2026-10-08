@@ -1,7 +1,7 @@
 // Client-side specification navigation: outline extraction, search, and the
 // deep-link hash. Pure over the loaded artifact entries (no server round-trips).
 
-import type { EntryDto, Locator } from "../api/types";
+import type { EntryDto, FigureOccurrenceDto, Locator } from "../api/types";
 
 export function refShort(loc: Locator): string {
   return loc.kind === "grant" ? `${loc.column}:${loc.printed_line}` : `[${loc.paragraph}]`;
@@ -13,6 +13,39 @@ export type OutlineItem = {
   ref: string;
   kind: "heading" | "figure" | "claim";
 };
+
+function normalizedFigureId(value: string): string {
+  return value.replace(/^fig(?:ure)?\.?\s*/i, "").replace(/\s+/g, "").toUpperCase();
+}
+
+/** Resolve a textual figure reference to its zero-based PDF page.
+ *
+ * Older artifacts can be missing FIG. 1 when the first drawing sheet is the
+ * only image-only sheet. If FIG. 2 is present on the immediately following
+ * sheet, use that narrow sequence as a safe legacy fallback. New extraction
+ * artifacts carry the exact FIG. 1 occurrence and take the normal path.
+ */
+export function resolveFigurePage(
+  figureIds: string[],
+  occurrences: FigureOccurrenceDto[],
+): number | null {
+  const wanted = new Set(figureIds.map(normalizedFigureId));
+  const exactPages = occurrences
+    .filter((figure) => wanted.has(normalizedFigureId(figure.figure_id)))
+    .map((figure) => figure.page_index);
+  if (exactPages.length > 0) return Math.min(...exactPages);
+
+  if (wanted.size === 1 && wanted.has("1")) {
+    const figureTwoPages = occurrences
+      .filter((figure) => normalizedFigureId(figure.figure_id) === "2")
+      .map((figure) => figure.page_index);
+    if (figureTwoPages.length > 0) {
+      const figureTwoPage = Math.min(...figureTwoPages);
+      if (figureTwoPage > 0) return figureTwoPage - 1;
+    }
+  }
+  return null;
+}
 
 // A run of capitalized words (patent section headings are set in caps), 2-8 words,
 // plus a few well-known single-word headings.

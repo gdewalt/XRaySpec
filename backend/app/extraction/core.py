@@ -102,8 +102,17 @@ def route_page(
             draw_words = ocr_fn(pdf_bytes, page.index, config, psm=config.ocr_sparse_psm)
         figure_id = detect_page_figure(draw_words)
         figures = tuple(detect_figure_occurrences(draw_words, page.index))
-        callouts = tuple(
-            detect_callouts(draw_words, page.index, figure_id, figure_occurrences=figures)
+        callouts = (
+            tuple(
+                detect_callouts(
+                    draw_words,
+                    page.index,
+                    figure_id,
+                    figure_occurrences=figures,
+                )
+            )
+            if config.callout_detection_enabled
+            else ()
         )
         return PageResult(page.index, method, True, figures=figures, callouts=callouts)
     if method == "ocr" and specification_ocr_fn is not None:
@@ -185,7 +194,9 @@ def extract_from_pages(
                 fallback_columns = (last_column + 1, last_column + 2)
 
     figure_mentions = detect_figure_references(entries)
-    numeral_mentions = detect_reference_numerals(entries)
+    numeral_mentions = (
+        detect_reference_numerals(entries) if config.callout_detection_enabled else []
+    )
     expected_figure_ids = {
         figure_id.upper()
         for mention in figure_mentions
@@ -194,17 +205,21 @@ def extract_from_pages(
     drawing_figures = filter_figure_occurrences(
         figure_occurrences or [], expected_figure_ids
     )
-    supported_callouts = specification_callout_evidence(
-        pages,
-        fallback_values=(mention.value for mention in numeral_mentions),
-    )
-    callout_occurrences = assign_callouts_to_figures(
-        filter_callouts_by_values(callouts or [], supported_callouts),
-        drawing_figures,
-    )
-    mention_associations = associate_mentions(
-        numeral_mentions, callout_occurrences, figure_mentions, entries
-    )
+    if config.callout_detection_enabled:
+        supported_callouts = specification_callout_evidence(
+            pages,
+            fallback_values=(mention.value for mention in numeral_mentions),
+        )
+        callout_occurrences = assign_callouts_to_figures(
+            filter_callouts_by_values(callouts or [], supported_callouts),
+            drawing_figures,
+        )
+        mention_associations = associate_mentions(
+            numeral_mentions, callout_occurrences, figure_mentions, entries
+        )
+    else:
+        callout_occurrences = []
+        mention_associations = []
 
     detected = sum(1 for e in entries if e.provenance.reference_method == "detected")
     interpolated = sum(1 for e in entries if e.provenance.reference_method == "interpolated")

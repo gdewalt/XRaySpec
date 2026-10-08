@@ -6,6 +6,7 @@ import {
   claimsStartOrdinal,
   detectClaims,
   detectOutline,
+  resolveFigurePage,
   highlightSegments,
   parseViewHash,
   refShort,
@@ -148,5 +149,26 @@ describe("outline + scopes", () => {
   it("scopes to figure-bearing lines, falling back to all when none", () => {
     expect(scopedEntries(entries, "figures", new Set(["line_1"])).map((e) => e.ordinal)).toEqual([1]);
     expect(scopedEntries(entries, "figures", new Set()).length).toBe(entries.length);
+  });
+});
+
+describe("figure page resolution", () => {
+  const figure = (figureId: string, pageIndex: number) => ({
+    figure_id: figureId,
+    page_index: pageIndex,
+    box: [0.1, 0.2, 0.3, 0.4] as [number, number, number, number],
+    confidence: null,
+  });
+
+  it("prefers an exact figure occurrence", () => {
+    expect(resolveFigurePage(["1"], [figure("1", 4), figure("2", 5)])).toBe(4);
+  });
+
+  it("recovers a legacy missing FIG. 1 from the following FIG. 2 sheet", () => {
+    expect(resolveFigurePage(["1"], [figure("2", 2), figure("3", 3)])).toBe(1);
+  });
+
+  it("does not guess for other missing figures", () => {
+    expect(resolveFigurePage(["7"], [figure("8", 9)])).toBeNull();
   });
 });

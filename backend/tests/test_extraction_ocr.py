@@ -177,7 +177,11 @@ def test_drawing_ocr_runs_separate_figure_and_callout_profiles(monkeypatch):
         return [Word("104", 0.4, 0.4, 0.5, 0.45, confidence=94.0)]
 
     monkeypatch.setattr(ocr_module, "_tesseract_words", recognize)
-    config = replace(DEFAULT_CONFIG, ocr_drawing_rotations=(0,))
+    config = replace(
+        DEFAULT_CONFIG,
+        ocr_drawing_rotations=(0,),
+        callout_detection_enabled=True,
+    )
     words = ocr_drawing_words(b"pdf", 0, config)
 
     assert [word.text for word in words] == ["FIG.", "104"]
@@ -215,6 +219,35 @@ def test_drawing_ocr_falls_back_to_local_tiles_when_full_page_misses_figure(monk
 
     assert any("fig12a" in word.text.casefold() for word in words)
     assert calls.count(6) == 8
+
+
+def test_drawing_ocr_skips_callout_profile_while_identification_is_disabled(monkeypatch):
+    image = Image.new("L", (100, 120), 255)
+    calls: list[int] = []
+    monkeypatch.setattr(ocr_module, "render_page", lambda *_args: image)
+    monkeypatch.setattr(ocr_module, "preprocess_image", lambda value, _config: (value, 0.0))
+
+    def recognize(
+        _image,
+        _config,
+        *,
+        psm,
+        thresholding_method,
+        char_whitelist=None,
+    ):
+        del thresholding_method, char_whitelist
+        calls.append(psm)
+        return [
+            Word("Figure", 0.18, 0.21, 0.26, 0.23, confidence=90.0),
+            Word("1", 0.27, 0.21, 0.28, 0.23, confidence=92.0),
+        ]
+
+    monkeypatch.setattr(ocr_module, "_tesseract_words", recognize)
+    config = replace(DEFAULT_CONFIG, ocr_drawing_rotations=(0,))
+    words = ocr_drawing_words(b"pdf", 0, config)
+
+    assert [word.text for word in words] == ["Figure", "1"]
+    assert calls == [config.ocr_drawing_figure_psm]
 
 
 def test_route_page_uses_separate_column_ocr_for_scanned_specification():
@@ -263,7 +296,7 @@ def test_route_page_uses_rotated_drawing_pass_for_scanned_sheet():
     result = route_page(
         b"pdf",
         Page(0, []),
-        DEFAULT_CONFIG,
+        replace(DEFAULT_CONFIG, callout_detection_enabled=True),
         True,
         ocr_fn=full_pass,
         drawing_ocr_fn=drawing_pass,
@@ -271,6 +304,37 @@ def test_route_page_uses_rotated_drawing_pass_for_scanned_sheet():
     assert calls == ["drawing"]
     assert result.is_drawing is True
     assert [callout.value for callout in result.callouts] == ["104"]
+
+
+def test_image_only_first_drawing_sheet_keeps_figure_one_without_callouts():
+    initial = [
+        Word("Sheet", 0.40, 0.03, 0.46, 0.05),
+        Word("1", 0.47, 0.03, 0.49, 0.05),
+        Word("of", 0.50, 0.03, 0.53, 0.05),
+        Word("32", 0.54, 0.03, 0.58, 0.05),
+    ]
+
+    def full_pass(*_args, **_kwargs):
+        return initial
+
+    def drawing_pass(*_args, **_kwargs):
+        return [
+            Word("Figure", 0.18, 0.21, 0.26, 0.23, confidence=90.0),
+            Word("1", 0.27, 0.21, 0.28, 0.23, confidence=92.0),
+            Word("14", 0.30, 0.40, 0.33, 0.43, confidence=94.0),
+        ]
+
+    result = route_page(
+        b"pdf",
+        Page(1, []),
+        DEFAULT_CONFIG,
+        True,
+        ocr_fn=full_pass,
+        drawing_ocr_fn=drawing_pass,
+    )
+
+    assert [(figure.figure_id, figure.page_index) for figure in result.figures] == [("1", 1)]
+    assert result.callouts == ()
 
 
 def test_ocr_line_reconstruction_preserves_large_gaps_as_tabs():

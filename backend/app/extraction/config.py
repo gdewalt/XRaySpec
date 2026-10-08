@@ -22,7 +22,7 @@ OcrPolicy = Literal["auto", "force", "disabled"]
 @dataclass(frozen=True, slots=True)
 class ExtractionConfig:
     # Engine identity
-    version: str = "0.12.0"
+    version: str = "0.13.0"
 
     # OCR
     ocr_policy: OcrPolicy = "auto"
@@ -42,6 +42,11 @@ class ExtractionConfig:
     ocr_deskew_max_degrees: float = 2.0
     ocr_deskew_step_degrees: float = 0.5
     ocr_drawing_rotations: tuple[int, ...] = (0, 90, 180, 270)
+
+    # Drawing reference numerals are intentionally disabled until their
+    # figure-association precision is reliable across the calibration corpus.
+    # Figure-caption detection and FIG. navigation remain enabled.
+    callout_detection_enabled: bool = False
 
     # Grant line-reference reconstruction (§12.5)
     line_y_tolerance: float = 3.0

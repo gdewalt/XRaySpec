@@ -41,6 +41,7 @@ import {
   highlightSegments,
   parseViewHash,
   refShort,
+  resolveFigurePage,
   scopedEntries,
   searchEntries,
 } from "../spec/navigation";
@@ -58,6 +59,9 @@ type Layout = "text" | "pdf" | "split" | "details";
 type Selection = { start: number; end: number } | null;
 type OutlineSectionKey = "specification" | "bookmarks" | "notes" | "claims";
 const VIEWER_PREFERENCES_KEY = "xray.viewer.preferences.v1";
+// Keep the dormant callout code and artifact fields available for a later,
+// measured reintroduction, but do not expose unreliable numeral associations.
+const CALLOUT_IDENTIFICATION_ENABLED = false;
 
 function loadViewerPreferences(): {
   layout: Layout;
@@ -376,7 +380,9 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
         const [bm, an, ov] = await Promise.all([
           api.listBookmarks(documentId),
           api.listAnnotations(documentId),
-          api.listOverrides(documentId),
+          CALLOUT_IDENTIFICATION_ENABLED
+            ? api.listOverrides(documentId)
+            : Promise.resolve([] as OverrideRead[]),
         ]);
         if (!cancelled) {
           setBookmarks(bm);
@@ -396,7 +402,10 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
   const indentLevels = useMemo(() => deriveIndentLevels(entries), [entries]);
   const paragraphStarts = useMemo(() => deriveParagraphStarts(entries), [entries]);
   const figsByEntry = useMemo(() => groupByEntry(artifact?.figure_mentions ?? []), [artifact]);
-  const numsByEntry = useMemo(() => groupByEntry(artifact?.numeral_mentions ?? []), [artifact]);
+  const numsByEntry = useMemo(
+    () => groupByEntry(CALLOUT_IDENTIFICATION_ENABLED ? artifact?.numeral_mentions ?? [] : []),
+    [artifact],
+  );
   const assocByKey = useMemo(() => {
     const map = new Map<string, AssociationDto>();
     for (const a of artifact?.mention_associations ?? []) {
@@ -587,21 +596,19 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
       const normalize = (value: string) =>
         value.replace(/^fig(?:ure)?\.?\s*/i, "").replace(/\s+/g, "").toUpperCase();
       const wanted = new Set(mention.figure_ids.map(normalize));
-      const figures = (artifact?.figure_occurrences ?? [])
+      const occurrences = artifact?.figure_occurrences ?? [];
+      const figures = occurrences
         .filter((figure) => wanted.has(normalize(figure.figure_id)))
         .sort((a, b) => a.page_index - b.page_index);
-      const legacyCallouts = (artifact?.callout_occurrences ?? [])
-        .filter((callout) => callout.figure_id && wanted.has(normalize(callout.figure_id)))
-        .sort((a, b) => a.page_index - b.page_index);
-      const targetPage = figures[0]?.page_index ?? legacyCallouts[0]?.page_index;
-      if (targetPage === undefined) return;
+      const targetPage = resolveFigurePage(mention.figure_ids, occurrences);
+      if (targetPage === null) return;
       setLayout((current) =>
         current === "text" ? "split" : current === "details" ? "pdf" : current,
       );
       setSelectionSource("pdf");
       setPdfPage(targetPage + 1);
       setFocusedFigure(figures[0] ? { ...figures[0] } : null);
-      setHighlightCallouts(new Set(legacyCallouts.map((callout) => callout.callout_id)));
+      setHighlightCallouts(new Set());
     },
     [artifact],
   );
@@ -1029,10 +1036,14 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
             <dd>{entries.length}</dd>
             <dt>Figure references</dt>
             <dd>{artifact.figure_mentions.length}</dd>
-            <dt>Reference numerals</dt>
-            <dd>{artifact.numeral_mentions.length}</dd>
-            <dt>Drawing callouts</dt>
-            <dd>{artifact.callout_occurrences.length}</dd>
+            {CALLOUT_IDENTIFICATION_ENABLED && (
+              <>
+                <dt>Reference numerals</dt>
+                <dd>{artifact.numeral_mentions.length}</dd>
+                <dt>Drawing callouts</dt>
+                <dd>{artifact.callout_occurrences.length}</dd>
+              </>
+            )}
             <dt>Alignment-corrected lines</dt>
             <dd>
               {correctedCount}
@@ -1339,7 +1350,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
             <PdfPane
               documentId={documentId}
               entries={entries}
-              callouts={artifact.callout_occurrences}
+              callouts={CALLOUT_IDENTIFICATION_ENABLED ? artifact.callout_occurrences : []}
               figures={artifact.figure_occurrences}
               focusedFigure={focusedFigure}
               page={pdfPage}
@@ -1363,7 +1374,7 @@ export function Viewer({ documentId, onBack }: { documentId: string; onBack: () 
         </div>
       )}
 
-      {chooser && (
+      {CALLOUT_IDENTIFICATION_ENABLED && chooser && (
         <div className="chooser" role="dialog" aria-modal="true" aria-label="Choose a callout">
           <div className="chooser-head">
             <strong>Numeral {chooser.mention.value}</strong> appears on more than one drawing —
