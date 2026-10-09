@@ -84,14 +84,27 @@ def _is_truncated_repeat(
     """
     left = "".join(_normalize(previous).split())
     right = "".join(_normalize(current).split())
-    if left == right or len(left) < 7 or len(right) > len(left):
+    if left == right or not left or not right or len(right) > len(left):
         return False
     if allow_short:
         # Provider alignment gives us a strong additional signal: the next
         # authoritative token is not this fragment. This covers severe page-
-        # edge clipping such as ``Interface`` / ``ace`` without applying the
-        # same broad rule to ordinary source-only word pairs.
-        return len(right) >= 3 and left.endswith(right)
+        # edge clipping such as ``Interface`` / ``ace``, ``or`` / ``r``, and
+        # ``12`` / ``2`` without applying the same broad rule to ordinary
+        # source-only word pairs. Some crops delete an interior character
+        # (``interface`` / ``iterface``), so a near-full fuzzy match is also
+        # accepted here.
+        if left.endswith(right):
+            return True
+        return bool(
+            len(left) >= 5
+            and len(right) >= 4
+            and len(right) < len(left)
+            and len(left) - len(right) <= 2
+            and SequenceMatcher(None, left, right).ratio() >= 0.86
+        )
+    if len(left) < 7:
+        return False
     if len(right) < 5 or len(left) - len(right) > 2:
         return False
     suffix = 0

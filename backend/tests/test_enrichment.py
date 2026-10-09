@@ -104,6 +104,32 @@ def test_alignment_drops_short_page_edge_fragment_without_dropping_real_word():
     assert aligned[3].display_text == "face remains visible."
 
 
+def test_alignment_reconciles_numeric_short_and_interior_boundary_fragments():
+    clean = (
+        "12 Marlboro St to Albany Airport; via an Internet web interface or dedicated "
+        "kiosk. The Destination Point could also be specified by category or purpose."
+    )
+    entries = [
+        _entry("12", 1),
+        _entry("2 Marlboro St to Albany Airport; via an Internet web interface", 2),
+        _entry("iterface or dedicated kiosk.", 3),
+        _entry("The Destination Point could also be specified by category or", 4),
+        _entry("r purpose.", 5),
+    ]
+
+    aligned = align_entries(entries, clean, DEFAULT_CONFIG, identity_verified=True)
+
+    assert aligned[0].display_text == "12"
+    assert aligned[1].display_text == (
+        "Marlboro St to Albany Airport; via an Internet web interface"
+    )
+    assert aligned[2].display_text == "or dedicated kiosk."
+    assert aligned[3].display_text == (
+        "The Destination Point could also be specified by category or"
+    )
+    assert aligned[4].display_text == "purpose."
+
+
 def test_overlap_repair_is_conservative_and_supports_legacy_artifacts():
     assert strip_leading_line_overlap("that enables", "nables regular traffic") == (
         "regular traffic"
@@ -122,6 +148,20 @@ def test_overlap_repair_is_conservative_and_supports_legacy_artifacts():
         "ace determines if the Driver complies",
         allow_short=True,
     ) == "determines if the Driver complies"
+    assert strip_leading_line_overlap(
+        "an Internet web interface",
+        "iterface or dedicated kiosk",
+        allow_short=True,
+    ) == "or dedicated kiosk"
+    assert (
+        strip_leading_line_overlap(
+            "specified by category or", "r purpose", allow_short=True
+        )
+        == "purpose"
+    )
+    assert strip_leading_line_overlap("address 12", "2 Marlboro St", allow_short=True) == (
+        "Marlboro St"
+    )
     assert strip_leading_line_overlap("the surface", "face remains visible") == (
         "face remains visible"
     )
@@ -166,6 +206,31 @@ def test_overlap_repair_is_conservative_and_supports_legacy_artifacts():
     ]
     repaired_short = repair_serialized_display_overlaps(short_fragment_entries)
     assert repaired_short[1]["display_text"] == "determines if the Driver complies"
+
+    for previous, current, expected in [
+        ("an Internet web interface", "iterface or dedicated kiosk", "or dedicated kiosk"),
+        ("specified by category or", "r purpose", "purpose"),
+        ("address 12", "2 Marlboro St", "Marlboro St"),
+    ]:
+        repaired_boundary = repair_serialized_display_overlaps(
+            [
+                {
+                    "ordinal": 10,
+                    "page_index": 36,
+                    "locator": {"kind": "grant", "column": 8, "printed_line": 40},
+                    "display_text": previous,
+                    "provenance": {"alignment_method": "fuzzy"},
+                },
+                {
+                    "ordinal": 11,
+                    "page_index": 36,
+                    "locator": {"kind": "grant", "column": 8, "printed_line": 41},
+                    "display_text": current,
+                    "provenance": {"alignment_method": "unmatched"},
+                },
+            ]
+        )
+        assert repaired_boundary[1]["display_text"] == expected
 
 
 def test_identity_verification():
