@@ -69,7 +69,12 @@ def _best_window(
     return best_ratio, best_start, best_end
 
 
-def _is_truncated_repeat(previous: str, current: str) -> bool:
+def _is_truncated_repeat(
+    previous: str,
+    current: str,
+    *,
+    allow_short: bool = False,
+) -> bool:
     """Return true for a clipped repeat such as ``transport`` / ``ansport``.
 
     Column OCR can recognize the same word at the end of one row and again at
@@ -79,13 +84,15 @@ def _is_truncated_repeat(previous: str, current: str) -> bool:
     """
     left = "".join(_normalize(previous).split())
     right = "".join(_normalize(current).split())
-    if (
-        left == right
-        or len(left) < 7
-        or len(right) < 5
-        or len(right) > len(left)
-        or len(left) - len(right) > 2
-    ):
+    if left == right or len(left) < 7 or len(right) > len(left):
+        return False
+    if allow_short:
+        # Provider alignment gives us a strong additional signal: the next
+        # authoritative token is not this fragment. This covers severe page-
+        # edge clipping such as ``Interface`` / ``ace`` without applying the
+        # same broad rule to ordinary source-only word pairs.
+        return len(right) >= 3 and left.endswith(right)
+    if len(right) < 5 or len(left) - len(right) > 2:
         return False
     suffix = 0
     for left_char, right_char in zip(reversed(left), reversed(right), strict=False):
@@ -95,7 +102,12 @@ def _is_truncated_repeat(previous: str, current: str) -> bool:
     return suffix >= max(5, (len(right) * 7 + 9) // 10)
 
 
-def strip_leading_line_overlap(previous_text: str, current_text: str) -> str:
+def strip_leading_line_overlap(
+    previous_text: str,
+    current_text: str,
+    *,
+    allow_short: bool = False,
+) -> str:
     """Remove one OCR-clipped repeat from the beginning of the next line."""
     previous_words = re.findall(r"[A-Za-z0-9]+", previous_text)
     first = re.match(
@@ -105,7 +117,9 @@ def strip_leading_line_overlap(previous_text: str, current_text: str) -> str:
     )
     if not previous_words or first is None:
         return current_text
-    if not _is_truncated_repeat(previous_words[-1], first.group(2)):
+    if not _is_truncated_repeat(
+        previous_words[-1], first.group(2), allow_short=allow_short
+    ):
         return current_text
     return f"{first.group(1)}{first.group(4)}"
 
@@ -133,9 +147,15 @@ def repair_serialized_display_overlaps(
                 and current_locator.get("column") == previous_locator.get("column")
             )
             if same_flow:
+                provenance = raw.get("provenance") or {}
                 display = strip_leading_line_overlap(
                     str(previous.get("display_text", "")),
                     str(raw.get("display_text", "")),
+                    # A rejected provider substitution means this line fell
+                    # back to its OCR/native source. At that boundary it is
+                    # safe to recognize a shorter clipped suffix such as
+                    # ``Interface`` / ``ace``.
+                    allow_short=provenance.get("alignment_method") == "unmatched",
                 )
                 if display != raw.get("display_text"):
                     current = {**raw, "display_text": display}
@@ -172,9 +192,17 @@ def align_entries(
         # If the crop repeated the previous provider word with its first one or
         # two characters missing, align the rest strictly forward. This avoids
         # both keeping the fragment and pulling the complete word into two rows.
-        if cursor > 0 and len(src_norm) > 1 and _is_truncated_repeat(
-            normalized[cursor - 1], src_norm[0]
-        ):
+        clipped_leading_repeat = bool(
+            cursor > 0
+            and len(src_norm) > 1
+            and _is_truncated_repeat(
+                normalized[cursor - 1], src_norm[0], allow_short=True
+            )
+            # If the clean provider repeats the word too, it is legitimate
+            # prose (for example, ``surface face``), not OCR overlap.
+            and (cursor >= len(normalized) or normalized[cursor] != src_norm[0])
+        )
+        if clipped_leading_repeat:
             trimmed_ratio, trimmed_start, trimmed_end = _best_window(
                 normalized,
                 cursor,
@@ -220,7 +248,11 @@ def align_entries(
                 )
             )
             if same_flow:
-                display = strip_leading_line_overlap(out[-1].display_text, display)
+                display = strip_leading_line_overlap(
+                    out[-1].display_text,
+                    display,
+                    allow_short=clipped_leading_repeat,
+                )
             method = "unmatched"
             if provider_paragraph_source:
                 paragraph_start = entry.paragraph_source == provider_paragraph_source

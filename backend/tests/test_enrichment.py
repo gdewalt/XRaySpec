@@ -82,6 +82,28 @@ def test_alignment_drops_clipped_repeats_at_column_line_boundaries():
     assert aligned[2].source_text.startswith("ansport ")
 
 
+def test_alignment_drops_short_page_edge_fragment_without_dropping_real_word():
+    clean = (
+        "A Driver Software Interface determines if the Driver 13 is complying with "
+        "the pick-up request. The surface face remains visible."
+    )
+    entries = [
+        _entry("A Driver Software Inter", 1),
+        _entry("ace determines if the Driver 13 is complying with the pick-up request.", 2),
+        _entry("The surface", 3),
+        _entry("face remains visible.", 4),
+    ]
+
+    aligned = align_entries(entries, clean, DEFAULT_CONFIG, identity_verified=True)
+
+    assert aligned[0].display_text == "A Driver Software Interface"
+    assert aligned[1].display_text == (
+        "determines if the Driver 13 is complying with the pick-up request."
+    )
+    assert aligned[2].display_text == "The surface"
+    assert aligned[3].display_text == "face remains visible."
+
+
 def test_overlap_repair_is_conservative_and_supports_legacy_artifacts():
     assert strip_leading_line_overlap("that enables", "nables regular traffic") == (
         "regular traffic"
@@ -94,6 +116,14 @@ def test_overlap_repair_is_conservative_and_supports_legacy_artifacts():
     )
     assert strip_leading_line_overlap("public transport", "transport remains available") == (
         "transport remains available"
+    )
+    assert strip_leading_line_overlap(
+        "A Driver Software Interface",
+        "ace determines if the Driver complies",
+        allow_short=True,
+    ) == "determines if the Driver complies"
+    assert strip_leading_line_overlap("the surface", "face remains visible") == (
+        "face remains visible"
     )
 
     entries = [
@@ -115,6 +145,27 @@ def test_overlap_repair_is_conservative_and_supports_legacy_artifacts():
     repaired = repair_serialized_display_overlaps(entries)
     assert repaired[1]["display_text"] == "regular highway traffic"
     assert entries[1]["display_text"] == "nables regular highway traffic"
+
+    short_fragment_entries = [
+        {
+            "entry_id": "line_3",
+            "ordinal": 3,
+            "page_index": 36,
+            "locator": {"kind": "grant", "column": 8, "printed_line": 65},
+            "display_text": "A Driver Software Interface",
+            "provenance": {"alignment_method": "fuzzy"},
+        },
+        {
+            "entry_id": "line_4",
+            "ordinal": 4,
+            "page_index": 36,
+            "locator": {"kind": "grant", "column": 8, "printed_line": 66},
+            "display_text": "ace determines if the Driver complies",
+            "provenance": {"alignment_method": "unmatched"},
+        },
+    ]
+    repaired_short = repair_serialized_display_overlaps(short_fragment_entries)
+    assert repaired_short[1]["display_text"] == "determines if the Driver complies"
 
 
 def test_identity_verification():
