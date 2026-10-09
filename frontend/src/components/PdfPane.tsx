@@ -132,7 +132,7 @@ function SelectablePdfLine({
     setHorizontalScale((current) =>
       Math.abs(current - nextScale) > 0.002 ? nextScale : current,
     );
-  }, [entry.source_text, fontSize, pageSize.width, rotation]);
+  }, [entry.display_text, fontSize, pageSize.width, rotation]);
 
   return (
     <span
@@ -155,7 +155,7 @@ function SelectablePdfLine({
           transform: `scaleX(${horizontalScale})`,
         }}
       >
-        {entry.source_text}
+        {entry.display_text}
       </span>
     </span>
   );

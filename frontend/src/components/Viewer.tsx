@@ -46,6 +46,7 @@ import {
   searchEntries,
 } from "../spec/navigation";
 import { exportPortable, exportText } from "../spec/export";
+import { detectDisplayFigureMentions } from "../spec/figures";
 import {
   deriveIndentLevels,
   deriveParagraphStarts,
@@ -129,7 +130,7 @@ function buildMarks(
       mention: n,
     });
   }
-  const len = entry.source_text.length;
+  const len = entry.display_text.length;
   return marks
     .filter((m) => m.start >= 0 && m.start < m.end && m.end <= len)
     .sort((a, b) => a.start - b.start);
@@ -156,7 +157,7 @@ function renderText(
   onMentionClick: (m: NumeralMentionDto) => void,
   onFigureClick: (m: FigureMentionDto) => void,
 ): ReactNode {
-  const text = entry.source_text;
+  const text = entry.display_text;
   const nodes: ReactNode[] = [];
   let pos = 0;
   let key = 0;
@@ -402,7 +403,8 @@ export function Viewer({ documentId }: { documentId: string }) {
   const entries = artifact?.entries ?? [];
   const indentLevels = useMemo(() => deriveIndentLevels(entries), [entries]);
   const paragraphStarts = useMemo(() => deriveParagraphStarts(entries), [entries]);
-  const figsByEntry = useMemo(() => groupByEntry(artifact?.figure_mentions ?? []), [artifact]);
+  const figureMentions = useMemo(() => detectDisplayFigureMentions(entries), [entries]);
+  const figsByEntry = useMemo(() => groupByEntry(figureMentions), [figureMentions]);
   const numsByEntry = useMemo(
     () => groupByEntry(CALLOUT_IDENTIFICATION_ENABLED ? artifact?.numeral_mentions ?? [] : []),
     [artifact],
@@ -418,7 +420,7 @@ export function Viewer({ documentId }: { documentId: string }) {
   const outline = useMemo(() => {
     const ordOf = new Map(entries.map((e) => [e.entry_id, e.ordinal]));
     const figFirst = new Map<string, number>();
-    for (const f of artifact?.figure_mentions ?? []) {
+    for (const f of figureMentions) {
       const ord = ordOf.get(f.entry_id);
       if (ord === undefined) continue;
       for (const fid of f.figure_ids) {
@@ -427,7 +429,7 @@ export function Viewer({ documentId }: { documentId: string }) {
       }
     }
     return detectOutline(entries, figFirst);
-  }, [entries, artifact]);
+  }, [entries, figureMentions]);
   const claims = useMemo(() => detectClaims(entries), [entries]);
 
   const toggleOutlineSection = useCallback((section: OutlineSectionKey) => {
@@ -671,8 +673,8 @@ export function Viewer({ documentId }: { documentId: string }) {
   }, [entries, selectRange]);
 
   const figureEntryIds = useMemo(
-    () => new Set((artifact?.figure_mentions ?? []).map((f) => f.entry_id)),
-    [artifact],
+    () => new Set(figureMentions.map((f) => f.entry_id)),
+    [figureMentions],
   );
   const matches = useMemo(
     () => searchEntries(scopedEntries(entries, scope, figureEntryIds), query),
@@ -1047,7 +1049,7 @@ export function Viewer({ documentId }: { documentId: string }) {
             <dt>Lines</dt>
             <dd>{entries.length}</dd>
             <dt>Figure references</dt>
-            <dd>{artifact.figure_mentions.length}</dd>
+            <dd>{figureMentions.length}</dd>
             {CALLOUT_IDENTIFICATION_ENABLED && (
               <>
                 <dt>Reference numerals</dt>
