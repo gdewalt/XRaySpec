@@ -279,12 +279,11 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
   return (
     <div className="dashboard">
       <section className="dashboard-intro" aria-labelledby="workspace-h">
-        <div>
-          <p className="eyebrow">Patent library</p>
-          <h1 id="workspace-h">Your research workspace</h1>
-          <p className="intro-copy">
-            Organize related patents, verify source material, and preserve citation-ready evidence.
-          </p>
+        <div className="library-title">
+          <h1 id="workspace-h">Patent Library</h1>
+          <button type="button" className="icon-button" onClick={load} aria-label="Refresh patents" title="Refresh patents">
+            <Icon name="refresh" size={17} />
+          </button>
         </div>
         <dl className="library-stats" aria-label="Library summary">
           <div>
@@ -302,17 +301,7 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
         </dl>
       </section>
       <IngestPanel onChanged={load} />
-      <section className="panel documents-panel" aria-labelledby="docs-h">
-        <div className="panel-head">
-          <div>
-            <p className="eyebrow">Collection</p>
-            <h2 id="docs-h">Patents</h2>
-            <p>Grouped by workspace for faster review.</p>
-          </div>
-          <button type="button" className="icon-button" onClick={load} aria-label="Refresh patents" title="Refresh patents">
-            <Icon name="refresh" size={17} />
-          </button>
-        </div>
+      <section className="panel documents-panel" aria-label="Patents">
         <form className="workspace-create" onSubmit={createWorkspace}>
           <div className="workspace-create-copy">
             <span className="workspace-create-icon" aria-hidden="true"><Icon name="folder" /></span>

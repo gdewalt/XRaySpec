@@ -1108,6 +1108,11 @@ mark.mention.clickable:hover {
   line-height: 1.05;
   letter-spacing: -0.035em;
 }
+.library-title {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
 .intro-copy {
   max-width: 650px;
   margin: 0.65rem 0 0;
