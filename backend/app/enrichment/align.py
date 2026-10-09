@@ -28,10 +28,22 @@ from .ppubs_text import extract_ppubs_text
 
 _NONALNUM = re.compile(r"[^a-z0-9 ]")
 _WS = re.compile(r"\s+")
+_EDGE_TOKEN = re.compile(r"[A-Za-z0-9]+(?:[/\-'’][A-Za-z0-9]+)*")
 
 
 def _normalize(text: str) -> str:
     return _WS.sub(" ", _NONALNUM.sub(" ", text.lower())).strip()
+
+
+def _normalized_whitespace_tokens(text: str) -> list[str]:
+    """Normalize while retaining the provider's one-token-per-space model.
+
+    Normalizing a whole line before splitting turns ``and/or`` into two tokens,
+    while provider tokenization retains it as one normalized token (``and or``).
+    Keeping those models consistent prevents punctuation-heavy line boundaries
+    from throwing off the forward alignment cursor.
+    """
+    return [normalized for token in text.split() if (normalized := _normalize(token))]
 
 
 def _clean_tokens(clean_text: str) -> tuple[list[str], list[str], list[int]]:
@@ -84,7 +96,14 @@ def _is_truncated_repeat(
     """
     left = "".join(_normalize(previous).split())
     right = "".join(_normalize(current).split())
-    if left == right or not left or not right or len(right) > len(left):
+    if not left or not right:
+        return False
+    if left == right:
+        # Exact duplicates are ambiguous without provider evidence. At an
+        # aligned→unmatched boundary, however, a substantial repeated word is
+        # the characteristic remainder of a hyphenated OCR line.
+        return allow_short and len(left) >= 5
+    if len(right) > len(left):
         return False
     if allow_short:
         # Provider alignment gives us a strong additional signal: the next
@@ -95,6 +114,12 @@ def _is_truncated_repeat(
         # (``interface`` / ``iterface``), so a near-full fuzzy match is also
         # accepted here.
         if left.endswith(right):
+            return True
+        # OCR can damage the first character of the carried-over fragment
+        # (``waiting`` / ``vaiting``). Compare it with the equally sized suffix
+        # rather than requiring a literal suffix relationship.
+        suffix = left[-len(right) :]
+        if len(right) >= 4 and SequenceMatcher(None, suffix, right).ratio() >= 0.82:
             return True
         return bool(
             len(left) >= 5
@@ -122,19 +147,20 @@ def strip_leading_line_overlap(
     allow_short: bool = False,
 ) -> str:
     """Remove one OCR-clipped repeat from the beginning of the next line."""
-    previous_words = re.findall(r"[A-Za-z0-9]+", previous_text)
-    first = re.match(
-        r"^(\s*)([A-Za-z0-9]+)[.,;:!?\"')\]]*(\s+)(.*)$",
-        current_text,
-        re.DOTALL,
-    )
-    if not previous_words or first is None:
+    previous_words = _EDGE_TOKEN.findall(previous_text)
+    first = _EDGE_TOKEN.search(current_text)
+    if not previous_words or first is None or _normalize(current_text[: first.start()]):
+        return current_text
+    after = current_text[first.end() :]
+    separator = re.match(r"^[.,;:!?\"'’”()\[\]]*(?:\s+|$)", after)
+    if separator is None:
         return current_text
     if not _is_truncated_repeat(
-        previous_words[-1], first.group(2), allow_short=allow_short
+        previous_words[-1], first.group(0), allow_short=allow_short
     ):
         return current_text
-    return f"{first.group(1)}{first.group(4)}"
+    leading_space = re.match(r"^\s*", current_text).group(0)
+    return f"{leading_space}{after[separator.end():]}"
 
 
 def repair_serialized_display_overlaps(
@@ -161,6 +187,11 @@ def repair_serialized_display_overlaps(
             )
             if same_flow:
                 provenance = raw.get("provenance") or {}
+                previous_provenance = previous.get("provenance") or {}
+                provider_boundary = (
+                    provenance.get("alignment_method") == "unmatched"
+                    and previous_provenance.get("alignment_method") in {"exact", "fuzzy"}
+                )
                 display = strip_leading_line_overlap(
                     str(previous.get("display_text", "")),
                     str(raw.get("display_text", "")),
@@ -168,7 +199,7 @@ def repair_serialized_display_overlaps(
                     # back to its OCR/native source. At that boundary it is
                     # safe to recognize a shorter clipped suffix such as
                     # ``Interface`` / ``ace``.
-                    allow_short=provenance.get("alignment_method") == "unmatched",
+                    allow_short=provider_boundary,
                 )
                 if display != raw.get("display_text"):
                     current = {**raw, "display_text": display}
@@ -194,7 +225,7 @@ def align_entries(
     previous_paragraph: int | None = None
     out: list[Entry] = []
     for entry in entries:
-        src_norm = _normalize(entry.source_text).split()
+        src_norm = _normalized_whitespace_tokens(entry.source_text)
         if not src_norm:
             out.append(entry)
             continue

@@ -130,6 +130,30 @@ def test_alignment_reconciles_numeric_short_and_interior_boundary_fragments():
     assert aligned[4].display_text == "purpose."
 
 
+def test_alignment_repairs_punctuation_and_fuzzy_hyphenation_remainders():
+    clean = (
+        "The Driver may fail and/or be waiting. Such lateness should include reasonable "
+        "adjustments for consistently gridlocked locations such as city centers."
+    )
+    entries = [
+        _entry("The Driver may fail and/or", 1),
+        _entry("nd/or be waiting.", 2),
+        _entry("vaiting. Such lateness should include reasonable", 3),
+        _entry("ble adjustments for consistently gridlocked locations suchas city", 4),
+        _entry("ity centers.", 5),
+    ]
+
+    aligned = align_entries(entries, clean, DEFAULT_CONFIG, identity_verified=True)
+
+    assert aligned[0].display_text == "The Driver may fail and/or"
+    assert aligned[1].display_text == "be waiting."
+    assert aligned[2].display_text == "Such lateness should include reasonable"
+    assert aligned[3].display_text == (
+        "adjustments for consistently gridlocked locations such as city"
+    )
+    assert aligned[4].display_text == "centers."
+
+
 def test_overlap_repair_is_conservative_and_supports_legacy_artifacts():
     assert strip_leading_line_overlap("that enables", "nables regular traffic") == (
         "regular traffic"
@@ -162,6 +186,20 @@ def test_overlap_repair_is_conservative_and_supports_legacy_artifacts():
     assert strip_leading_line_overlap("address 12", "2 Marlboro St", allow_short=True) == (
         "Marlboro St"
     )
+    assert strip_leading_line_overlap(
+        "the Driver may be waiting", "vaiting at the curb", allow_short=True
+    ) == "at the curb"
+    assert strip_leading_line_overlap(
+        "Driver No Show rating (Unreliable",
+        "‘Unreliable Driver)",
+        allow_short=True,
+    ) == "Driver)"
+    assert strip_leading_line_overlap(
+        "the Driver may fail and/or", "nd/or be late", allow_short=True
+    ) == "be late"
+    assert strip_leading_line_overlap(
+        "possibly expelled from", "‘om the marketplace", allow_short=True
+    ) == "the marketplace"
     assert strip_leading_line_overlap("the surface", "face remains visible") == (
         "face remains visible"
     )
@@ -211,6 +249,14 @@ def test_overlap_repair_is_conservative_and_supports_legacy_artifacts():
         ("an Internet web interface", "iterface or dedicated kiosk", "or dedicated kiosk"),
         ("specified by category or", "r purpose", "purpose"),
         ("address 12", "2 Marlboro St", "Marlboro St"),
+        ("the Driver may be waiting", "vaiting at the curb", "at the curb"),
+        (
+            "Driver No Show rating (Unreliable",
+            "‘Unreliable Driver)",
+            "Driver)",
+        ),
+        ("the Driver may fail and/or", "nd/or be late", "be late"),
+        ("possibly expelled from", "‘om the marketplace", "the marketplace"),
     ]:
         repaired_boundary = repair_serialized_display_overlaps(
             [
