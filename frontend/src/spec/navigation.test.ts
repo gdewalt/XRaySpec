@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { EntryDto } from "../api/types";
 import {
   buildViewHash,
+  buildFigureOutline,
   claimsStartOrdinal,
   detectClaims,
   detectOutline,
@@ -78,13 +79,12 @@ describe("outline + scopes", () => {
     grant(3, 7, "What is claimed is:"),
     grant(4, 8, "1. A method comprising steps."),
   ];
-  it("detects all-caps headings and figures", () => {
-    const figFirst = new Map([["3", 1]]);
-    const items = detectOutline(entries, figFirst);
+  it("detects all-caps specification headings without mixing in figures", () => {
+    const items = detectOutline(entries);
     const labels = items.map((i) => i.label);
     expect(labels).not.toContain("APPARATUS FOR SIGNAL RECEPTION");
     expect(labels).toContain("BACKGROUND OF THE INVENTION");
-    expect(items.some((i) => i.kind === "figure" && i.label === "FIG. 3")).toBe(true);
+    expect(items.some((i) => i.kind !== "heading")).toBe(false);
     expect(labels).not.toContain("Some prose here.");
   });
   it("starts at specification headings and joins wrapped headings from US 7,840,427", () => {
@@ -99,13 +99,13 @@ describe("outline + scopes", () => {
       grant(7, 11, "1. A shared transportation system.", 16),
     ];
 
-    expect(detectOutline(patent, new Map()).map((item) => item.label)).toEqual([
+    expect(detectOutline(patent).map((item) => item.label)).toEqual([
       "FIELD OF THE INVENTION",
       "BACKGROUND OF THE INVENTION",
       "DETAILED DESCRIPTION OF THE PREFERRED EMBODIMENTS",
     ]);
   });
-  it("keeps the specification before figures and leaves claims to the claims outline", () => {
+  it("keeps figures and claims out of the specification outline", () => {
     const withClaimsHeading = [
       grant(0, 1, "BACKGROUND OF THE INVENTION"),
       grant(1, 2, "FIG. 2 illustrates an embodiment."),
@@ -115,15 +115,11 @@ describe("outline + scopes", () => {
       grant(5, 6, "APPARATUS", 2),
     ];
 
-    const items = detectOutline(withClaimsHeading, new Map([
-      ["2", 1],
-      ["99", 5],
-    ]));
+    const items = detectOutline(withClaimsHeading);
 
     expect(items.map((item) => item.label)).toEqual([
       "BACKGROUND OF THE INVENTION",
       "DETAILED DESCRIPTION",
-      "FIG. 2",
     ]);
   });
   it("finds where claims begin", () => {
@@ -170,5 +166,17 @@ describe("figure page resolution", () => {
 
   it("does not guess for other missing figures", () => {
     expect(resolveFigurePage(["7"], [figure("8", 9)])).toBeNull();
+  });
+
+  it("builds a naturally ordered figure outline from mentions and drawing occurrences", () => {
+    const mentions = [
+      { entry_id: "line_1", raw_text: "FIGS. 2 and 10", span: [0, 14] as [number, number], figure_ids: ["2", "10"] },
+      { entry_id: "line_2", raw_text: "FIG. 1", span: [0, 6] as [number, number], figure_ids: ["1"] },
+    ];
+    expect(buildFigureOutline(mentions, [figure("FIG. 10", 5), figure("2", 3), figure("1", 2)])).toEqual([
+      { figureId: "1", label: "FIG. 1", page: 3 },
+      { figureId: "2", label: "FIG. 2", page: 4 },
+      { figureId: "10", label: "FIG. 10", page: 6 },
+    ]);
   });
 });

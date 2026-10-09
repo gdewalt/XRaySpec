@@ -662,13 +662,18 @@ mark.search-hit {
 .outline-item:hover {
   background: var(--badge-bg);
 }
+.outline-cover-sheet {
+  min-height: 36px;
+  font-weight: 650;
+}
+.outline-cover-sheet + .outline-section {
+  margin-top: 0.35rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--border);
+}
 .outline-item.heading .outline-label {
   font-size: 0.82rem;
   letter-spacing: 0.01em;
-}
-.outline-item.figure .outline-label {
-  color: var(--accent);
-  font-weight: 600;
 }
 .outline-label {
   overflow: hidden;
@@ -804,6 +809,9 @@ mark.search-hit {
 }
 .outline-section-content[hidden] {
   display: none;
+}
+.outline-empty {
+  margin: 0.2rem 0.45rem 0.35rem;
 }
 .outline-item.bookmark,
 .outline-item.note {

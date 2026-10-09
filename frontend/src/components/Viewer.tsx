@@ -35,6 +35,7 @@ import {
 } from "../spec/citation";
 import {
   type SearchScope,
+  buildFigureOutline,
   buildViewHash,
   detectClaims,
   detectOutline,
@@ -59,7 +60,7 @@ import { Icon, type IconName } from "./Icon";
 
 type Layout = "text" | "pdf" | "split" | "details";
 type Selection = { start: number; end: number } | null;
-type OutlineSectionKey = "specification" | "bookmarks" | "notes" | "claims";
+type OutlineSectionKey = "figures" | "specification" | "bookmarks" | "notes" | "claims";
 const VIEWER_PREFERENCES_KEY = "xray.viewer.preferences.v1";
 // Keep the dormant callout code and artifact fields available for a later,
 // measured reintroduction, but do not expose unreliable numeral associations.
@@ -417,19 +418,11 @@ export function Viewer({ documentId }: { documentId: string }) {
     return map;
   }, [artifact]);
 
-  const outline = useMemo(() => {
-    const ordOf = new Map(entries.map((e) => [e.entry_id, e.ordinal]));
-    const figFirst = new Map<string, number>();
-    for (const f of figureMentions) {
-      const ord = ordOf.get(f.entry_id);
-      if (ord === undefined) continue;
-      for (const fid of f.figure_ids) {
-        const prev = figFirst.get(fid);
-        if (prev === undefined || ord < prev) figFirst.set(fid, ord);
-      }
-    }
-    return detectOutline(entries, figFirst);
-  }, [entries, figureMentions]);
+  const outline = useMemo(() => detectOutline(entries), [entries]);
+  const outlineFigures = useMemo(
+    () => buildFigureOutline(figureMentions, artifact?.figure_occurrences ?? []),
+    [artifact?.figure_occurrences, figureMentions],
+  );
   const claims = useMemo(() => detectClaims(entries), [entries]);
 
   const toggleOutlineSection = useCallback((section: OutlineSectionKey) => {
@@ -594,16 +587,16 @@ export function Viewer({ documentId }: { documentId: string }) {
     setHighlightCallouts(new Set(highlightIds));
   }, []);
 
-  const navigateToFigure = useCallback(
-    (mention: FigureMentionDto) => {
+  const navigateToFigureIds = useCallback(
+    (figureIds: string[]) => {
       const normalize = (value: string) =>
         value.replace(/^fig(?:ure)?\.?\s*/i, "").replace(/\s+/g, "").toUpperCase();
-      const wanted = new Set(mention.figure_ids.map(normalize));
+      const wanted = new Set(figureIds.map(normalize));
       const occurrences = artifact?.figure_occurrences ?? [];
       const figures = occurrences
         .filter((figure) => wanted.has(normalize(figure.figure_id)))
         .sort((a, b) => a.page_index - b.page_index);
-      const targetPage = resolveFigurePage(mention.figure_ids, occurrences);
+      const targetPage = resolveFigurePage(figureIds, occurrences);
       if (targetPage === null) return;
       setLayout((current) =>
         current === "text" ? "split" : current === "details" ? "pdf" : current,
@@ -615,6 +608,20 @@ export function Viewer({ documentId }: { documentId: string }) {
     },
     [artifact],
   );
+  const navigateToFigure = useCallback(
+    (mention: FigureMentionDto) => navigateToFigureIds(mention.figure_ids),
+    [navigateToFigureIds],
+  );
+
+  const navigateToCoverSheet = useCallback(() => {
+    setLayout((current) =>
+      current === "text" ? "split" : current === "details" ? "pdf" : current,
+    );
+    setSelectionSource("pdf");
+    setPdfPage(1);
+    setFocusedFigure(null);
+    setHighlightCallouts(new Set());
+  }, []);
 
   // Forward: text numeral → its drawing callout(s); ambiguous opens a chooser.
   const onMentionClick = useCallback(
@@ -1085,6 +1092,48 @@ export function Viewer({ documentId }: { documentId: string }) {
         >
           {showText && outlineOpen && (
             <nav className="outline" aria-label="Outline">
+              <button
+                type="button"
+                className="outline-item outline-cover-sheet"
+                onClick={navigateToCoverSheet}
+              >
+                <span className="outline-label">Cover Sheet</span>
+                <span className="outline-ref">Page 1</span>
+              </button>
+              <section className="outline-section">
+                <h3 className="outline-head">
+                  <button
+                    type="button"
+                    className="outline-section-toggle"
+                    aria-expanded={!collapsedOutlineSections.has("figures")}
+                    aria-controls="outline-figures"
+                    onClick={() => toggleOutlineSection("figures")}
+                  >
+                    <span className="outline-chevron" aria-hidden="true">▾</span>
+                    <span>Figures ({outlineFigures.length})</span>
+                  </button>
+                </h3>
+                <div
+                  id="outline-figures"
+                  className="outline-section-content"
+                  hidden={collapsedOutlineSections.has("figures")}
+                >
+                  {outlineFigures.map((item) => (
+                    <button
+                      key={item.figureId}
+                      type="button"
+                      className="outline-item"
+                      onClick={() => navigateToFigureIds([item.figureId])}
+                    >
+                      <span className="outline-label">{item.label}</span>
+                      <span className="outline-ref">Page {item.page}</span>
+                    </button>
+                  ))}
+                  {outlineFigures.length === 0 && (
+                    <p className="muted small outline-empty">No figures detected.</p>
+                  )}
+                </div>
+              </section>
               {outline.length > 0 && (
                 <section className="outline-section">
                   <h3 className="outline-head">
@@ -1253,8 +1302,6 @@ export function Viewer({ documentId }: { documentId: string }) {
                   </div>
                 </section>
               )}
-              {outline.length === 0 && bookmarks.length === 0 && annotations.length === 0 &&
-                claims.length === 0 && <p className="muted small">No sections detected.</p>}
             </nav>
           )}
           {showText && (

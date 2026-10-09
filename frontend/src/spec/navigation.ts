@@ -1,7 +1,12 @@
 // Client-side specification navigation: outline extraction, search, and the
 // deep-link hash. Pure over the loaded artifact entries (no server round-trips).
 
-import type { EntryDto, FigureOccurrenceDto, Locator } from "../api/types";
+import type {
+  EntryDto,
+  FigureMentionDto,
+  FigureOccurrenceDto,
+  Locator,
+} from "../api/types";
 
 export function refShort(loc: Locator): string {
   return loc.kind === "grant" ? `${loc.column}:${loc.printed_line}` : `[${loc.paragraph}]`;
@@ -11,7 +16,13 @@ export type OutlineItem = {
   ordinal: number;
   label: string;
   ref: string;
-  kind: "heading" | "figure" | "claim";
+  kind: "heading" | "claim";
+};
+
+export type FigureOutlineItem = {
+  figureId: string;
+  label: string;
+  page: number;
 };
 
 function normalizedFigureId(value: string): string {
@@ -45,6 +56,33 @@ export function resolveFigurePage(
     }
   }
   return null;
+}
+
+/** Unique figures with a resolved drawing-sheet destination, in natural order. */
+export function buildFigureOutline(
+  mentions: FigureMentionDto[],
+  occurrences: FigureOccurrenceDto[],
+): FigureOutlineItem[] {
+  const ids = new Map<string, string>();
+  for (const mention of mentions) {
+    for (const id of mention.figure_ids) {
+      const normalized = normalizedFigureId(id);
+      if (normalized) ids.set(normalized, normalized);
+    }
+  }
+  for (const occurrence of occurrences) {
+    const normalized = normalizedFigureId(occurrence.figure_id);
+    if (normalized) ids.set(normalized, normalized);
+  }
+
+  return [...ids.values()]
+    .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))
+    .flatMap((figureId) => {
+      const pageIndex = resolveFigurePage([figureId], occurrences);
+      return pageIndex === null
+        ? []
+        : [{ figureId, label: `FIG. ${figureId}`, page: pageIndex + 1 }];
+    });
 }
 
 // A run of capitalized words (patent section headings are set in caps), 2-8 words,
@@ -99,11 +137,8 @@ function adjacentHeadingLine(left: EntryDto, right: EntryDto): boolean {
   return true;
 }
 
-/** Section headings (from all-caps lines) plus a jump-to-first entry per figure. */
-export function detectOutline(
-  entries: EntryDto[],
-  figureFirstOrdinal: Map<string, number>,
-): OutlineItem[] {
+/** Specification section headings detected from all-caps lines. */
+export function detectOutline(entries: EntryDto[]): OutlineItem[] {
   const items: OutlineItem[] = [];
   const claimsStart = claimsStartOrdinal(entries);
   const specificationEntries = entries.filter(
@@ -135,17 +170,6 @@ export function detectOutline(
       });
     }
     index = end;
-  }
-  const byOrdinal = new Map(entries.map((e) => [e.ordinal, e]));
-  const figures = [...figureFirstOrdinal.entries()].sort((a, b) =>
-    a[0].localeCompare(b[0], undefined, { numeric: true }),
-  );
-  for (const [figId, ordinal] of figures) {
-    if (claimsStart !== null && ordinal >= claimsStart) continue;
-    const e = byOrdinal.get(ordinal);
-    if (e) {
-      items.push({ ordinal, label: `FIG. ${figId}`, ref: refShort(e.locator), kind: "figure" });
-    }
   }
   return items;
 }
