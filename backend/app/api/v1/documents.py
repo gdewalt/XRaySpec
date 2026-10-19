@@ -200,7 +200,7 @@ async def list_documents(user: CurrentUser, session: DbSession) -> DocumentList:
         select(UserDocument, SourceDocument.patent_canonical)
         .join(SourceDocument, SourceDocument.id == UserDocument.source_id)
         .where(UserDocument.owner_id == user.id, UserDocument.state != "deleted")
-        .order_by(UserDocument.created_at.desc())
+        .order_by(UserDocument.sort_order.asc(), UserDocument.created_at.desc())
     )
     return DocumentList(
         items=[_document_read(document, patent_canonical) for document, patent_canonical in rows]

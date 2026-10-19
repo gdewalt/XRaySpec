@@ -1450,6 +1450,33 @@ mark.mention.clickable:hover {
 .document-menu-action:hover:not(:disabled) {
   background: var(--err-bg);
 }
+.document-menu-action.menu-neutral {
+  color: var(--text);
+}
+.document-menu-action.menu-neutral:hover:not(:disabled) {
+  background: var(--surface-subtle);
+}
+.document-drag-handle {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  min-width: 32px;
+  height: 38px;
+  border-radius: 7px;
+  color: var(--muted);
+  cursor: grab;
+  transform: rotate(90deg);
+}
+.document-drag-handle:hover {
+  background: var(--surface-subtle);
+  color: var(--text);
+}
+.document-drag-handle:active {
+  cursor: grabbing;
+}
+.document-row.dragging {
+  opacity: 0.45;
+}
 .loading-state {
   display: flex;
   align-items: center;
@@ -1715,6 +1742,10 @@ mark.mention.clickable:hover {
   align-items: center;
   background: var(--surface-subtle);
 }
+.workspace-header.drop-target {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
 .workspace-toggle {
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr) auto;
@@ -1802,6 +1833,27 @@ mark.mention.clickable:hover {
   display: flex;
   gap: 0.35rem;
 }
+.patent-drop-zone {
+  position: relative;
+  height: 0;
+  background: var(--surface);
+  transition: height 120ms ease;
+}
+.workspace-list.is-dragging .patent-drop-zone {
+  height: 12px;
+}
+.patent-drop-zone::after {
+  position: absolute;
+  inset: 4px 1rem auto;
+  height: 3px;
+  border-radius: 999px;
+  background: transparent;
+  content: "";
+}
+.patent-drop-zone.drop-target::after {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
 .workspace-group .document-list {
   border-top: 1px solid var(--border);
 }
@@ -1837,6 +1889,11 @@ mark.mention.clickable:hover {
   }
   .row-actions {
     flex-wrap: wrap;
+  }
+}
+@media (pointer: coarse) {
+  .document-drag-handle {
+    display: none;
   }
 }
 

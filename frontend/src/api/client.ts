@@ -99,6 +99,15 @@ export const api = {
       `/api/v1/documents/${documentId}/workspace`,
       jsonInit("PATCH", { workspace_id }),
     ),
+  placeDocument: (
+    documentId: string,
+    workspace_id: string | null,
+    before_document_id: string | null,
+  ) =>
+    request<DocumentRead>(
+      `/api/v1/documents/${documentId}/placement`,
+      jsonInit("PATCH", { workspace_id, before_document_id }),
+    ),
 
   getDocument: (id: string) => request<DocumentRead>(`/api/v1/documents/${id}`),
 

@@ -37,3 +37,8 @@ class WorkspaceList(BaseModel):
 
 class DocumentWorkspaceUpdate(BaseModel):
     workspace_id: str | None = None
+
+
+class DocumentPlacementUpdate(BaseModel):
+    workspace_id: str | None = None
+    before_document_id: str | None = None

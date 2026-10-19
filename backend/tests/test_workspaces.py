@@ -148,3 +148,53 @@ async def test_workspace_changes_are_owner_scoped(client, make_token, auth):
     )
     assert renamed.status_code == 404
     assert deleted.status_code == 404
+
+
+async def test_patents_can_be_reordered_and_moved_by_placement(client, make_token, auth):
+    token = make_token("owner", "owner@example.com")
+    first = await _create_doc(client, auth, token, "First")
+    second = await _create_doc(client, auth, token, "Second")
+    third = await _create_doc(client, auth, token, "Third")
+    workspace = await _create_workspace(client, auth, token)
+
+    move_first = await client.patch(
+        f"/api/v1/documents/{first}/placement",
+        headers=auth(token),
+        json={"workspace_id": workspace["id"], "before_document_id": None},
+    )
+    move_second = await client.patch(
+        f"/api/v1/documents/{second}/placement",
+        headers=auth(token),
+        json={"workspace_id": workspace["id"], "before_document_id": first},
+    )
+    assert move_first.status_code == 200
+    assert move_second.status_code == 200
+
+    listed = await client.get("/api/v1/documents", headers=auth(token))
+    workspace_ids = [
+        item["id"]
+        for item in listed.json()["items"]
+        if item["workspace_id"] == workspace["id"]
+    ]
+    assert workspace_ids == [second, first]
+
+    reorder = await client.patch(
+        f"/api/v1/documents/{first}/placement",
+        headers=auth(token),
+        json={"workspace_id": workspace["id"], "before_document_id": second},
+    )
+    assert reorder.status_code == 200
+    listed = await client.get("/api/v1/documents", headers=auth(token))
+    workspace_ids = [
+        item["id"]
+        for item in listed.json()["items"]
+        if item["workspace_id"] == workspace["id"]
+    ]
+    assert workspace_ids == [first, second]
+
+    invalid = await client.patch(
+        f"/api/v1/documents/{third}/placement",
+        headers=auth(token),
+        json={"workspace_id": workspace["id"], "before_document_id": third},
+    )
+    assert invalid.status_code == 400

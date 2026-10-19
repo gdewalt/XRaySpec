@@ -106,6 +106,7 @@ class UserDocument(Base):
     workspace_id: Mapped[str | None] = mapped_column(
         ForeignKey("workspaces.id"), index=True, default=None
     )
+    sort_order: Mapped[int] = mapped_column(default=0, server_default="0")
     title: Mapped[str] = mapped_column(String)
     active_artifact_id: Mapped[str | None] = mapped_column(
         ForeignKey("extraction_artifacts.id"), default=None

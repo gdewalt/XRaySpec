@@ -1,4 +1,12 @@
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Fragment,
+  type DragEvent as ReactDragEvent,
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 import { ApiError, api } from "../api/client";
 import type { DocumentRead, WorkspaceRead } from "../api/types";
@@ -36,8 +44,13 @@ interface PatentRowProps {
   doc: DocumentRead;
   workspaces: WorkspaceRead[];
   moving: boolean;
+  dragging: boolean;
   onOpen: (documentId: string) => void;
   onMove: (doc: DocumentRead, workspaceId: string | null) => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  onDragStart: (event: ReactDragEvent<HTMLElement>, doc: DocumentRead) => void;
+  onDragEnd: () => void;
   onRemove: (doc: DocumentRead) => void;
   onJobComplete: () => void;
 }
@@ -46,8 +59,13 @@ function PatentRow({
   doc,
   workspaces,
   moving,
+  dragging,
   onOpen,
   onMove,
+  onMoveUp,
+  onMoveDown,
+  onDragStart,
+  onDragEnd,
   onRemove,
   onJobComplete,
 }: PatentRowProps) {
@@ -59,7 +77,7 @@ function PatentRow({
       doc.patent_number.replace(/[^a-z0-9]/gi, "").toLowerCase();
 
   return (
-    <article className="document-row">
+    <article className={`document-row${dragging ? " dragging" : ""}`}>
       <button
         type="button"
         className="document-main"
@@ -89,6 +107,16 @@ function PatentRow({
         )}
       </div>
       <div className="row-actions">
+        <span
+          className="document-drag-handle"
+          draggable={!moving}
+          onDragStart={(event) => onDragStart(event, doc)}
+          onDragEnd={onDragEnd}
+          title="Drag to move or reorder patent"
+          aria-hidden="true"
+        >
+          <Icon name="more-horizontal" size={18} />
+        </span>
         <button
           type="button"
           className="icon-button document-open-button"
@@ -128,6 +156,30 @@ function PatentRow({
               role="group"
               aria-label={"Actions for " + doc.title}
             >
+              <button
+                type="button"
+                className="document-menu-action menu-neutral"
+                disabled={!onMoveUp || moving}
+                onClick={() => {
+                  setMenuOpen(false);
+                  onMoveUp?.();
+                }}
+              >
+                <Icon name="chevron-up" size={16} />
+                Move up
+              </button>
+              <button
+                type="button"
+                className="document-menu-action menu-neutral"
+                disabled={!onMoveDown || moving}
+                onClick={() => {
+                  setMenuOpen(false);
+                  onMoveDown?.();
+                }}
+              >
+                <Icon name="chevron-down" size={16} />
+                Move down
+              </button>
               <label className="document-menu-move">
                 <span><Icon name="folder" size={16} /> Move to folder</span>
                 <select
@@ -177,6 +229,8 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
   const [workspaceDraft, setWorkspaceDraft] = useState("");
   const [workspaceActionId, setWorkspaceActionId] = useState<string | null>(null);
   const [movingId, setMovingId] = useState<string | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -247,16 +301,49 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
     }
   }
 
-  async function move(doc: DocumentRead, workspaceId: string | null) {
+  async function place(
+    doc: DocumentRead,
+    workspaceId: string | null,
+    beforeDocumentId: string | null,
+  ) {
+    if (beforeDocumentId === doc.id) return;
     setMovingId(doc.id);
     try {
-      await api.moveDocument(doc.id, workspaceId);
+      await api.placeDocument(doc.id, workspaceId, beforeDocumentId);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setMovingId(null);
     }
+  }
+
+  function move(doc: DocumentRead, workspaceId: string | null) {
+    void place(doc, workspaceId, null);
+  }
+
+  function beginDrag(event: ReactDragEvent<HTMLElement>, doc: DocumentRead) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", doc.id);
+    setDraggingId(doc.id);
+    setDropTarget(null);
+  }
+
+  function endDrag() {
+    setDraggingId(null);
+    setDropTarget(null);
+  }
+
+  function acceptDrop(
+    event: ReactDragEvent<HTMLElement>,
+    workspaceId: string | null,
+    beforeDocumentId: string | null,
+  ) {
+    event.preventDefault();
+    const documentId = event.dataTransfer.getData("text/plain") || draggingId;
+    const document = docs?.find((item) => item.id === documentId);
+    endDrag();
+    if (document) void place(document, workspaceId, beforeDocumentId);
   }
 
   async function renameWorkspace(
@@ -394,13 +481,22 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
             <p>Add a US patent number, upload a PDF, or create a workspace to begin.</p>
           </div>
         ) : (
-          <div className="workspace-list">
+          <div className={`workspace-list${draggingId ? " is-dragging" : ""}`}>
             {groups.map((group) => {
               const isCollapsed = collapsed.has(group.id);
               const regionId = "workspace-" + group.id;
               return (
                 <section className="workspace-group" key={group.id}>
-                  <div className="workspace-header">
+                  <div
+                    className={`workspace-header${dropTarget === `workspace-${group.id}` ? " drop-target" : ""}`}
+                    onDragOver={(event) => {
+                      if (!draggingId) return;
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                      setDropTarget(`workspace-${group.id}`);
+                    }}
+                    onDrop={(event) => acceptDrop(event, group.workspace?.id ?? null, null)}
+                  >
                     <button
                       type="button"
                       className="workspace-toggle"
@@ -516,18 +612,66 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
                           Move a patent here using its workspace menu.
                         </p>
                       ) : (
-                        group.documents.map((doc) => (
-                          <PatentRow
-                            key={doc.id}
-                            doc={doc}
-                            workspaces={workspaces}
-                            moving={movingId === doc.id}
-                            onOpen={onOpen}
-                            onMove={move}
-                            onRemove={remove}
-                            onJobComplete={load}
+                        <>
+                          {group.documents.map((doc, index) => (
+                            <Fragment key={doc.id}>
+                              <div
+                                className={`patent-drop-zone${dropTarget === `before-${doc.id}` ? " drop-target" : ""}`}
+                                aria-hidden="true"
+                                onDragOver={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  event.dataTransfer.dropEffect = "move";
+                                  setDropTarget(`before-${doc.id}`);
+                                }}
+                                onDrop={(event) => {
+                                  event.stopPropagation();
+                                  acceptDrop(event, group.workspace?.id ?? null, doc.id);
+                                }}
+                              />
+                              <PatentRow
+                                doc={doc}
+                                workspaces={workspaces}
+                                moving={movingId === doc.id}
+                                dragging={draggingId === doc.id}
+                                onOpen={onOpen}
+                                onMove={move}
+                                onMoveUp={index > 0
+                                  ? () => void place(
+                                      doc,
+                                      group.workspace?.id ?? null,
+                                      group.documents[index - 1].id,
+                                    )
+                                  : undefined}
+                                onMoveDown={index < group.documents.length - 1
+                                  ? () => void place(
+                                      doc,
+                                      group.workspace?.id ?? null,
+                                      group.documents[index + 2]?.id ?? null,
+                                    )
+                                  : undefined}
+                                onDragStart={beginDrag}
+                                onDragEnd={endDrag}
+                                onRemove={remove}
+                                onJobComplete={load}
+                              />
+                            </Fragment>
+                          ))}
+                          <div
+                            className={`patent-drop-zone final${dropTarget === `end-${group.id}` ? " drop-target" : ""}`}
+                            aria-hidden="true"
+                            onDragOver={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              event.dataTransfer.dropEffect = "move";
+                              setDropTarget(`end-${group.id}`);
+                            }}
+                            onDrop={(event) => {
+                              event.stopPropagation();
+                              acceptDrop(event, group.workspace?.id ?? null, null);
+                            }}
                           />
-                        ))
+                        </>
                       )}
                     </div>
                   )}
