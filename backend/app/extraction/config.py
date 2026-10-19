@@ -22,7 +22,7 @@ OcrPolicy = Literal["auto", "force", "disabled"]
 @dataclass(frozen=True, slots=True)
 class ExtractionConfig:
     # Engine identity
-    version: str = "0.14.0"
+    version: str = "0.14.1"
 
     # OCR
     ocr_policy: OcrPolicy = "auto"
@@ -41,7 +41,10 @@ class ExtractionConfig:
     ocr_retry_low_confidence_cutoff: float = 50.0
     ocr_deskew_max_degrees: float = 2.0
     ocr_deskew_step_degrees: float = 0.5
-    ocr_drawing_rotations: tuple[int, ...] = (0, 90, 180, 270)
+    # PIL uses counter-clockwise degrees.  The only sideways patent orientation
+    # has its drawing top at the page's left edge, so a 90° clockwise correction
+    # (-90 here) makes it upright for Tesseract.
+    ocr_drawing_rotations: tuple[int, ...] = (0, -90)
 
     # Drawing reference numerals are intentionally disabled until their
     # figure-association precision is reliable across the calibration corpus.

@@ -588,9 +588,10 @@ def ocr_drawing_words(
     if not any("fig" in word.text.casefold() for word in primary):
         primary = fuse_drawing_words([*primary, *tiled_figure_pass()])
     candidates = [primary]
-    # Eight specialized orientation/profile passes already provide substantial
-    # coverage. Repeat them with alternate thresholding only when they found no
-    # text at all; generic prose confidence is not meaningful on line drawings.
+    # The two known drawing orientations, each with its constrained profiles,
+    # already provide substantial coverage. Repeat them with alternate
+    # thresholding only when they found no text at all; generic prose confidence
+    # is not meaningful on line drawings.
     if not candidates[0]:
         candidates.append(orientation_pass(1))
     recognized = max(candidates, key=lambda words: _candidate_score(words, config))

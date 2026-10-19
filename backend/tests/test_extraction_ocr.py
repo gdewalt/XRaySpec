@@ -133,6 +133,38 @@ def test_crop_and_rotation_coordinates_map_back_to_pdf_space():
     assert restored.x1 == pytest.approx(0.30)
     assert restored.y1 == pytest.approx(0.30)
 
+    clockwise = Word("FIG.", 0.70, 0.20, 0.80, 0.30, confidence=90.0)
+    clockwise_restored = _unrotate_right_angle_words([clockwise], -90)[0]
+    assert clockwise_restored.x0 == pytest.approx(0.20)
+    assert clockwise_restored.y0 == pytest.approx(0.20)
+    assert clockwise_restored.x1 == pytest.approx(0.30)
+    assert clockwise_restored.y1 == pytest.approx(0.30)
+
+
+def test_default_drawing_ocr_checks_only_upright_and_clockwise_correction(monkeypatch):
+    image = Image.new("L", (100, 120), 255)
+    sizes: list[tuple[int, int]] = []
+    monkeypatch.setattr(ocr_module, "render_page", lambda *_args: image)
+    monkeypatch.setattr(ocr_module, "preprocess_image", lambda value, _config: (value, 0.0))
+
+    def recognize(
+        candidate,
+        _config,
+        *,
+        psm,
+        thresholding_method,
+        char_whitelist=None,
+    ):
+        del psm, thresholding_method, char_whitelist
+        sizes.append(candidate.size)
+        return [Word("FIG.1", 0.1, 0.1, 0.2, 0.15, confidence=92.0)]
+
+    monkeypatch.setattr(ocr_module, "_tesseract_words", recognize)
+    ocr_drawing_words(b"pdf", 0, DEFAULT_CONFIG)
+
+    assert DEFAULT_CONFIG.ocr_drawing_rotations == (0, -90)
+    assert sizes == [(100, 120), (120, 100)]
+
 
 def test_orientation_passes_deduplicate_the_same_label_by_confidence():
     words = [
