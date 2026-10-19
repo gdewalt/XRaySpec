@@ -46,7 +46,7 @@ import {
   scopedEntries,
   searchEntries,
 } from "../spec/navigation";
-import { exportPortable, exportText } from "../spec/export";
+import { exportPdf, exportPortable, exportText } from "../spec/export";
 import { detectDisplayFigureMentions } from "../spec/figures";
 import {
   deriveIndentLevels,
@@ -873,6 +873,16 @@ export function Viewer({ documentId }: { documentId: string }) {
       : patentNumber
     : patentTitle || "…";
 
+  const handlePdfExport = useCallback(async () => {
+    if (!doc) return;
+    try {
+      const pdf = await api.getSourcePdf(doc.id);
+      exportPdf(doc, pdf);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [doc]);
+
   return (
     <div className="viewer">
       <div className="viewer-bar">
@@ -1005,6 +1015,9 @@ export function Viewer({ documentId }: { documentId: string }) {
               <Icon name="download" size={17} />
             </button>
             <div className="export-pop">
+              <button type="button" onClick={() => void handlePdfExport()}>
+                Patent PDF (.pdf)
+              </button>
               <button
                 type="button"
                 onClick={() => doc && exportPortable(doc, artifact, bookmarks, annotations)}

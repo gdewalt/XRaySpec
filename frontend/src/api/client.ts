@@ -59,6 +59,25 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
+async function requestBlob(path: string): Promise<Blob> {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const res = await fetch(path, { headers });
+  if (!res.ok) {
+    const text = await res.text();
+    let detail = text || res.statusText;
+    try {
+      const data = JSON.parse(text) as { detail?: unknown };
+      if (typeof data.detail === "string") detail = data.detail;
+    } catch {
+      // Preserve a plain-text server response.
+    }
+    throw new ApiError(res.status, detail);
+  }
+  return res.blob();
+}
+
 const jsonInit = (method: string, body: unknown): RequestInit => ({
   method,
   headers: { "Content-Type": "application/json" },
@@ -78,6 +97,8 @@ export const api = {
     ),
 
   getDocument: (id: string) => request<DocumentRead>(`/api/v1/documents/${id}`),
+
+  getSourcePdf: (id: string) => requestBlob(`/api/v1/documents/${id}/source.pdf`),
 
   getDocumentJob: (id: string) => request<JobRead>(`/api/v1/documents/${id}/job`),
 

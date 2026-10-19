@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AnnotationRead, ArtifactEntries, BookmarkRead, DocumentRead } from "../api/types";
-import { buildPortable, buildText } from "./export";
+import { buildPortable, buildText, exportBaseName } from "./export";
 
 const doc: DocumentRead = {
   id: "doc_1",
@@ -70,5 +70,17 @@ describe("buildPortable", () => {
 describe("buildText", () => {
   it("renders one cited line per row", () => {
     expect(buildText(doc, artifact)).toBe("US6411897\n\n1:1\tThe housing\n");
+  });
+});
+
+describe("exportBaseName", () => {
+  it("uses the patent number for every export filename", () => {
+    expect(exportBaseName(doc)).toBe("US_6_411_897");
+  });
+
+  it("falls back to the document title when no patent number is available", () => {
+    expect(exportBaseName({ ...doc, patent_number: null, title: "Uploaded Patent" })).toBe(
+      "Uploaded_Patent",
+    );
   });
 });

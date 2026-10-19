@@ -25,4 +25,16 @@ describe("API error handling", () => {
       }),
     );
   });
+
+  it("downloads the source PDF with the authenticated API client", async () => {
+    const pdf = new Blob(["pdf-bytes"], { type: "application/pdf" });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(pdf, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.getSourcePdf("doc_1")).resolves.toEqual(pdf);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/documents/doc_1/source.pdf",
+      expect.objectContaining({ headers: expect.any(Headers) }),
+    );
+  });
 });

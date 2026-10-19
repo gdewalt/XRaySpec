@@ -42,8 +42,13 @@ function sanitize(name: string): string {
   return name.replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "") || "document";
 }
 
-export function download(filename: string, text: string, type: string): void {
-  const blob = new Blob([text], { type });
+/** Stable filename stem shared by every export format. */
+export function exportBaseName(doc: DocumentRead): string {
+  return sanitize(doc.patent_number?.trim() || doc.title);
+}
+
+export function download(filename: string, content: BlobPart, type: string): void {
+  const blob = content instanceof Blob ? content : new Blob([content], { type });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -61,9 +66,14 @@ export function exportPortable(
   annotations: AnnotationRead[],
 ): void {
   const json = JSON.stringify(buildPortable(doc, artifact, bookmarks, annotations), null, 2);
-  download(`${sanitize(doc.title)}.xrayspec.json`, json, "application/json");
+  download(`${exportBaseName(doc)}.xrayspec.json`, json, "application/json");
 }
 
 export function exportText(doc: DocumentRead, artifact: ArtifactEntries): void {
-  download(`${sanitize(doc.title)}.txt`, buildText(doc, artifact), "text/plain");
+  download(`${exportBaseName(doc)}.txt`, buildText(doc, artifact), "text/plain");
+}
+
+/** Download source-PDF bytes already retrieved through the authorized API client. */
+export function exportPdf(doc: DocumentRead, pdf: Blob): void {
+  download(`${exportBaseName(doc)}.pdf`, pdf, pdf.type || "application/pdf");
 }
