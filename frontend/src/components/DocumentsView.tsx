@@ -172,6 +172,10 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [workspaceName, setWorkspaceName] = useState("");
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [workspaceMenuId, setWorkspaceMenuId] = useState<string | null>(null);
+  const [editingWorkspaceId, setEditingWorkspaceId] = useState<string | null>(null);
+  const [workspaceDraft, setWorkspaceDraft] = useState("");
+  const [workspaceActionId, setWorkspaceActionId] = useState<string | null>(null);
   const [movingId, setMovingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -210,11 +214,13 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
       {
         id: "unfiled",
         name: "Unfiled",
+        workspace: null,
         documents: docs.filter((doc) => doc.workspace_id === null),
       },
       ...workspaces.map((workspace) => ({
         id: workspace.id,
         name: workspace.name,
+        workspace,
         documents: docs.filter((doc) => doc.workspace_id === workspace.id),
       })),
     ];
@@ -250,6 +256,54 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setMovingId(null);
+    }
+  }
+
+  async function renameWorkspace(
+    event: FormEvent<HTMLFormElement>,
+    workspace: WorkspaceRead,
+  ) {
+    event.preventDefault();
+    const name = workspaceDraft.trim();
+    if (!name) return;
+    if (name === workspace.name) {
+      setWorkspaceMenuId(null);
+      setEditingWorkspaceId(null);
+      return;
+    }
+    setWorkspaceActionId(workspace.id);
+    try {
+      await api.updateWorkspace(workspace.id, name);
+      setWorkspaceMenuId(null);
+      setEditingWorkspaceId(null);
+      setWorkspaceDraft("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorkspaceActionId(null);
+    }
+  }
+
+  async function deleteWorkspace(workspace: WorkspaceRead) {
+    if (!window.confirm(
+      `Delete workspace “${workspace.name}”? Its patents will be moved to Unfiled.`,
+    )) return;
+    setWorkspaceActionId(workspace.id);
+    try {
+      await api.deleteWorkspace(workspace.id);
+      setCollapsed((current) => {
+        const next = new Set(current);
+        next.delete(workspace.id);
+        return next;
+      });
+      setWorkspaceMenuId(null);
+      setEditingWorkspaceId(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorkspaceActionId(null);
     }
   }
 
@@ -346,24 +400,115 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
               const regionId = "workspace-" + group.id;
               return (
                 <section className="workspace-group" key={group.id}>
-                  <button
-                    type="button"
-                    className="workspace-toggle"
-                    onClick={() => toggleGroup(group.id)}
-                    aria-expanded={!isCollapsed}
-                    aria-controls={regionId}
-                  >
-                    <Icon
-                      name="chevron-right"
-                      size={17}
-                      className={"workspace-chevron" + (isCollapsed ? "" : " expanded")}
-                    />
-                    <span className="workspace-folder" aria-hidden="true"><Icon name="folder" size={17} /></span>
-                    <span className="workspace-name">{group.name}</span>
-                    <span className="workspace-count">
-                      {group.documents.length} {group.documents.length === 1 ? "patent" : "patents"}
-                    </span>
-                  </button>
+                  <div className="workspace-header">
+                    <button
+                      type="button"
+                      className="workspace-toggle"
+                      onClick={() => toggleGroup(group.id)}
+                      aria-expanded={!isCollapsed}
+                      aria-controls={regionId}
+                    >
+                      <Icon
+                        name="chevron-right"
+                        size={17}
+                        className={"workspace-chevron" + (isCollapsed ? "" : " expanded")}
+                      />
+                      <span className="workspace-folder" aria-hidden="true"><Icon name="folder" size={17} /></span>
+                      <span className="workspace-name">{group.name}</span>
+                      <span className="workspace-count">
+                        {group.documents.length} {group.documents.length === 1 ? "patent" : "patents"}
+                      </span>
+                    </button>
+                    {group.workspace && (
+                      <button
+                        type="button"
+                        className="icon-button menu-button workspace-options-button"
+                        aria-label={`Options for ${group.name}`}
+                        aria-expanded={workspaceMenuId === group.id}
+                        aria-controls={`workspace-actions-${group.id}`}
+                        onClick={() => {
+                          const opening = workspaceMenuId !== group.id;
+                          setWorkspaceMenuId(opening ? group.id : null);
+                          setEditingWorkspaceId(null);
+                          setWorkspaceDraft("");
+                        }}
+                      >
+                        <Icon name="more-horizontal" size={19} />
+                      </button>
+                    )}
+                  </div>
+                  {group.workspace && workspaceMenuId === group.id && (
+                    <div
+                      id={`workspace-actions-${group.id}`}
+                      className="workspace-actions-panel"
+                      role="group"
+                      aria-label={`Options for ${group.name}`}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") {
+                          setWorkspaceMenuId(null);
+                          setEditingWorkspaceId(null);
+                        }
+                      }}
+                    >
+                      {editingWorkspaceId === group.id ? (
+                        <form
+                          className="workspace-rename-form"
+                          onSubmit={(event) => renameWorkspace(event, group.workspace!)}
+                        >
+                          <label htmlFor={`workspace-rename-${group.id}`}>Workspace name</label>
+                          <input
+                            id={`workspace-rename-${group.id}`}
+                            autoFocus
+                            value={workspaceDraft}
+                            onChange={(event) => setWorkspaceDraft(event.target.value)}
+                            maxLength={120}
+                            disabled={workspaceActionId === group.id}
+                          />
+                          <div className="workspace-rename-actions">
+                            <button
+                              type="button"
+                              className="secondary"
+                              onClick={() => {
+                                setEditingWorkspaceId(null);
+                                setWorkspaceDraft("");
+                              }}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={workspaceActionId === group.id || !workspaceDraft.trim()}
+                            >
+                              Save
+                            </button>
+                          </div>
+                        </form>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            className="workspace-action-button"
+                            onClick={() => {
+                              setEditingWorkspaceId(group.id);
+                              setWorkspaceDraft(group.name);
+                            }}
+                          >
+                            <Icon name="pencil" size={16} />
+                            Edit name
+                          </button>
+                          <button
+                            type="button"
+                            className="workspace-action-button danger-icon"
+                            disabled={workspaceActionId === group.id}
+                            onClick={() => void deleteWorkspace(group.workspace!)}
+                          >
+                            <Icon name="trash" size={16} />
+                            Delete workspace
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
                   {!isCollapsed && (
                     <div id={regionId} className="document-list">
                       {group.documents.length === 0 ? (

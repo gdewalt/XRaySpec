@@ -1709,6 +1709,12 @@ mark.mention.clickable:hover {
 .workspace-group + .workspace-group {
   border-top: 1px solid var(--border);
 }
+.workspace-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  background: var(--surface-subtle);
+}
 .workspace-toggle {
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr) auto;
@@ -1718,7 +1724,7 @@ mark.mention.clickable:hover {
   padding: 0.8rem 1.15rem;
   border: 0;
   border-radius: 0;
-  background: var(--surface-subtle);
+  background: transparent;
   color: var(--text);
   text-align: left;
 }
@@ -1749,6 +1755,53 @@ mark.mention.clickable:hover {
   font-size: 0.76rem;
   font-weight: 550;
 }
+.workspace-options-button {
+  margin-right: 0.7rem;
+}
+.workspace-actions-panel {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  padding: 0.55rem 1rem;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.workspace-action-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 38px;
+  padding: 0.45rem 0.7rem;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.workspace-action-button:hover:not(:disabled) {
+  background: var(--surface-subtle);
+}
+.workspace-rename-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 340px) auto;
+  align-items: end;
+  gap: 0.45rem;
+  width: min(100%, 520px);
+}
+.workspace-rename-form label {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+.workspace-rename-form input {
+  min-width: 0;
+}
+.workspace-rename-actions {
+  display: flex;
+  gap: 0.35rem;
+}
 .workspace-group .document-list {
   border-top: 1px solid var(--border);
 }
@@ -1767,6 +1820,20 @@ mark.mention.clickable:hover {
   }
   .workspace-toggle {
     padding-inline: 0.9rem;
+  }
+  .workspace-options-button {
+    margin-right: 0.45rem;
+  }
+  .workspace-actions-panel {
+    justify-content: stretch;
+    flex-wrap: wrap;
+  }
+  .workspace-rename-form {
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+  .workspace-rename-form label {
+    grid-column: auto;
   }
   .row-actions {
     flex-wrap: wrap;

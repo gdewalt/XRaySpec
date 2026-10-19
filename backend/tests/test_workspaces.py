@@ -48,6 +48,27 @@ async def test_duplicate_workspace_name_is_rejected(client, make_token, auth):
     assert duplicate.status_code == 409
 
 
+async def test_workspace_can_be_renamed_but_not_to_a_duplicate(client, make_token, auth):
+    token = make_token("owner", "owner@example.com")
+    workspace = await _create_workspace(client, auth, token, "Portfolio")
+    await _create_workspace(client, auth, token, "Prior Art")
+
+    renamed = await client.patch(
+        f"/api/v1/workspaces/{workspace['id']}",
+        headers=auth(token),
+        json={"name": "  Active   Matter  "},
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "Active Matter"
+
+    duplicate = await client.patch(
+        f"/api/v1/workspaces/{workspace['id']}",
+        headers=auth(token),
+        json={"name": "Prior Art"},
+    )
+    assert duplicate.status_code == 409
+
+
 async def test_patent_can_move_between_workspace_and_unfiled(client, make_token, auth):
     token = make_token("owner", "owner@example.com")
     document_id = await _create_doc(client, auth, token)
@@ -88,3 +109,42 @@ async def test_patent_cannot_move_to_another_users_workspace(client, make_token,
         headers=auth(owner),
     )
     assert document.json()["workspace_id"] is None
+
+
+async def test_deleting_workspace_moves_patents_to_unfiled(client, make_token, auth):
+    token = make_token("owner", "owner@example.com")
+    document_id = await _create_doc(client, auth, token)
+    workspace = await _create_workspace(client, auth, token)
+    moved = await client.patch(
+        f"/api/v1/documents/{document_id}/workspace",
+        headers=auth(token),
+        json={"workspace_id": workspace["id"]},
+    )
+    assert moved.status_code == 200
+
+    deleted = await client.delete(
+        f"/api/v1/workspaces/{workspace['id']}", headers=auth(token)
+    )
+    assert deleted.status_code == 204
+
+    document = await client.get(f"/api/v1/documents/{document_id}", headers=auth(token))
+    assert document.json()["workspace_id"] is None
+    listed = await client.get("/api/v1/workspaces", headers=auth(token))
+    assert listed.json()["items"] == []
+
+
+async def test_workspace_changes_are_owner_scoped(client, make_token, auth):
+    owner = make_token("owner", "owner@example.com")
+    intruder = make_token("intruder", "intruder@example.com")
+    workspace = await _create_workspace(client, auth, owner)
+
+    renamed = await client.patch(
+        f"/api/v1/workspaces/{workspace['id']}",
+        headers=auth(intruder),
+        json={"name": "Stolen"},
+    )
+    deleted = await client.delete(
+        f"/api/v1/workspaces/{workspace['id']}", headers=auth(intruder)
+    )
+    assert renamed.status_code == 404
+    assert deleted.status_code == 404

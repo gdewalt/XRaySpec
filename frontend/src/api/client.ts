@@ -90,6 +90,10 @@ export const api = {
   listWorkspaces: () => request<WorkspaceList>("/api/v1/workspaces"),
   createWorkspace: (name: string) =>
     request<WorkspaceRead>("/api/v1/workspaces", jsonInit("POST", { name })),
+  updateWorkspace: (id: string, name: string) =>
+    request<WorkspaceRead>(`/api/v1/workspaces/${id}`, jsonInit("PATCH", { name })),
+  deleteWorkspace: (id: string) =>
+    request<void>(`/api/v1/workspaces/${id}`, { method: "DELETE" }),
   moveDocument: (documentId: string, workspace_id: string | null) =>
     request<DocumentRead>(
       `/api/v1/documents/${documentId}/workspace`,

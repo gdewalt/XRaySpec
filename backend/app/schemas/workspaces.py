@@ -19,6 +19,10 @@ class WorkspaceCreate(BaseModel):
         return normalized
 
 
+class WorkspaceUpdate(WorkspaceCreate):
+    """Editable workspace fields use the same validation as creation."""
+
+
 class WorkspaceRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

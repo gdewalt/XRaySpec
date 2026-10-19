@@ -3,21 +3,34 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 
-from ...db.models import Workspace
+from ...db.models import UserDocument, Workspace
 from ...schemas.documents import DocumentRead
 from ...schemas.workspaces import (
     DocumentWorkspaceUpdate,
     WorkspaceCreate,
     WorkspaceList,
     WorkspaceRead,
+    WorkspaceUpdate,
 )
 from ...services.audit import record_audit
 from ..deps import CurrentUser, DbSession
 from .documents import _owned_document
 
 router = APIRouter(tags=["workspaces"])
+
+
+async def _owned_workspace(session, user, workspace_id: str) -> Workspace:
+    workspace = await session.scalar(
+        select(Workspace).where(
+            Workspace.id == workspace_id,
+            Workspace.owner_id == user.id,
+        )
+    )
+    if workspace is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found")
+    return workspace
 
 
 @router.get("/workspaces", response_model=WorkspaceList)
@@ -60,6 +73,63 @@ async def create_workspace(
     await session.commit()
     await session.refresh(workspace)
     return WorkspaceRead.model_validate(workspace)
+
+
+@router.patch("/workspaces/{workspace_id}", response_model=WorkspaceRead)
+async def update_workspace(
+    workspace_id: str,
+    body: WorkspaceUpdate,
+    user: CurrentUser,
+    session: DbSession,
+) -> WorkspaceRead:
+    workspace = await _owned_workspace(session, user, workspace_id)
+    duplicate = await session.scalar(
+        select(Workspace).where(
+            Workspace.owner_id == user.id,
+            Workspace.name == body.name,
+            Workspace.id != workspace_id,
+        )
+    )
+    if duplicate is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "A workspace with this name already exists")
+
+    workspace.name = body.name
+    record_audit(
+        session,
+        actor_user_id=user.id,
+        action="workspace.update",
+        resource_class="workspace",
+        resource_id=workspace.id,
+    )
+    await session.commit()
+    await session.refresh(workspace)
+    return WorkspaceRead.model_validate(workspace)
+
+
+@router.delete("/workspaces/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_workspace(
+    workspace_id: str,
+    user: CurrentUser,
+    session: DbSession,
+) -> None:
+    workspace = await _owned_workspace(session, user, workspace_id)
+    await session.execute(
+        update(UserDocument)
+        .where(
+            UserDocument.owner_id == user.id,
+            UserDocument.workspace_id == workspace.id,
+        )
+        .values(workspace_id=None)
+    )
+    await session.delete(workspace)
+    record_audit(
+        session,
+        actor_user_id=user.id,
+        action="workspace.delete",
+        resource_class="workspace",
+        resource_id=workspace.id,
+    )
+    await session.commit()
 
 
 @router.patch(
