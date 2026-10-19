@@ -146,6 +146,24 @@ def test_missing_later_header_continues_columns_and_drops_us_running_header():
     assert all("US" not in entry.source_text for entry in art.entries)
 
 
+def test_us_prefix_body_words_do_not_clip_top_lines_or_claims():
+    page = _spec_page(15, left_num=21, right_num=22)
+    # Real patent 10,741,071 has top rows containing "User 403", "users
+    # 1102", and "used ... 5.".  These are body text, not a US patent header.
+    page.words.extend([
+        Word("User", 0.12, 0.092, 0.18, 0.108),
+        Word("403", 0.19, 0.092, 0.23, 0.108),
+        Word("used", 0.55, 0.092, 0.60, 0.108),
+        Word("5.", 0.61, 0.092, 0.64, 0.108),
+    ])
+
+    art = extract_from_pages([page], DEFAULT_CONFIG, source_sha256="x")
+    text = " ".join(entry.source_text for entry in art.entries)
+
+    assert "User 403" in text
+    assert "used 5." in text
+
+
 def test_stale_detected_column_pair_cannot_restart_a_grant():
     pages = [
         _spec_page(20, left_num=7, right_num=8, page_index=3),

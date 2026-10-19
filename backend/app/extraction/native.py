@@ -325,7 +325,16 @@ def _running_header_y(words: list[Word]) -> float | None:
     header_rows: list[float] = []
     for row in rows:
         tokens = [word.text.strip().upper() for word in row.words]
-        has_us = any(token == "US" or token.startswith("US") for token in tokens)
+        # Accept the standalone country code and compact forms such as
+        # ``US10741071``.  Do not use a bare ``startswith("US")`` check here:
+        # ordinary first-line words including ``User``, ``users``, and ``used``
+        # otherwise turn a specification/claims row containing any number into
+        # a false running header and clip it from the artifact.
+        has_us = any(
+            token == "US"
+            or (len(token) > 2 and token.startswith("US") and token[2].isdigit())
+            for token in tokens
+        )
         has_identifier = any(
             any(character.isdigit() for character in token)
             or token in {"A1", "A2", "B1", "B2"}
