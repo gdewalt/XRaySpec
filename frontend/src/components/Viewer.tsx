@@ -603,7 +603,10 @@ export function Viewer({ documentId }: { documentId: string }) {
       );
       setSelectionSource("pdf");
       setPdfPage(targetPage + 1);
-      setFocusedFigure(figures[0] ? { ...figures[0] } : null);
+      const directlyDetected = figures.find(
+        (figure) => figure.method !== "sequence_inferred",
+      );
+      setFocusedFigure(directlyDetected ? { ...directlyDetected } : null);
       setHighlightCallouts(new Set());
     },
     [artifact],

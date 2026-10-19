@@ -358,27 +358,31 @@ function ContinuousPdfPage({
               </button>
             );
           })}
-          {figures.map((figure, index) => {
-            const [x0, y0, x1, y1] = rotateBox(figure.box, rotation);
-            const hit =
-              focusedFigure?.figure_id === figure.figure_id &&
-              focusedFigure.page_index === figure.page_index &&
-              focusedFigure.box.every((value, boxIndex) => value === figure.box[boxIndex]);
-            return (
-              <span
-                key={`${figure.figure_id}-${index}`}
-                className={`pdf-figure-target${hit ? " hit" : ""}`}
-                data-figure-id={figure.figure_id}
-                style={{
-                  left: `${x0 * 100}%`,
-                  top: `${y0 * 100}%`,
-                  width: `${(x1 - x0) * 100}%`,
-                  height: `${(y1 - y0) * 100}%`,
-                }}
-                aria-hidden="true"
-              />
-            );
-          })}
+          {figures
+            .filter((figure) => figure.method !== "sequence_inferred")
+            .map((figure, index) => {
+              const [x0, y0, x1, y1] = rotateBox(figure.box, rotation);
+              const hit =
+                focusedFigure?.figure_id === figure.figure_id &&
+                focusedFigure.page_index === figure.page_index &&
+                focusedFigure.box.every(
+                  (value, boxIndex) => value === figure.box[boxIndex],
+                );
+              return (
+                <span
+                  key={`${figure.figure_id}-${index}`}
+                  className={`pdf-figure-target${hit ? " hit" : ""}`}
+                  data-figure-id={figure.figure_id}
+                  style={{
+                    left: `${x0 * 100}%`,
+                    top: `${y0 * 100}%`,
+                    width: `${(x1 - x0) * 100}%`,
+                    height: `${(y1 - y0) * 100}%`,
+                  }}
+                  aria-hidden="true"
+                />
+              );
+            })}
         </div>
         <svg
           className={`pdf-annotation-layer tool-${tool}`}

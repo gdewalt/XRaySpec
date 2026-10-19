@@ -46,6 +46,14 @@ _DRAWING_FIG_REF = re.compile(
     r"([0-9ILOilo]+(?:[A-Za-z]|\s+[A-Za-z](?![A-Za-z]))?)",
     re.IGNORECASE,
 )
+_FUZZY_DRAWING_FIG_REF = re.compile(
+    # Common Tesseract damage in the label itself: F1G./FlG./FIC. and
+    # Fiqure/F1gure.  Keep this drawing-side only; specification references are
+    # aligned to provider text and should not need such a permissive prefix.
+    r"\b(?:F[1IilL|!][Gg6Cc][Ss5]?|F[iI1lL][gqG9][uoU0][rnR][eaE3][sS5]?)"
+    r"[.,;:'`]?\s*"
+    r"([0-9ILOilo]+(?:[A-Za-z]|\s+[A-Za-z](?![A-Za-z]))?)"
+)
 _DRAWING_CALLOUT = re.compile(r"^[0-9ILOQSBZ]{2,4}[A-Z]?$", re.IGNORECASE)
 _DIGIT_CONFUSIONS = str.maketrans(
     {"I": "1", "L": "1", "O": "0", "Q": "0", "S": "5", "B": "8", "Z": "2"}
@@ -84,6 +92,11 @@ def _without_sheet_headers(words: list[Word]) -> list[Word]:
     header_bottom = max(word.y1 for word in words if id(word) in excluded)
     cutoff = max(0.10, header_bottom + 0.02)
     return [word for word in words if id(word) not in excluded and word.y0 >= cutoff]
+
+
+def has_drawing_sheet_header(words: list[Word]) -> bool:
+    """Whether positioned words contain an explicit ``Sheet X of Y`` masthead."""
+    return bool(_sheet_header_word_ids(words))
 
 
 def specification_callout_evidence(
@@ -284,7 +297,7 @@ def is_drawing_page(words: list[Word], *, max_words: int = 120, min_numeric: flo
     """A drawing page is sparse and numeral-heavy (vs. a prose specification page)."""
     # Patent drawing sheets normally identify themselves explicitly. Treat that
     # header as authoritative even when OCR also finds many labels or diagram text.
-    if _sheet_header_word_ids(words):
+    if has_drawing_sheet_header(words):
         return True
     words = _without_sheet_headers(words)
     if len(words) > max_words:
@@ -389,7 +402,113 @@ def detect_figure_occurrences(words: list[Word], page_index: int) -> list[Figure
                         method="sparse_ocr_confusable",
                     )
                 )
+        for match in _FUZZY_DRAWING_FIG_REF.finditer(text):
+            matched_words = [
+                word for start, end, word in spans
+                if start < match.end() and end > match.start()
+            ]
+            if not matched_words:
+                continue
+            box = _clamp_box(
+                min(w.x0 for w in matched_words),
+                min(w.y0 for w in matched_words),
+                max(w.x1 for w in matched_words),
+                max(w.y1 for w in matched_words),
+            )
+            confidences = [w.confidence for w in matched_words if w.confidence is not None]
+            confidence = (sum(confidences) / len(confidences)) if confidences else None
+            for figure_id in _drawing_figure_candidates(match.group(1)):
+                key = (figure_id, *[round(value * 10000) for value in box])
+                if key in seen:
+                    continue
+                seen.add(key)
+                occurrences.append(
+                    FigureOccurrence(
+                        figure_id=figure_id,
+                        page_index=page_index,
+                        box=box,
+                        confidence=confidence,
+                        method="fuzzy_prefix",
+                    )
+                )
     return occurrences
+
+
+def _figure_order_key(figure_id: str) -> tuple[int, int] | None:
+    """Natural sortable key for a base figure and optional single sub-letter."""
+    match = re.fullmatch(r"(\d+)([A-Z]?)", re.sub(r"\s+", "", figure_id).upper())
+    if not match:
+        return None
+    suffix = ord(match.group(2)) - ord("A") + 1 if match.group(2) else 0
+    return int(match.group(1)), suffix
+
+
+def _sequence_score_figures(
+    occurrences: list[FigureOccurrence],
+) -> list[FigureOccurrence]:
+    """Use drawing-sheet order as confidence evidence, not an absolute rule.
+
+    The longest non-decreasing run of figure IDs receives a small confidence
+    boost. Candidates outside it receive a penalty and are removed only when
+    that penalty takes an otherwise unsupported OCR label below the normal
+    drawing-only threshold. Specification-supported exceptions therefore
+    survive even when a patent uses an unusual ordering.
+    """
+    representatives: dict[tuple[int, tuple[int, int]], FigureOccurrence] = {}
+    for occurrence in occurrences:
+        order_key = _figure_order_key(occurrence.figure_id)
+        if order_key is None:
+            continue
+        key = (occurrence.page_index, order_key)
+        current = representatives.get(key)
+        if current is None or (occurrence.detection_score or 0.0) > (
+            current.detection_score or 0.0
+        ):
+            representatives[key] = occurrence
+    ordered = sorted(
+        representatives.items(), key=lambda item: (item[0][0], item[0][1])
+    )
+    if len(ordered) < 3:
+        return occurrences
+
+    lengths = [1] * len(ordered)
+    weights = [item[1].detection_score or 0.0 for item in ordered]
+    parents = [-1] * len(ordered)
+    for index, ((page, order_key), _occurrence) in enumerate(ordered):
+        for previous in range(index):
+            (previous_page, previous_key), _ = ordered[previous]
+            if previous_page > page or previous_key > order_key:
+                continue
+            candidate = (
+                lengths[previous] + 1,
+                weights[previous] + (ordered[index][1].detection_score or 0.0),
+            )
+            if candidate > (lengths[index], weights[index]):
+                lengths[index], weights[index] = candidate
+                parents[index] = previous
+
+    cursor = max(range(len(ordered)), key=lambda i: (lengths[i], weights[i]))
+    sequence_keys: set[tuple[int, tuple[int, int]]] = set()
+    while cursor >= 0:
+        sequence_keys.add(ordered[cursor][0])
+        cursor = parents[cursor]
+
+    rescored: list[FigureOccurrence] = []
+    for occurrence in occurrences:
+        order_key = _figure_order_key(occurrence.figure_id)
+        if order_key is None:
+            rescored.append(occurrence)
+            continue
+        in_sequence = (occurrence.page_index, order_key) in sequence_keys
+        score = max(
+            0.0,
+            min(1.0, (occurrence.detection_score or 0.0) + (0.04 if in_sequence else -0.20)),
+        )
+        supported = occurrence.method.startswith("spec_")
+        if score < (0.34 if supported else 0.70):
+            continue
+        rescored.append(replace(occurrence, detection_score=round(score, 3)))
+    return rescored
 
 
 def filter_figure_occurrences(
@@ -418,6 +537,8 @@ def filter_figure_occurrences(
         ocr = _ocr_strength(occurrence.confidence)
         if occurrence.method == "sparse_ocr_confusable":
             ocr *= 0.92
+        elif occurrence.method == "fuzzy_prefix":
+            ocr *= 0.82
         support = 1.0 if exact else (0.82 if fuzzy else 0.0)
         score = 0.62 * ocr + 0.38 * support if support else 0.82 * ocr
         if (support and score < 0.34) or (not support and score < 0.70):
@@ -435,7 +556,102 @@ def filter_figure_occurrences(
             current.detection_score or 0.0
         ):
             strongest[key] = candidate
-    return sorted(strongest.values(), key=lambda item: (item.page_index, item.figure_id))
+    ordered = sorted(strongest.values(), key=lambda item: (item.page_index, item.figure_id))
+    return sorted(
+        _sequence_score_figures(ordered),
+        key=lambda item: (item.page_index, _figure_order_key(item.figure_id) or (0, 0)),
+    )
+
+
+def infer_missing_figure_occurrences(
+    occurrences: Iterable[FigureOccurrence],
+    drawing_sheet_pages: Iterable[int],
+    expected_ids: set[str],
+) -> list[FigureOccurrence]:
+    """Infer labels only for bounded runs of explicitly identified drawing sheets.
+
+    A run is filled only when detected figures exist on both neighboring sheets
+    and the specification contains exactly one naturally ordered missing figure
+    per unlabeled sheet between those anchors. Nothing is inferred before the
+    first anchor, after the last anchor, or from page position alone.
+    """
+    result = list(occurrences)
+    sheet_pages = sorted(set(drawing_sheet_pages))
+    if len(sheet_pages) < 3:
+        return result
+
+    by_page: dict[int, list[FigureOccurrence]] = {}
+    detected_keys: set[tuple[int, int]] = set()
+    for occurrence in result:
+        key = _figure_order_key(occurrence.figure_id)
+        if key is None:
+            continue
+        by_page.setdefault(occurrence.page_index, []).append(occurrence)
+        detected_keys.add(key)
+
+    expected_by_key = {
+        key: re.sub(r"\s+", "", figure_id).upper()
+        for figure_id in expected_ids
+        if (key := _figure_order_key(figure_id)) is not None
+    }
+    index = 0
+    while index < len(sheet_pages):
+        if sheet_pages[index] in by_page:
+            index += 1
+            continue
+        run_start = index
+        while index < len(sheet_pages) and sheet_pages[index] not in by_page:
+            index += 1
+        run_pages = sheet_pages[run_start:index]
+        if run_start == 0 or index >= len(sheet_pages):
+            continue
+
+        previous_page = sheet_pages[run_start - 1]
+        next_page = sheet_pages[index]
+        previous_items = by_page.get(previous_page, [])
+        next_items = by_page.get(next_page, [])
+        previous_keys = [
+            key for item in previous_items if (key := _figure_order_key(item.figure_id))
+        ]
+        next_keys = [key for item in next_items if (key := _figure_order_key(item.figure_id))]
+        if not previous_keys or not next_keys:
+            continue
+        lower, upper = max(previous_keys), min(next_keys)
+        if lower >= upper:
+            continue
+
+        candidates = [
+            (key, figure_id)
+            for key, figure_id in sorted(expected_by_key.items())
+            if lower < key < upper and key not in detected_keys
+        ]
+        if len(candidates) != len(run_pages):
+            continue
+
+        anchor_score = min(
+            max(item.detection_score or 0.0 for item in previous_items),
+            max(item.detection_score or 0.0 for item in next_items),
+        )
+        inferred_score = round(min(0.65, anchor_score * 0.65), 3)
+        for page_index, (key, figure_id) in zip(run_pages, candidates, strict=True):
+            inferred = FigureOccurrence(
+                figure_id=figure_id,
+                page_index=page_index,
+                # There is no label box to highlight; this tiny valid sentinel is
+                # ignored by the viewer for sequence-inferred navigation targets.
+                box=(0.4999, 0.1000, 0.5001, 0.1002),
+                confidence=None,
+                detection_score=inferred_score,
+                method="sequence_inferred",
+            )
+            result.append(inferred)
+            by_page.setdefault(page_index, []).append(inferred)
+            detected_keys.add(key)
+
+    return sorted(
+        result,
+        key=lambda item: (item.page_index, _figure_order_key(item.figure_id) or (0, 0)),
+    )
 
 
 def assign_callouts_to_figures(

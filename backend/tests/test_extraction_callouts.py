@@ -18,6 +18,7 @@ from app.extraction.callouts import (
     detect_page_figure,
     filter_callouts_by_values,
     filter_figure_occurrences,
+    infer_missing_figure_occurrences,
     is_drawing_page,
     specification_callout_values,
 )
@@ -209,6 +210,61 @@ def test_spaced_and_ocr_confused_subfigure_labels_are_detected():
     ]
     figures = detect_figure_occurrences(words, page_index=2)
     assert {figure.figure_id for figure in figures} >= {"14A", "14B"}
+
+
+def test_fuzzy_figure_prefixes_are_recovered_on_drawing_sheets():
+    words = [
+        Word("F1G.", 0.10, 0.30, 0.16, 0.33, confidence=88.0),
+        Word("I4", 0.17, 0.30, 0.21, 0.33, confidence=90.0),
+        Word("A", 0.22, 0.30, 0.24, 0.33, confidence=89.0),
+        Word("Fiqure", 0.55, 0.60, 0.63, 0.63, confidence=86.0),
+        Word("7", 0.64, 0.60, 0.66, 0.63, confidence=92.0),
+    ]
+    figures = detect_figure_occurrences(words, page_index=2)
+
+    assert {(figure.figure_id, figure.method) for figure in figures} == {
+        ("14A", "fuzzy_prefix"),
+        ("7", "fuzzy_prefix"),
+    }
+
+
+def test_page_order_penalizes_an_unsupported_figure_outlier():
+    figures = [
+        FigureOccurrence("1", 1, (0.1, 0.2, 0.2, 0.3), confidence=95.0),
+        FigureOccurrence("99", 2, (0.1, 0.2, 0.2, 0.3), confidence=99.0),
+        FigureOccurrence("2", 3, (0.1, 0.2, 0.2, 0.3), confidence=95.0),
+    ]
+
+    filtered = filter_figure_occurrences(figures, {"1", "2"})
+
+    assert [figure.figure_id for figure in filtered] == ["1", "2"]
+    assert all(figure.detection_score == 1.0 for figure in filtered)
+
+
+def test_missing_sheet_is_inferred_only_when_neighbors_and_specification_agree():
+    detected = [
+        FigureOccurrence(
+            "14A", 10, (0.1, 0.2, 0.2, 0.3), detection_score=0.94,
+            method="spec_exact",
+        ),
+        FigureOccurrence(
+            "14C", 12, (0.1, 0.2, 0.2, 0.3), detection_score=0.91,
+            method="spec_exact",
+        ),
+    ]
+
+    inferred = infer_missing_figure_occurrences(
+        detected, [10, 11, 12], {"14A", "14B", "14C"}
+    )
+    figure_b = next(figure for figure in inferred if figure.figure_id == "14B")
+    assert figure_b.page_index == 11
+    assert figure_b.method == "sequence_inferred"
+    assert figure_b.detection_score == 0.592
+
+    not_inferred = infer_missing_figure_occurrences(
+        detected, [10, 11, 12], {"14A", "14C"}
+    )
+    assert [figure.figure_id for figure in not_inferred] == ["14A", "14C"]
 
 
 def test_drawing_figures_prefer_specification_ids_without_hard_filtering_clear_labels():

@@ -334,6 +334,7 @@ def test_image_only_first_drawing_sheet_keeps_figure_one_without_callouts():
     )
 
     assert [(figure.figure_id, figure.page_index) for figure in result.figures] == [("1", 1)]
+    assert result.is_drawing_sheet is True
     assert result.callouts == ()
 
 

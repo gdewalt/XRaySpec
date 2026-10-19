@@ -35,6 +35,12 @@ def test_checkpoint_preserves_bold_font_evidence():
     assert restored.words[0].is_bold is True
 
 
+def test_checkpoint_preserves_explicit_drawing_sheet_evidence():
+    result = PageResult(3, "ocr", is_drawing=True, is_drawing_sheet=True)
+    restored = page_result_from_payload(page_result_to_payload(result))
+    assert restored.is_drawing_sheet is True
+
+
 def _fake_load_pages(_pdf: bytes) -> list[Page]:
     return [Page(index=i, words=[Word("x", 0.1, 0.1, 0.2, 0.12)]) for i in range(N_PAGES)]
 

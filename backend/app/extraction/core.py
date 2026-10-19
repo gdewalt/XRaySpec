@@ -27,6 +27,8 @@ from .callouts import (
     detect_page_figure,
     filter_callouts_by_values,
     filter_figure_occurrences,
+    has_drawing_sheet_header,
+    infer_missing_figure_occurrences,
     is_drawing_page,
     specification_callout_evidence,
 )
@@ -51,6 +53,7 @@ class PageResult:
     words: tuple[Word, ...] = ()  # specification words (empty for a drawing page)
     figures: tuple[FigureOccurrence, ...] = ()  # every FIG label on a drawing page
     callouts: tuple[CalloutOccurrence, ...] = ()  # drawing callouts (empty for a spec page)
+    is_drawing_sheet: bool = False  # explicit ``Sheet X of Y`` masthead
 
 
 def detect_doc_type(pages: list[Page]) -> str:
@@ -89,6 +92,7 @@ def route_page(
         page, method = native_page, "native"  # no text layer, no OCR
 
     if is_drawing_page(page.words):
+        is_drawing_sheet = has_drawing_sheet_header(page.words)
         draw_words = page.words
         if can_ocr and drawing_ocr_fn is not None:
             enhanced = drawing_ocr_fn(pdf_bytes, page.index, config)
@@ -114,7 +118,15 @@ def route_page(
             if config.callout_detection_enabled
             else ()
         )
-        return PageResult(page.index, method, True, figures=figures, callouts=callouts)
+        is_drawing_sheet = is_drawing_sheet or has_drawing_sheet_header(draw_words)
+        return PageResult(
+            page.index,
+            method,
+            True,
+            figures=figures,
+            callouts=callouts,
+            is_drawing_sheet=is_drawing_sheet,
+        )
     if method == "ocr" and specification_ocr_fn is not None:
         words = specification_ocr_fn(pdf_bytes, page.index, config, list(page.words))
         page = Page(index=page.index, words=words)
@@ -135,6 +147,7 @@ def assemble_from_results(
     spec_pages = [Page(index=r.page_index, words=list(r.words)) for r in spec]
     methods = [r.method for r in spec]
     figure_occurrences = [f for r in ordered if r.is_drawing for f in r.figures]
+    drawing_sheet_pages = [r.page_index for r in ordered if r.is_drawing_sheet]
     callouts = [c for r in ordered if r.is_drawing for c in r.callouts]
     if doc_type not in ("grant", "application"):
         doc_type = detect_doc_type(spec_pages)
@@ -145,6 +158,7 @@ def assemble_from_results(
         page_methods=methods,
         doc_type=doc_type,
         figure_occurrences=figure_occurrences,
+        drawing_sheet_pages=drawing_sheet_pages,
         callouts=callouts,
         total_pages=total_pages,
     )
@@ -158,6 +172,7 @@ def extract_from_pages(
     page_methods: list[str] | None = None,
     doc_type: str = "grant",
     figure_occurrences: list[FigureOccurrence] | None = None,
+    drawing_sheet_pages: list[int] | None = None,
     callouts: list[CalloutOccurrence] | None = None,
     total_pages: int | None = None,
 ) -> Artifact:
@@ -204,6 +219,11 @@ def extract_from_pages(
     }
     drawing_figures = filter_figure_occurrences(
         figure_occurrences or [], expected_figure_ids
+    )
+    drawing_figures = infer_missing_figure_occurrences(
+        drawing_figures,
+        drawing_sheet_pages or [],
+        expected_figure_ids,
     )
     if config.callout_detection_enabled:
         supported_callouts = specification_callout_evidence(
@@ -267,6 +287,9 @@ def extract_from_pages(
             "interpolated_references": interpolated,
             "figure_mentions": len(figure_mentions),
             "figure_occurrences": len(drawing_figures),
+            "inferred_figures": sum(
+                figure.method == "sequence_inferred" for figure in drawing_figures
+            ),
             "numeral_mentions": len(numeral_mentions),
             "callouts": len(callout_occurrences),
             "verified_links": sum(1 for a in mention_associations if a.status == "verified"),
