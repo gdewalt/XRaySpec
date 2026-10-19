@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..db.models import ExtractionJob
 from ..storage.base import ObjectStore
@@ -59,37 +59,64 @@ class JobContext:
     ) -> None:
         """Persist progress + renew the lease. Raises if cancelled or preempted."""
         async with self.sessionmaker() as session:
-            job = await session.get(ExtractionJob, self.job_id)
-            if job is None or job.fencing_token != self.fencing_token or job.status != "running":
-                raise JobPreempted()
-            if job.cancel_requested:
-                raise JobCancelled()
-
-            now = datetime.now(UTC)
-            changed = False
-            if stage is not None and stage != job.stage:
-                job.stage = stage
-                changed = True
-            if stage_label is not None:
-                job.stage_label = stage_label
-            if completed_units is not None and completed_units != job.completed_units:
-                job.completed_units = completed_units
-                changed = True
-            if total_units is not None:
-                job.total_units = total_units
-            if unit is not None:
-                job.unit = unit
-            if indeterminate is not None:
-                job.indeterminate = indeterminate
-            if job.total_units:
-                job.overall_fraction = min(1.0, job.completed_units / job.total_units)
-            # A meaningful transition (new stage or work-unit progress) advances the
-            # durable progress sequence so SSE clients get an event (§10.2).
-            if changed:
-                job.progress_sequence += 1
-            job.heartbeat_at = now
-            job.lease_expires_at = now + timedelta(seconds=self.lease_seconds)
+            await self.heartbeat_in_session(
+                session,
+                stage=stage,
+                stage_label=stage_label,
+                completed_units=completed_units,
+                total_units=total_units,
+                unit=unit,
+                indeterminate=indeterminate,
+            )
             await session.commit()
+
+    async def heartbeat_in_session(
+        self,
+        session: AsyncSession,
+        *,
+        stage: str | None = None,
+        stage_label: str | None = None,
+        completed_units: int | None = None,
+        total_units: int | None = None,
+        unit: str | None = None,
+        indeterminate: bool | None = None,
+    ) -> None:
+        """Update progress inside a caller-owned transaction.
+
+        Extraction uses this to commit a batch of page checkpoints and its
+        matching progress update atomically, avoiding a second database round
+        trip without weakening lease fencing or cancellation checks.
+        """
+        job = await session.get(ExtractionJob, self.job_id)
+        if job is None or job.fencing_token != self.fencing_token or job.status != "running":
+            raise JobPreempted()
+        if job.cancel_requested:
+            raise JobCancelled()
+
+        now = datetime.now(UTC)
+        changed = False
+        if stage is not None and stage != job.stage:
+            job.stage = stage
+            changed = True
+        if stage_label is not None:
+            job.stage_label = stage_label
+        if completed_units is not None and completed_units != job.completed_units:
+            job.completed_units = completed_units
+            changed = True
+        if total_units is not None:
+            job.total_units = total_units
+        if unit is not None:
+            job.unit = unit
+        if indeterminate is not None:
+            job.indeterminate = indeterminate
+        if job.total_units:
+            job.overall_fraction = min(1.0, job.completed_units / job.total_units)
+        # A meaningful transition (new stage or work-unit progress) advances the
+        # durable progress sequence so SSE clients get an event (§10.2).
+        if changed:
+            job.progress_sequence += 1
+        job.heartbeat_at = now
+        job.lease_expires_at = now + timedelta(seconds=self.lease_seconds)
 
 
 Processor = Callable[[JobContext, ExtractionJob], Awaitable[None]]

@@ -206,7 +206,13 @@ async def load_page_texts(
 
 
 async def save_page_text(
-    session: AsyncSession, *, owner_id: str, source_id: str, cache_key: str, result: PageResult
+    session: AsyncSession,
+    *,
+    owner_id: str,
+    source_id: str,
+    cache_key: str,
+    result: PageResult,
+    commit: bool = True,
 ) -> None:
     await _upsert(
         session,
@@ -217,4 +223,5 @@ async def save_page_text(
         cache_key=cache_key,
         payload=page_result_to_payload(result),
     )
-    await session.commit()
+    if commit:
+        await session.commit()

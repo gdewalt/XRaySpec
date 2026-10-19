@@ -309,6 +309,50 @@ def test_route_page_uses_separate_column_ocr_for_scanned_specification():
     assert [word.text for word in result.words] == ["enhanced"]
 
 
+def test_route_page_reuses_one_render_for_full_and_column_ocr(monkeypatch):
+    render_calls: list[int] = []
+    preprocess_calls: list[tuple[int, int]] = []
+    master = Image.new("L", (400, 520), 255)
+
+    def render(_pdf, _index, dpi):
+        render_calls.append(dpi)
+        return master
+
+    def preprocess(image, _config):
+        preprocess_calls.append(image.size)
+        return image, 0.0
+
+    full_words = []
+    for index in range(20):
+        y0 = 0.10 + index * 0.025
+        full_words.extend(
+            [
+                Word(f"left{index}", 0.10, y0, 0.24, y0 + 0.012, confidence=92.0),
+                Word(f"right{index}", 0.65, y0, 0.80, y0 + 0.012, confidence=92.0),
+            ]
+        )
+
+    def recognize(image, _config, *, psm, thresholding_method, char_whitelist=None):
+        del image, thresholding_method, char_whitelist
+        if psm == 3:
+            return full_words
+        return [
+            Word(f"column{index}", 0.10, 0.10 + index * 0.05, 0.30, 0.12 + index * 0.05,
+                 confidence=92.0)
+            for index in range(8)
+        ]
+
+    monkeypatch.setattr(ocr_module, "render_page", render)
+    monkeypatch.setattr(ocr_module, "preprocess_image", preprocess)
+    monkeypatch.setattr(ocr_module, "_tesseract_words", recognize)
+
+    result = route_page(b"pdf", Page(0, []), DEFAULT_CONFIG, True)
+
+    assert result.is_drawing is False
+    assert render_calls == [DEFAULT_CONFIG.ocr_drawing_dpi]
+    assert preprocess_calls == [master.size]
+
+
 def test_route_page_uses_rotated_drawing_pass_for_scanned_sheet():
     initial = [
         Word("Sheet", 0.1, 0.04, 0.2, 0.06),

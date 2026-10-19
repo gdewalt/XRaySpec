@@ -75,18 +75,38 @@ def route_page(
 
     Pure per-page work with no persistence: the resume orchestrator calls this only
     for pages without a valid ``page_text`` checkpoint."""
-    if ocr_fn is None:
+    default_ocr = ocr_fn is None
+    default_specification_ocr = default_ocr and specification_ocr_fn is None
+    default_drawing_ocr = default_ocr and drawing_ocr_fn is None
+    prepare_ocr_page = None
+    if default_ocr:
         # Lazy imports keep PDF/OCR binaries out of API and unit-test startup.
-        from .ocr import ocr_drawing_words, ocr_page_words, ocr_specification_words
+        from .ocr import (
+            ocr_drawing_words,
+            ocr_page_words,
+            ocr_specification_words,
+            prepare_ocr_page,
+        )
 
         ocr_fn = ocr_page_words
         specification_ocr_fn = specification_ocr_fn or ocr_specification_words
         drawing_ocr_fn = drawing_ocr_fn or ocr_drawing_words
 
+    prepared = None
     if len(native_page.words) >= config.min_native_words_per_page:
         page, method = native_page, "native"
     elif can_ocr:
-        words = ocr_fn(pdf_bytes, native_page.index, config)
+        if default_ocr:
+            assert prepare_ocr_page is not None
+            prepared = prepare_ocr_page(pdf_bytes, native_page.index, config)
+            words = ocr_fn(
+                pdf_bytes,
+                native_page.index,
+                config,
+                prepared=prepared,
+            )
+        else:
+            words = ocr_fn(pdf_bytes, native_page.index, config)
         page, method = Page(index=native_page.index, words=words), "ocr"
     else:
         page, method = native_page, "native"  # no text layer, no OCR
@@ -95,7 +115,17 @@ def route_page(
         is_drawing_sheet = has_drawing_sheet_header(page.words)
         draw_words = page.words
         if can_ocr and drawing_ocr_fn is not None:
-            enhanced = drawing_ocr_fn(pdf_bytes, page.index, config)
+            if default_drawing_ocr:
+                assert prepare_ocr_page is not None
+                prepared = prepared or prepare_ocr_page(pdf_bytes, page.index, config)
+                enhanced = drawing_ocr_fn(
+                    pdf_bytes,
+                    page.index,
+                    config,
+                    prepared=prepared,
+                )
+            else:
+                enhanced = drawing_ocr_fn(pdf_bytes, page.index, config)
             if method == "native":
                 from .ocr import dedupe_words
 
@@ -128,7 +158,18 @@ def route_page(
             is_drawing_sheet=is_drawing_sheet,
         )
     if method == "ocr" and specification_ocr_fn is not None:
-        words = specification_ocr_fn(pdf_bytes, page.index, config, list(page.words))
+        if default_specification_ocr:
+            words = specification_ocr_fn(
+                pdf_bytes,
+                page.index,
+                config,
+                list(page.words),
+                prepared=prepared,
+            )
+        else:
+            words = specification_ocr_fn(
+                pdf_bytes, page.index, config, list(page.words)
+            )
         page = Page(index=page.index, words=words)
     return PageResult(page.index, method, False, words=tuple(page.words))
 
@@ -310,7 +351,10 @@ def extract(pdf_bytes: bytes, config: ExtractionConfig, doc_type: str = "auto") 
     from .pdf import load_pages
 
     source_sha256 = hashlib.sha256(pdf_bytes).hexdigest()
-    native_pages = load_pages(pdf_bytes)
+    native_pages = load_pages(
+        pdf_bytes,
+        detect_bold_numbers=config.callout_detection_enabled,
+    )
     can_ocr = ocr_available()
 
     results = [route_page(pdf_bytes, np, config, can_ocr) for np in native_pages]

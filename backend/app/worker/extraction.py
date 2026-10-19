@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 from collections.abc import Callable
 
 from ..extraction.artifact import Artifact
@@ -29,6 +30,8 @@ from .checkpoints import (
     save_source_ready,
 )
 from .engine import JobContext
+
+_CHECKPOINT_BATCH_SIZE = 4
 
 
 async def _route_page_with_lease(
@@ -95,14 +98,22 @@ async def run_extraction(
             indeterminate=False,
         )
     else:
-        if load_pages is None:
+        default_load_pages = load_pages is None
+        if default_load_pages:
             from ..extraction.pdf import load_pages
         if route_page is None:
             from ..extraction.core import route_page
         if ocr_available is None:
             from ..extraction.ocr import ocr_available
 
-        native_pages = await asyncio.to_thread(load_pages, pdf_bytes)
+        if default_load_pages:
+            native_pages = await asyncio.to_thread(
+                load_pages,
+                pdf_bytes,
+                detect_bold_numbers=config.callout_detection_enabled,
+            )
+        else:
+            native_pages = await asyncio.to_thread(load_pages, pdf_bytes)
         total_pages = len(native_pages)
         async with ctx.sessionmaker() as session:
             await save_source_ready(
@@ -120,6 +131,9 @@ async def run_extraction(
             indeterminate=False,
         )
         results = []
+        pending_checkpoints: list[PageResult] = []
+        last_checkpoint_commit = time.monotonic()
+        checkpoint_interval = max(5.0, min(20.0, ctx.lease_seconds / 3))
         for done, native_page in enumerate(native_pages, start=1):
             if native_page.index in cached:
                 results.append(cached[native_page.index])
@@ -127,14 +141,32 @@ async def run_extraction(
                 result = await _route_page_with_lease(
                     ctx, route_page, pdf_bytes, native_page, config, can_ocr
                 )
-                async with ctx.sessionmaker() as session:
-                    await save_page_text(
-                        session, owner_id=owner_id, source_id=source_id,
-                        cache_key=cache_key, result=result,
-                    )
                 results.append(result)
-            # Cancellation is honored between pages (§10.5) and progress is durable.
-            await ctx.heartbeat(completed_units=done)
+                pending_checkpoints.append(result)
+
+            # Commit checkpoints and their matching progress update together.
+            # Small batches retain durable resume points while avoiding two
+            # Supabase transactions for every page.
+            commit_due = (
+                done % _CHECKPOINT_BATCH_SIZE == 0
+                or done == total_pages
+                or time.monotonic() - last_checkpoint_commit >= checkpoint_interval
+            )
+            if commit_due:
+                async with ctx.sessionmaker() as session:
+                    for checkpoint in pending_checkpoints:
+                        await save_page_text(
+                            session,
+                            owner_id=owner_id,
+                            source_id=source_id,
+                            cache_key=cache_key,
+                            result=checkpoint,
+                            commit=False,
+                        )
+                    await ctx.heartbeat_in_session(session, completed_units=done)
+                    await session.commit()
+                pending_checkpoints.clear()
+                last_checkpoint_commit = time.monotonic()
 
     return await asyncio.to_thread(
         assemble_from_results,

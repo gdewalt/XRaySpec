@@ -122,6 +122,12 @@ async def test_first_run_computes_and_checkpoints_every_page(client):
     assert await _count_checkpoints(client, source_id, "source_ready") == 1
     assert art.page_count == N_PAGES
     assert art.entries  # downstream produced lines
+    async with client.sessionmaker() as s:
+        job = await s.get(ExtractionJob, ctx.job_id)
+        assert job is not None
+        assert job.completed_units == N_PAGES
+        # One stage transition plus one batched checkpoint/progress commit.
+        assert job.progress_sequence == 2
 
 
 async def test_resume_reuses_all_checkpoints_and_skips_pdf_parse(client):

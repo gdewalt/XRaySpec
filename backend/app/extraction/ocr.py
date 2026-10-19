@@ -1,9 +1,9 @@
 """OCR rendering, cleanup, deskewing, and layout-specific recognition.
 
 Specification scans use a cleaned full-page pass for structural tokens followed
-by independent left/right column passes. Drawing sheets use a higher-resolution
-sparse-text pass at four orientations; every box is transformed back to the
-original PDF coordinate system before downstream figure/callout detection.
+by independent left/right column passes. Drawing sheets use higher-resolution
+sparse-text passes at the configured orientations; every box is transformed
+back to the original PDF coordinate system before downstream figure detection.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
+from typing import Any
 
 from .config import ExtractionConfig
 from .model import Word
@@ -208,6 +209,48 @@ class OcrQuality:
     mean_confidence: float
     low_confidence_fraction: float
     useful_characters: int
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedOcrPage:
+    """One rendered and cleaned page shared by every OCR profile for that page."""
+
+    text_image: Any
+    drawing_image: Any
+    deskew_angle: float
+
+
+def prepare_ocr_page(
+    pdf_bytes: bytes,
+    page_index: int,
+    config: ExtractionConfig,
+    *,
+    master_dpi: int | None = None,
+) -> PreparedOcrPage:
+    """Render and preprocess once, retaining text and drawing resolutions.
+
+    The worker prepares OCR-routed pages at the larger configured resolution and
+    derives the specification image by downsampling. Standalone OCR helpers can
+    request their own resolution so their existing behavior remains unchanged.
+    """
+    from PIL import Image
+
+    dpi = master_dpi or max(config.ocr_dpi, config.ocr_drawing_dpi)
+    rendered = render_page(pdf_bytes, page_index, dpi)
+    clean, angle = preprocess_image(rendered, config)
+    if dpi == config.ocr_dpi:
+        text_image = clean
+    else:
+        ratio = config.ocr_dpi / dpi
+        text_image = clean.resize(
+            (max(1, round(clean.width * ratio)), max(1, round(clean.height * ratio))),
+            Image.Resampling.LANCZOS,
+        )
+    return PreparedOcrPage(
+        text_image=text_image,
+        drawing_image=clean,
+        deskew_angle=angle,
+    )
 
 
 def ocr_quality(words: Iterable[Word], *, low_confidence_cutoff: float = 50.0) -> OcrQuality:
@@ -445,11 +488,18 @@ def fuse_drawing_words(words: Iterable[Word]) -> list[Word]:
 
 
 def ocr_page_words(
-    pdf_bytes: bytes, page_index: int, config: ExtractionConfig, *, psm: int | None = None
+    pdf_bytes: bytes,
+    page_index: int,
+    config: ExtractionConfig,
+    *,
+    psm: int | None = None,
+    prepared: PreparedOcrPage | None = None,
 ) -> list[Word]:
     """Clean, deskew, and OCR a full page while preserving original coordinates."""
-    image = render_page(pdf_bytes, page_index, config.ocr_dpi)
-    clean, angle = preprocess_image(image, config)
+    prepared = prepared or prepare_ocr_page(
+        pdf_bytes, page_index, config, master_dpi=config.ocr_dpi
+    )
+    clean = prepared.text_image
     primary_psm = psm or 3
     retry_psm = psm or config.ocr_text_retry_psm
     words = _adaptive_tesseract_words(
@@ -459,7 +509,7 @@ def ocr_page_words(
         retry_psm=retry_psm,
         minimum_words=12,
     )
-    return _unrotate_words(words, angle, clean.size)
+    return _unrotate_words(words, prepared.deskew_angle, clean.size)
 
 
 def ocr_specification_words(
@@ -467,6 +517,8 @@ def ocr_specification_words(
     page_index: int,
     config: ExtractionConfig,
     base_words: list[Word],
+    *,
+    prepared: PreparedOcrPage | None = None,
 ) -> list[Word]:
     """OCR left and right specification columns independently.
 
@@ -478,8 +530,10 @@ def ocr_specification_words(
 
     if _detect_columns(base_words) is None and column_boundary(base_words) is None:
         return base_words
-    image = render_page(pdf_bytes, page_index, config.ocr_dpi)
-    clean, angle = preprocess_image(image, config)
+    prepared = prepared or prepare_ocr_page(
+        pdf_bytes, page_index, config, master_dpi=config.ocr_dpi
+    )
+    clean = prepared.text_image
     crops = (
         (0.055, 0.075, 0.485, 0.955),
         (0.515, 0.075, 0.945, 0.955),
@@ -500,7 +554,7 @@ def ocr_specification_words(
             minimum_words=8,
         )
         column_words.extend(_map_crop_words(recognized, crop))
-    column_words = _unrotate_words(column_words, angle, clean.size)
+    column_words = _unrotate_words(column_words, prepared.deskew_angle, clean.size)
     base_body = [
         word
         for word in base_words
@@ -515,7 +569,11 @@ def ocr_specification_words(
 
 
 def ocr_drawing_words(
-    pdf_bytes: bytes, page_index: int, config: ExtractionConfig
+    pdf_bytes: bytes,
+    page_index: int,
+    config: ExtractionConfig,
+    *,
+    prepared: PreparedOcrPage | None = None,
 ) -> list[Word]:
     """OCR drawing labels with independent figure and callout profiles.
 
@@ -524,8 +582,10 @@ def ocr_drawing_words(
     pass (``FIG. 14B``) and a numeric reference-callout pass (``104A``). Their
     source-coordinate boxes are fused only after rotation is undone.
     """
-    image = render_page(pdf_bytes, page_index, config.ocr_drawing_dpi)
-    clean, deskew_angle = preprocess_image(image, config)
+    prepared = prepared or prepare_ocr_page(
+        pdf_bytes, page_index, config, master_dpi=config.ocr_drawing_dpi
+    )
+    clean = prepared.drawing_image
 
     figure_chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz."
     callout_chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -595,4 +655,4 @@ def ocr_drawing_words(
     if not candidates[0]:
         candidates.append(orientation_pass(1))
     recognized = max(candidates, key=lambda words: _candidate_score(words, config))
-    return _unrotate_words(recognized, deskew_angle, clean.size)
+    return _unrotate_words(recognized, prepared.deskew_angle, clean.size)

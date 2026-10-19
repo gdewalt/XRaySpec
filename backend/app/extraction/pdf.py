@@ -69,13 +69,21 @@ def _mark_visually_bold_numbers(words: list[Word], image) -> list[Word]:
     ]
 
 
-def load_pages(pdf_bytes: bytes) -> list[Page]:
-    """Parse native words with normalized top-left coordinates."""
+def load_pages(pdf_bytes: bytes, *, detect_bold_numbers: bool = True) -> list[Page]:
+    """Parse native words with normalized top-left coordinates.
+
+    Visual bold-number detection requires rasterizing otherwise searchable PDF
+    pages. Callers that do not use reference-callout detection can disable that
+    expensive pass without changing text, geometry, or figure extraction.
+    """
     import pdfplumber
-    import pypdfium2 as pdfium
 
     pages: list[Page] = []
-    rendered = pdfium.PdfDocument(pdf_bytes)
+    rendered = None
+    if detect_bold_numbers:
+        import pypdfium2 as pdfium
+
+        rendered = pdfium.PdfDocument(pdf_bytes)
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             for index, page in enumerate(pdf.pages):
@@ -97,7 +105,7 @@ def load_pages(pdf_bytes: bytes) -> list[Page]:
                     )
                     for w in extracted
                 ]
-                if words:
+                if words and detect_bold_numbers:
                     from .callouts import is_drawing_page
 
                     has_numeric_candidates = any(
@@ -105,9 +113,11 @@ def load_pages(pdf_bytes: bytes) -> list[Page]:
                         for word in words
                     )
                     if has_numeric_candidates and not is_drawing_page(words):
+                        assert rendered is not None
                         bitmap = rendered[index].render(scale=2.0)
                         words = _mark_visually_bold_numbers(words, bitmap.to_pil())
                 pages.append(Page(index=index, words=words))
     finally:
-        rendered.close()
+        if rendered is not None:
+            rendered.close()
     return pages
