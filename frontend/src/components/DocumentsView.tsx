@@ -44,6 +44,7 @@ interface PatentRowProps {
   doc: DocumentRead;
   workspaces: WorkspaceRead[];
   moving: boolean;
+  reloading: boolean;
   dragging: boolean;
   onOpen: (documentId: string) => void;
   onMove: (doc: DocumentRead, workspaceId: string | null) => void;
@@ -51,6 +52,7 @@ interface PatentRowProps {
   onMoveDown?: () => void;
   onDragStart: (event: ReactDragEvent<HTMLElement>, doc: DocumentRead) => void;
   onDragEnd: () => void;
+  onReload: (doc: DocumentRead) => void;
   onRemove: (doc: DocumentRead) => void;
   onJobComplete: () => void;
 }
@@ -59,6 +61,7 @@ function PatentRow({
   doc,
   workspaces,
   moving,
+  reloading,
   dragging,
   onOpen,
   onMove,
@@ -66,6 +69,7 @@ function PatentRow({
   onMoveDown,
   onDragStart,
   onDragEnd,
+  onReload,
   onRemove,
   onJobComplete,
 }: PatentRowProps) {
@@ -109,7 +113,7 @@ function PatentRow({
       <div className="row-actions">
         <span
           className="document-drag-handle"
-          draggable={!moving}
+          draggable={!moving && !reloading}
           onDragStart={(event) => onDragStart(event, doc)}
           onDragEnd={onDragEnd}
           title="Drag to move or reorder patent"
@@ -142,6 +146,7 @@ function PatentRow({
           <button
             type="button"
             className="icon-button menu-button"
+            disabled={reloading}
             aria-label={"More actions for " + doc.title}
             aria-expanded={menuOpen}
             aria-controls={"document-actions-" + doc.id}
@@ -159,7 +164,7 @@ function PatentRow({
               <button
                 type="button"
                 className="document-menu-action menu-neutral"
-                disabled={!onMoveUp || moving}
+                disabled={!onMoveUp || moving || reloading}
                 onClick={() => {
                   setMenuOpen(false);
                   onMoveUp?.();
@@ -171,7 +176,7 @@ function PatentRow({
               <button
                 type="button"
                 className="document-menu-action menu-neutral"
-                disabled={!onMoveDown || moving}
+                disabled={!onMoveDown || moving || reloading}
                 onClick={() => {
                   setMenuOpen(false);
                   onMoveDown?.();
@@ -188,7 +193,7 @@ function PatentRow({
                     onMove(doc, event.target.value || null);
                     setMenuOpen(false);
                   }}
-                  disabled={moving}
+                  disabled={moving || reloading}
                   aria-label={"Move " + doc.title + " to folder"}
                 >
                   <option value="">Unfiled</option>
@@ -199,9 +204,24 @@ function PatentRow({
                   ))}
                 </select>
               </label>
+              {doc.patent_number && (
+                <button
+                  type="button"
+                  className="document-menu-action menu-neutral"
+                  disabled={moving || reloading || ACTIVE_STATES.has(doc.state)}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onReload(doc);
+                  }}
+                >
+                  <Icon name="rotate-cw" size={16} />
+                  Reload patent
+                </button>
+              )}
               <button
                 type="button"
                 className="document-menu-action danger-icon"
+                disabled={reloading}
                 onClick={() => {
                   setMenuOpen(false);
                   onRemove(doc);
@@ -229,6 +249,7 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
   const [workspaceDraft, setWorkspaceDraft] = useState("");
   const [workspaceActionId, setWorkspaceActionId] = useState<string | null>(null);
   const [movingId, setMovingId] = useState<string | null>(null);
+  const [reloadingId, setReloadingId] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -401,6 +422,42 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function reloadPatent(doc: DocumentRead) {
+    if (!doc.patent_number) {
+      setError("Only patents imported by patent number can be reloaded.");
+      return;
+    }
+    const confirmed = window.confirm(
+      `Reload ${doc.patent_number}?\n\n` +
+      "This replaces the current copy and permanently deletes all saved bookmarks, " +
+      "notes, highlights, drawings, and other annotations. This cannot be undone.",
+    );
+    if (!confirmed) return;
+
+    setReloadingId(doc.id);
+    setError(null);
+    let replacement: DocumentRead | null = null;
+    try {
+      // Start the fresh import before deleting the current copy so a transient
+      // fetch/API failure cannot leave the user with no patent at all. Placing
+      // it immediately before the current row preserves its workspace and order.
+      replacement = await api.createFetch(doc.patent_number, doc.title);
+      await api.placeDocument(replacement.id, doc.workspace_id, doc.id);
+      await api.deleteDocument(doc.id);
+      await load();
+    } catch (err) {
+      await load();
+      const detail = err instanceof Error ? err.message : String(err);
+      setError(
+        replacement
+          ? `A fresh import was started, but the reload could not be completed: ${detail}`
+          : detail,
+      );
+    } finally {
+      setReloadingId(null);
     }
   }
 
@@ -633,6 +690,7 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
                                 doc={doc}
                                 workspaces={workspaces}
                                 moving={movingId === doc.id}
+                                reloading={reloadingId === doc.id}
                                 dragging={draggingId === doc.id}
                                 onOpen={onOpen}
                                 onMove={move}
@@ -652,6 +710,7 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
                                   : undefined}
                                 onDragStart={beginDrag}
                                 onDragEnd={endDrag}
+                                onReload={reloadPatent}
                                 onRemove={remove}
                                 onJobComplete={load}
                               />
