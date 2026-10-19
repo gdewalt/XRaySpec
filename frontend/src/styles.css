@@ -466,12 +466,15 @@ table.docs th {
 
 /* --- viewer --- */
 .viewer-bar {
+  position: relative;
+  z-index: 30;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 0.75rem;
   padding-bottom: 0.75rem;
   border-bottom: 1px solid var(--border);
+  overflow: visible;
 }
 .viewer-title {
   flex: 1;
@@ -690,6 +693,7 @@ mark.search-hit {
 /* --- export menu --- */
 .export-menu {
   position: relative;
+  z-index: 1;
 }
 .export-pop {
   position: absolute;
@@ -704,7 +708,7 @@ mark.search-hit {
   border-radius: 8px;
   padding: 0.3rem;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
-  z-index: 15;
+  z-index: 50;
   min-width: 12rem;
 }
 .export-menu:hover .export-pop,
