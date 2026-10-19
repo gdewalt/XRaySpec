@@ -19,6 +19,7 @@ from sqlalchemy import select
 from ...config import get_settings
 from ...db.models import (
     Annotation,
+    AssertedClaim,
     Bookmark,
     ExtractionJob,
     PdfAnnotation,
@@ -28,6 +29,7 @@ from ...db.models import (
 )
 from ...patents import PatentParseError, parse_patent_identifier
 from ...schemas.annotations import AnnotationCreate, AnnotationRead, AnnotationUpdate
+from ...schemas.asserted_claims import AssertedClaimRead, AssertedClaimUpsert
 from ...schemas.bookmarks import BookmarkCreate, BookmarkRead
 from ...schemas.documents import DocumentCreate, DocumentList, DocumentRead
 from ...schemas.jobs import JobRead
@@ -292,6 +294,77 @@ async def delete_bookmark(bookmark_id: str, user: CurrentUser, session: DbSessio
     if bookmark is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Bookmark not found")
     await session.delete(bookmark)
+    await session.commit()
+
+
+@router.get(
+    "/documents/{document_id}/asserted-claims",
+    response_model=list[AssertedClaimRead],
+)
+async def list_asserted_claims(
+    document_id: str, user: CurrentUser, session: DbSession
+) -> list[AssertedClaimRead]:
+    await _owned_document(session, user, document_id)
+    rows = await session.scalars(
+        select(AssertedClaim)
+        .where(
+            AssertedClaim.document_id == document_id,
+            AssertedClaim.owner_id == user.id,
+        )
+        .order_by(AssertedClaim.claim_number.asc())
+    )
+    return [AssertedClaimRead.model_validate(claim) for claim in rows]
+
+
+@router.put(
+    "/documents/{document_id}/asserted-claims",
+    response_model=AssertedClaimRead,
+)
+async def upsert_asserted_claim(
+    document_id: str,
+    body: AssertedClaimUpsert,
+    user: CurrentUser,
+    session: DbSession,
+) -> AssertedClaimRead:
+    await _owned_document(session, user, document_id)
+    claim = await session.scalar(
+        select(AssertedClaim).where(
+            AssertedClaim.document_id == document_id,
+            AssertedClaim.owner_id == user.id,
+            AssertedClaim.entry_id == body.entry_id,
+        )
+    )
+    if claim is None:
+        claim = AssertedClaim(
+            owner_id=user.id,
+            document_id=document_id,
+            entry_id=body.entry_id,
+            claim_number=body.claim_number,
+        )
+        session.add(claim)
+    else:
+        claim.claim_number = body.claim_number
+    await session.commit()
+    await session.refresh(claim)
+    return AssertedClaimRead.model_validate(claim)
+
+
+@router.delete(
+    "/asserted-claims/{asserted_claim_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_asserted_claim(
+    asserted_claim_id: str, user: CurrentUser, session: DbSession
+) -> None:
+    claim = await session.scalar(
+        select(AssertedClaim).where(
+            AssertedClaim.id == asserted_claim_id,
+            AssertedClaim.owner_id == user.id,
+        )
+    )
+    if claim is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Asserted claim not found")
+    await session.delete(claim)
     await session.commit()
 
 

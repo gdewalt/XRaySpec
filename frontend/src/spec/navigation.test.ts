@@ -136,6 +136,7 @@ describe("outline + scopes", () => {
     ];
     const items = detectClaims(withClaims);
     expect(items.map((i) => i.label)).toEqual(["Claim 1", "Claim 2", "Claim 3"]);
+    expect(items.map((i) => i.claimNumber)).toEqual([1, 2, 3]);
     expect(items[0].ref).toBe("1:6");
   });
   it("scopes to claims from that ordinal", () => {

@@ -6,7 +6,7 @@ import json
 
 from sqlalchemy import select
 
-from app.db.models import ExtractionArtifact, SourceDocument, UserDocument
+from app.db.models import AssertedClaim, ExtractionArtifact, SourceDocument, UserDocument
 
 PDF = b"%PDF-1.7\n1 0 obj<<>>endobj\n%%EOF"
 
@@ -63,6 +63,12 @@ async def test_delete_import_removes_artifact_blob_and_bookmarks(client, make_to
     assert len(client.object_store._objects) == 1
     bms = await client.get(f"/api/v1/documents/{doc['id']}/bookmarks", headers=auth(tok))
     assert len(bms.json()) == 1
+    asserted = await client.put(
+        f"/api/v1/documents/{doc['id']}/asserted-claims",
+        headers=auth(tok),
+        json={"entry_id": "line_0", "claim_number": 1},
+    )
+    assert asserted.status_code == 200
 
     r = await client.delete(f"/api/v1/documents/{doc['id']}", headers=auth(tok))
     assert r.status_code == 204
@@ -70,6 +76,12 @@ async def test_delete_import_removes_artifact_blob_and_bookmarks(client, make_to
     # Document (and thus its bookmarks) are gone.
     gone = await client.get(f"/api/v1/documents/{doc['id']}", headers=auth(tok))
     assert gone.status_code == 404
+    async with client.sessionmaker() as session:
+        assert (
+            await session.scalar(
+                select(AssertedClaim).where(AssertedClaim.document_id == doc["id"])
+            )
+        ) is None
 
 
 async def test_delete_excludes_from_list(client, make_token, auth):

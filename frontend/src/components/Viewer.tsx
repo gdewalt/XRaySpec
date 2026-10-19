@@ -14,6 +14,7 @@ import { api } from "../api/client";
 import type {
   AnnotationRead,
   ArtifactEntries,
+  AssertedClaimRead,
   AssociationDto,
   BookmarkRead,
   CalloutDto,
@@ -339,6 +340,11 @@ export function Viewer({ documentId }: { documentId: string }) {
     Set<OutlineSectionKey>
   >(() => new Set());
   const [bookmarks, setBookmarks] = useState<BookmarkRead[]>([]);
+  const [assertedClaims, setAssertedClaims] = useState<AssertedClaimRead[]>([]);
+  const [assertedClaimsOnly, setAssertedClaimsOnly] = useState(false);
+  const [assertedClaimBusy, setAssertedClaimBusy] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [annotations, setAnnotations] = useState<AnnotationRead[]>([]);
   const [overrides, setOverrides] = useState<OverrideRead[]>([]);
   const [noteOpen, setNoteOpen] = useState(false);
@@ -380,8 +386,9 @@ export function Viewer({ documentId }: { documentId: string }) {
           const a = await api.getArtifactEntries(d.active_artifact_id);
           if (!cancelled) setArtifact(a);
         }
-        const [bm, an, ov] = await Promise.all([
+        const [bm, asserted, an, ov] = await Promise.all([
           api.listBookmarks(documentId),
+          api.listAssertedClaims(documentId),
           api.listAnnotations(documentId),
           CALLOUT_IDENTIFICATION_ENABLED
             ? api.listOverrides(documentId)
@@ -389,6 +396,7 @@ export function Viewer({ documentId }: { documentId: string }) {
         ]);
         if (!cancelled) {
           setBookmarks(bm);
+          setAssertedClaims(asserted);
           setAnnotations(an);
           setOverrides(ov);
         }
@@ -424,6 +432,24 @@ export function Viewer({ documentId }: { documentId: string }) {
     [artifact?.figure_occurrences, figureMentions],
   );
   const claims = useMemo(() => detectClaims(entries), [entries]);
+  const entryByOrdinal = useMemo(
+    () => new Map(entries.map((entry) => [entry.ordinal, entry])),
+    [entries],
+  );
+  const assertedClaimByEntry = useMemo(
+    () => new Map(assertedClaims.map((claim) => [claim.entry_id, claim])),
+    [assertedClaims],
+  );
+  const visibleClaims = useMemo(
+    () =>
+      assertedClaimsOnly
+        ? claims.filter((claim) => {
+            const entry = entryByOrdinal.get(claim.ordinal);
+            return entry ? assertedClaimByEntry.has(entry.entry_id) : false;
+          })
+        : claims,
+    [assertedClaimByEntry, assertedClaimsOnly, claims, entryByOrdinal],
+  );
 
   const toggleOutlineSection = useCallback((section: OutlineSectionKey) => {
     setCollapsedOutlineSections((current) => {
@@ -478,6 +504,41 @@ export function Viewer({ documentId }: { documentId: string }) {
       setError(err instanceof Error ? err.message : String(err));
     }
   }, []);
+
+  const toggleAssertedClaim = useCallback(
+    async (entry: EntryDto, claimNumber: number) => {
+      if (assertedClaimBusy.has(entry.entry_id)) return;
+      const existing = assertedClaimByEntry.get(entry.entry_id);
+      setAssertedClaimBusy((current) => new Set(current).add(entry.entry_id));
+      try {
+        if (existing) {
+          await api.deleteAssertedClaim(existing.id);
+          setAssertedClaims((current) =>
+            current.filter((claim) => claim.id !== existing.id),
+          );
+        } else {
+          const created = await api.upsertAssertedClaim(
+            documentId,
+            entry.entry_id,
+            claimNumber,
+          );
+          setAssertedClaims((current) => [
+            ...current.filter((claim) => claim.entry_id !== created.entry_id),
+            created,
+          ]);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setAssertedClaimBusy((current) => {
+          const next = new Set(current);
+          next.delete(entry.entry_id);
+          return next;
+        });
+      }
+    },
+    [assertedClaimBusy, assertedClaimByEntry, documentId],
+  );
 
   const removeAnnotation = useCallback(async (id: string) => {
     try {
@@ -1287,7 +1348,7 @@ export function Viewer({ documentId }: { documentId: string }) {
               )}
               {claims.length > 0 && (
                 <section className="outline-section">
-                  <h3 className="outline-head">
+                  <div className="outline-head outline-claims-head">
                     <button
                       type="button"
                       className="outline-section-toggle"
@@ -1296,25 +1357,71 @@ export function Viewer({ documentId }: { documentId: string }) {
                       onClick={() => toggleOutlineSection("claims")}
                     >
                       <span className="outline-chevron" aria-hidden="true">▾</span>
-                      <span>Claims ({claims.length})</span>
+                      <span>
+                        Claims ({assertedClaimsOnly ? `${visibleClaims.length} of ` : ""}
+                        {claims.length})
+                      </span>
                     </button>
-                  </h3>
+                    <button
+                      type="button"
+                      className="outline-claims-filter"
+                      aria-pressed={assertedClaimsOnly}
+                      onClick={() => setAssertedClaimsOnly((value) => !value)}
+                      title="Show only asserted claims"
+                    >
+                      <Icon name="flag" size={14} />
+                      <span>Asserted</span>
+                    </button>
+                  </div>
                   <div
                     id="outline-claims"
                     className="outline-section-content"
                     hidden={collapsedOutlineSections.has("claims")}
                   >
-                    {claims.map((item) => (
-                    <button
-                      key={`claim-${item.ordinal}`}
-                      type="button"
-                      className="outline-item claim"
-                      onClick={() => selectRange(item.ordinal, item.ordinal, { scroll: true })}
-                    >
-                      <span className="outline-label">{item.label}</span>
-                      <span className="outline-ref">{item.ref}</span>
-                    </button>
-                    ))}
+                    {visibleClaims.map((item) => {
+                      const entry = entryByOrdinal.get(item.ordinal);
+                      const claimNumber = item.claimNumber;
+                      if (!entry || claimNumber === undefined) return null;
+                      const isAsserted = assertedClaimByEntry.has(entry.entry_id);
+                      const isBusy = assertedClaimBusy.has(entry.entry_id);
+                      return (
+                        <div
+                          key={`claim-${item.ordinal}`}
+                          className={`outline-claim-row${isAsserted ? " asserted" : ""}`}
+                        >
+                          <button
+                            type="button"
+                            className="outline-item claim outline-claim-jump"
+                            onClick={() =>
+                              selectRange(item.ordinal, item.ordinal, { scroll: true })
+                            }
+                          >
+                            <span className="outline-label">{item.label}</span>
+                            <span className="outline-ref">{item.ref}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="outline-asserted-toggle"
+                            aria-label={
+                              isAsserted
+                                ? `Remove ${item.label} from asserted claims`
+                                : `Mark ${item.label} as asserted`
+                            }
+                            aria-pressed={isAsserted}
+                            disabled={isBusy}
+                            onClick={() => toggleAssertedClaim(entry, claimNumber)}
+                            title={isAsserted ? "Remove asserted status" : "Mark as asserted"}
+                          >
+                            <Icon name="flag" size={16} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                    {assertedClaimsOnly && visibleClaims.length === 0 && (
+                      <p className="muted small outline-empty">
+                        No claims are marked as asserted.
+                      </p>
+                    )}
                   </div>
                 </section>
               )}

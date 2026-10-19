@@ -17,6 +17,7 @@ export type OutlineItem = {
   label: string;
   ref: string;
   kind: "heading" | "claim";
+  claimNumber?: number;
 };
 
 export type FigureOutlineItem = {
@@ -204,7 +205,13 @@ export function detectClaims(entries: EntryDto[]): OutlineItem[] {
     const m = CLAIM_HEAD.exec(e.display_text.trim());
     if (m && Number(m[1]) === last + 1) {
       last += 1;
-      items.push({ ordinal: e.ordinal, label: `Claim ${last}`, ref: refShort(e.locator), kind: "claim" });
+      items.push({
+        ordinal: e.ordinal,
+        label: `Claim ${last}`,
+        ref: refShort(e.locator),
+        kind: "claim",
+        claimNumber: last,
+      });
     }
   }
   return items;

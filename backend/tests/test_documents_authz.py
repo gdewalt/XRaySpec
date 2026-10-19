@@ -92,6 +92,60 @@ async def test_bookmark_authorization(client, make_token, auth):
     assert [b["id"] for b in listed.json()] == [bookmark_id]
 
 
+async def test_asserted_claim_persistence_and_authorization(client, make_token, auth):
+    owner = make_token("owner", "o@example.com")
+    intruder = make_token("intruder", "x@example.com")
+    doc_id = await _create_doc(client, auth, owner)
+    body = {"entry_id": "line_0000123", "claim_number": 7}
+
+    created = await client.put(
+        f"/api/v1/documents/{doc_id}/asserted-claims",
+        headers=auth(owner),
+        json=body,
+    )
+    assert created.status_code == 200, created.text
+    claim_id = created.json()["id"]
+
+    # Re-marking the same entry is idempotent rather than creating duplicates.
+    again = await client.put(
+        f"/api/v1/documents/{doc_id}/asserted-claims",
+        headers=auth(owner),
+        json=body,
+    )
+    assert again.status_code == 200
+    assert again.json()["id"] == claim_id
+
+    listed = await client.get(
+        f"/api/v1/documents/{doc_id}/asserted-claims", headers=auth(owner)
+    )
+    assert [(claim["claim_number"], claim["entry_id"]) for claim in listed.json()] == [
+        (7, "line_0000123")
+    ]
+
+    assert (
+        await client.get(
+            f"/api/v1/documents/{doc_id}/asserted-claims", headers=auth(intruder)
+        )
+    ).status_code == 404
+    assert (
+        await client.put(
+            f"/api/v1/documents/{doc_id}/asserted-claims",
+            headers=auth(intruder),
+            json={"entry_id": "line_9", "claim_number": 9},
+        )
+    ).status_code == 404
+    assert (
+        await client.delete(
+            f"/api/v1/asserted-claims/{claim_id}", headers=auth(intruder)
+        )
+    ).status_code == 404
+    assert (
+        await client.delete(
+            f"/api/v1/asserted-claims/{claim_id}", headers=auth(owner)
+        )
+    ).status_code == 204
+
+
 async def test_annotation_authorization(client, make_token, auth):
     owner = make_token("owner", "o@example.com")
     intruder = make_token("intruder", "x@example.com")

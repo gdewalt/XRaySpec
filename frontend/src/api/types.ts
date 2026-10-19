@@ -37,6 +37,14 @@ export interface BookmarkRead {
   created_at: string;
 }
 
+export interface AssertedClaimRead {
+  id: string;
+  document_id: string;
+  entry_id: string;
+  claim_number: number;
+  created_at: string;
+}
+
 export interface AnnotationRead {
   id: string;
   document_id: string;

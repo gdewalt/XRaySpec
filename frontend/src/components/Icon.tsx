@@ -5,7 +5,7 @@ export type IconName =
   | "chevron-right" | "chevron-up" | "circle-info" | "copy" | "download"
   | "columns" | "file" | "file-text" | "folder" | "import" | "library"
   | "highlighter" | "link" | "lock" | "log-out" | "message-square" | "moon" | "more-horizontal"
-  | "mouse-pointer" | "panel-left" | "pencil" | "plus" | "quote" | "refresh"
+  | "mouse-pointer" | "panel-left" | "pencil" | "plus" | "quote" | "refresh" | "flag"
   | "rotate-cw" | "scan" | "search" | "settings" | "sun" | "text" | "trash" | "upload"
   | "zoom-in" | "zoom-out";
 
@@ -24,6 +24,7 @@ const PATHS: Record<IconName, string[]> = {
   file: ["M6 2h8l4 4v16H6z", "M14 2v5h5"],
   "file-text": ["M6 2h8l4 4v16H6z", "M14 2v5h5", "M9 13h6", "M9 17h6"],
   folder: ["M3 6h7l2 2h9v11H3z"],
+  flag: ["M5 22V4", "M5 4h11l-2 4 2 4H5"],
   highlighter: ["m9 11-6 6v4h4l6-6", "m15 13 5-5-4-4-5 5", "M7 21h13"],
   import: ["M12 3v12", "m7 10 5 5 5-5", "M4 21h16"],
   link: ["M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71", "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"],

@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import (
     Annotation,
+    AssertedClaim,
     Bookmark,
     ExtractionArtifact,
     ExtractionJob,
@@ -40,6 +41,7 @@ async def purge_document(session: AsyncSession, store: ObjectStore, doc: UserDoc
     The caller must have already revoked access (set ``state='deleted'``).
     """
     await session.execute(delete(Bookmark).where(Bookmark.document_id == doc.id))
+    await session.execute(delete(AssertedClaim).where(AssertedClaim.document_id == doc.id))
     await session.execute(delete(Annotation).where(Annotation.document_id == doc.id))
     await session.execute(delete(PdfAnnotation).where(PdfAnnotation.document_id == doc.id))
     await session.execute(

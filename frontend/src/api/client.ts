@@ -5,6 +5,7 @@ import { getToken } from "../auth/session";
 import type {
   AnnotationRead,
   ArtifactEntries,
+  AssertedClaimRead,
   BookmarkRead,
   DocumentList,
   DocumentRead,
@@ -123,6 +124,16 @@ export const api = {
       jsonInit("POST", { entry_id, label: label ?? null }),
     ),
   deleteBookmark: (id: string) => request<void>(`/api/v1/bookmarks/${id}`, { method: "DELETE" }),
+
+  listAssertedClaims: (docId: string) =>
+    request<AssertedClaimRead[]>(`/api/v1/documents/${docId}/asserted-claims`),
+  upsertAssertedClaim: (docId: string, entry_id: string, claim_number: number) =>
+    request<AssertedClaimRead>(
+      `/api/v1/documents/${docId}/asserted-claims`,
+      jsonInit("PUT", { entry_id, claim_number }),
+    ),
+  deleteAssertedClaim: (id: string) =>
+    request<void>(`/api/v1/asserted-claims/${id}`, { method: "DELETE" }),
 
   listAnnotations: (docId: string) =>
     request<AnnotationRead[]>(`/api/v1/documents/${docId}/annotations`),

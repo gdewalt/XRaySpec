@@ -250,6 +250,23 @@ class Bookmark(Base):
     created_at: Mapped[datetime] = _ts()
 
 
+class AssertedClaim(Base):
+    """A claim the user has marked as asserted for a particular document."""
+
+    __tablename__ = "asserted_claims"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("acl"))
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    document_id: Mapped[str] = mapped_column(ForeignKey("user_documents.id"), index=True)
+    entry_id: Mapped[str] = mapped_column(String)
+    claim_number: Mapped[int] = mapped_column()
+    created_at: Mapped[datetime] = _ts()
+
+    __table_args__ = (
+        UniqueConstraint("document_id", "entry_id", name="uq_asserted_claim_entry"),
+    )
+
+
 class Annotation(Base):
     """User annotation targeting a stable artifact ``entry_id`` (DESIGN.md §7)."""
 
