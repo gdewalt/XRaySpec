@@ -125,6 +125,32 @@ describe("outline + scopes", () => {
   it("finds where claims begin", () => {
     expect(claimsStartOrdinal(entries)).toBe(3);
   });
+  it("recognizes the grant claims wording used by US 11,806,584", () => {
+    const patent = [
+      grant(0, 1, "DETAILED DESCRIPTION"),
+      grant(1, 42, "The invention claimed is:", 18),
+      grant(2, 43, "1. A method for managing access to a resource.", 18),
+      grant(3, 51, "2. The method of claim 1, wherein the resource is shared.", 18),
+      grant(4, 59, "3. The method of claim 2, further comprising receiving a request.", 18),
+    ];
+
+    expect(claimsStartOrdinal(patent)).toBe(1);
+    expect(detectClaims(patent).map((item) => item.label)).toEqual([
+      "Claim 1",
+      "Claim 2",
+      "Claim 3",
+    ]);
+  });
+  it("recognizes a claims introduction wrapped across adjacent printed lines", () => {
+    const patent = [
+      grant(0, 40, "The invention", 18),
+      grant(1, 41, "claimed is:", 18),
+      grant(2, 42, "1. A system comprising a processor.", 18),
+    ];
+
+    expect(claimsStartOrdinal(patent)).toBe(0);
+    expect(detectClaims(patent).map((item) => item.label)).toEqual(["Claim 1"]);
+  });
   it("lists sequentially numbered claims and ignores stray numbers", () => {
     const withClaims = [
       grant(0, 1, "The invention relates to 1. widgets in prose."),

@@ -90,7 +90,10 @@ export function buildFigureOutline(
 // plus a few well-known single-word headings.
 const HEADING_RE = /^[A-Z][A-Z0-9 ,.'()\-/&]{3,58}$/;
 const SINGLE_WORD_HEADINGS = new Set(["ABSTRACT", "CLAIMS", "BACKGROUND", "SUMMARY", "DRAWINGS"]);
-const CLAIMS_START = /^(claims?|what is claimed|i claim)\b/i;
+// Patent grants use several stock introductions for the claims. In
+// particular, newer grants commonly say "The invention claimed is:" rather
+// than "What is claimed is:".
+const CLAIMS_START = /^(?:claims?|what is claimed(?:\s+is)?|the invention claimed is|the invention is claimed as follows|the following is claimed|i claim|we claim)\b/i;
 const SPECIFICATION_HEADING = new RegExp(
   `^(?:${[
     "field\\s+of\\s+the\\s+invention",
@@ -186,8 +189,18 @@ export type SearchScope = "all" | "claims" | "figures";
 
 /** The ordinal where the claims section begins, or null if none is detected. */
 export function claimsStartOrdinal(entries: EntryDto[]): number | null {
-  for (const e of entries) {
-    if (CLAIMS_START.test(e.display_text.trim())) return e.ordinal;
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (CLAIMS_START.test(entry.display_text.trim())) return entry.ordinal;
+
+    // OCR can wrap the short introduction across two adjacent printed lines,
+    // e.g. "The invention" / "claimed is:". Match that without joining text
+    // across pages or columns.
+    const next = entries[index + 1];
+    if (next && adjacentHeadingLine(entry, next)) {
+      const joined = `${entry.display_text.trim()} ${next.display_text.trim()}`;
+      if (CLAIMS_START.test(joined)) return entry.ordinal;
+    }
   }
   return null;
 }
