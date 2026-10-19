@@ -16,7 +16,7 @@ from dataclasses import replace
 
 from ..config import get_settings
 from ..db.models import ExtractionJob, SourceDocument, UserDocument
-from ..enrichment.google_text import ProviderText, extract_provider_text
+from ..enrichment.google_text import ProviderText, extract_claim_numbers, extract_provider_text
 from ..extraction.artifact import Artifact, PatentFrontMatter
 from ..extraction.config import ExtractionConfig
 from ..fetch.adapter import RestrictedFetcher
@@ -249,6 +249,12 @@ async def _enrich_artifact(
             selected_provider = google_provider
         aligned_count = _aligned_count(aligned)
 
+    provider_claim_numbers = (
+        list(extract_claim_numbers(selected_provider.claims))
+        if selected_provider is not None
+        else []
+    )
+
     # PPUBS is authoritative for specification wording, but its text endpoint
     # does not consistently carry the abstract/front-page metadata. Fill that
     # display-only preface from a verified Google page when available without
@@ -287,6 +293,7 @@ async def _enrich_artifact(
         "identity_status": identity.status,
         "aligned_lines": aligned_count,
         "text_provider": provider_name,
+        "provider_claim_numbers": provider_claim_numbers,
     }
     return replace(
         artifact,

@@ -40,6 +40,7 @@ def _artifact():
     artifact = extract_from_pages([Page(0, words)], DEFAULT_CONFIG, source_sha256="abc")
     return replace(
         artifact,
+        quality={**artifact.quality, "provider_claim_numbers": [1, 2, 3]},
         front_matter=PatentFrontMatter(
             title="A useful patent",
             patent_number="US1234567B2",
@@ -84,6 +85,7 @@ async def test_get_artifact_entries(client, make_token, auth):
         "metadata": [{"label": "Inventor", "value": "Ada Example"}],
         "source": "google_patents",
     }
+    assert body["claim_numbers"] == [1, 2, 3]
     assert len(body["entries"]) >= 2
     assert body["entries"][0]["locator"] == {"column": 1, "printed_line": 1, "kind": "grant"}
     # Component-number callout identification is temporarily disabled, while

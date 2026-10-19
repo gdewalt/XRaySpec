@@ -21,6 +21,18 @@ from ..deps import CurrentUser, DbSession, Storage
 router = APIRouter(tags=["artifacts"])
 
 
+def _provider_claim_numbers(data: dict) -> list[int]:
+    quality = data.get("quality")
+    raw_numbers = quality.get("provider_claim_numbers") if isinstance(quality, dict) else None
+    if not isinstance(raw_numbers, list):
+        return []
+    return [
+        number
+        for number in raw_numbers
+        if isinstance(number, int) and not isinstance(number, bool) and 1 <= number <= 999
+    ]
+
+
 async def _owned_artifact(session, user, artifact_id: str) -> ExtractionArtifact:
     artifact = await session.get(ExtractionArtifact, artifact_id)
     if artifact is not None:
@@ -52,6 +64,7 @@ async def get_artifact_entries(
         disposition=data.get("disposition"),
         page_count=data.get("page_count"),
         warnings=data.get("warnings", []),
+        claim_numbers=_provider_claim_numbers(data),
         front_matter=data.get("front_matter"),
         entries=repair_serialized_display_overlaps(data.get("entries", [])),
         figure_mentions=data.get("figure_mentions", []),

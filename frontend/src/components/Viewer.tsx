@@ -431,7 +431,10 @@ export function Viewer({ documentId }: { documentId: string }) {
     () => buildFigureOutline(figureMentions, artifact?.figure_occurrences ?? []),
     [artifact?.figure_occurrences, figureMentions],
   );
-  const claims = useMemo(() => detectClaims(entries), [entries]);
+  const claims = useMemo(
+    () => detectClaims(entries, artifact?.claim_numbers ?? []),
+    [artifact?.claim_numbers, entries],
+  );
   const entryByOrdinal = useMemo(
     () => new Map(entries.map((entry) => [entry.ordinal, entry])),
     [entries],

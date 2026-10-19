@@ -187,8 +187,7 @@ export function searchEntries(entries: EntryDto[], query: string): number[] {
 
 export type SearchScope = "all" | "claims" | "figures";
 
-/** The ordinal where the claims section begins, or null if none is detected. */
-export function claimsStartOrdinal(entries: EntryDto[]): number | null {
+function explicitClaimsStartOrdinal(entries: EntryDto[]): number | null {
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
     if (CLAIMS_START.test(entry.display_text.trim())) return entry.ordinal;
@@ -205,29 +204,120 @@ export function claimsStartOrdinal(entries: EntryDto[]): number | null {
   return null;
 }
 
-const CLAIM_HEAD = /^(\d{1,3})\s*\.\s/;
+// Accept ordinary starts ("1. A method"), compact OCR ("1.A method"), and
+// number-only entries where the claim body begins on the following line. Do not
+// accept decimals such as "1.5".
+const CLAIM_HEAD = /^(\d{1,3})\s*\.(?:\s+|$|(?=[A-Za-z(]))/;
 
-/** Outline items for each numbered claim (sequentially numbered from the claims
- * section onward, which avoids matching stray "1." in prose). */
-export function detectClaims(entries: EntryDto[]): OutlineItem[] {
-  const start = claimsStartOrdinal(entries);
-  const items: OutlineItem[] = [];
-  let last = 0;
-  for (const e of entries) {
-    if (start !== null && e.ordinal < start) continue;
-    const m = CLAIM_HEAD.exec(e.display_text.trim());
-    if (m && Number(m[1]) === last + 1) {
-      last += 1;
-      items.push({
-        ordinal: e.ordinal,
-        label: `Claim ${last}`,
-        ref: refShort(e.locator),
-        kind: "claim",
-        claimNumber: last,
-      });
+type ClaimCandidate = {
+  entry: EntryDto;
+  entryIndex: number;
+  number: number;
+};
+
+function claimCandidate(entry: EntryDto, entryIndex: number): ClaimCandidate | null {
+  const match = CLAIM_HEAD.exec(entry.display_text.trim());
+  return match ? { entry, entryIndex, number: Number(match[1]) } : null;
+}
+
+function claimItem(candidate: ClaimCandidate): OutlineItem {
+  return {
+    ordinal: candidate.entry.ordinal,
+    label: `Claim ${candidate.number}`,
+    ref: refShort(candidate.entry.locator),
+    kind: "claim",
+    claimNumber: candidate.number,
+  };
+}
+
+function forwardClaims(entries: EntryDto[], start: number): ClaimCandidate[] {
+  const claims: ClaimCandidate[] = [];
+  let expected = 1;
+  entries.forEach((entry, entryIndex) => {
+    if (entry.ordinal < start) return;
+    const candidate = claimCandidate(entry, entryIndex);
+    if (candidate?.number === expected) {
+      claims.push(candidate);
+      expected += 1;
     }
+  });
+  return claims;
+}
+
+/** Find the strongest exact descending sequence that reaches claim 1.
+ *
+ * Numbered prose earlier in the specification is rejected unless it forms a
+ * complete sequence back to 1. Provider claim numbers, when available, further
+ * constrain and rank candidates. Without provider evidence, require at least
+ * two claims so an isolated trailing "1." cannot become a claims section.
+ */
+function backwardClaims(
+  entries: EntryDto[],
+  providerClaimNumbers: number[] = [],
+): ClaimCandidate[] {
+  const numbered = entries.flatMap((entry, entryIndex) => {
+    const candidate = claimCandidate(entry, entryIndex);
+    return candidate ? [candidate] : [];
+  });
+  const provider = [...new Set(providerClaimNumbers)]
+    .filter((number) => Number.isInteger(number) && number > 0)
+    .sort((left, right) => left - right);
+  const providerSet = new Set(provider);
+  const providerMax = provider.at(-1) ?? null;
+  let best: ClaimCandidate[] = [];
+
+  for (let tail = numbered.length - 1; tail >= 0; tail -= 1) {
+    const reverse = [numbered[tail]];
+    let expected = numbered[tail].number - 1;
+    for (let index = tail - 1; index >= 0 && expected >= 1; index -= 1) {
+      if (numbered[index].number !== expected) break;
+      reverse.push(numbered[index]);
+      expected -= 1;
+    }
+    if (expected !== 0) continue;
+
+    const sequence = reverse.reverse();
+    if (provider.length > 0 && sequence.some((claim) => !providerSet.has(claim.number))) {
+      continue;
+    }
+    if (provider.length === 0 && sequence.length < 2) continue;
+
+    const sequenceMax = sequence.at(-1)?.number ?? 0;
+    const bestMax = best.at(-1)?.number ?? 0;
+    const reachesProviderEnd = providerMax !== null && sequenceMax === providerMax;
+    const bestReachesProviderEnd = providerMax !== null && bestMax === providerMax;
+    const isBetter =
+      (reachesProviderEnd && !bestReachesProviderEnd) ||
+      (reachesProviderEnd === bestReachesProviderEnd && sequence.length > best.length) ||
+      (reachesProviderEnd === bestReachesProviderEnd &&
+        sequence.length === best.length &&
+        (sequence.at(-1)?.entryIndex ?? -1) > (best.at(-1)?.entryIndex ?? -1));
+    if (isBetter) best = sequence;
   }
-  return items;
+  return best;
+}
+
+/** The ordinal where the claims section begins, or null if none is detected. */
+export function claimsStartOrdinal(entries: EntryDto[]): number | null {
+  const explicit = explicitClaimsStartOrdinal(entries);
+  if (explicit !== null) return explicit;
+  return backwardClaims(entries)[0]?.entry.ordinal ?? null;
+}
+
+/** Outline items for each numbered claim, using a heading-first interpretation
+ * with a validated end-of-document sequence as the recovery path. */
+export function detectClaims(
+  entries: EntryDto[],
+  providerClaimNumbers: number[] = [],
+): OutlineItem[] {
+  const explicitStart = explicitClaimsStartOrdinal(entries);
+  const forward = explicitStart === null ? [] : forwardClaims(entries, explicitStart);
+  const backward = backwardClaims(entries, providerClaimNumbers);
+
+  // Prefer the heading-anchored interpretation unless the independently
+  // validated tail scan recovers more of the claims sequence.
+  const selected = backward.length > forward.length ? backward : forward;
+  return selected.map(claimItem);
 }
 
 /** Restrict entries to a search scope. Falls back to all when a scope is empty. */

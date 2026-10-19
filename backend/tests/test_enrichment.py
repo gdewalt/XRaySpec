@@ -8,6 +8,7 @@ from app.enrichment import (
     align_entries,
     enrich_from_page_html,
     enrich_from_ppubs_html,
+    extract_claim_numbers,
     extract_ppubs_text,
     extract_provider_text,
     repair_serialized_display_overlaps,
@@ -309,6 +310,22 @@ def test_extract_provider_text():
     assert "housing 104" in pt.description
     assert "method comprising" in pt.claims
     assert "housing 104" in pt.clean_text and "method comprising" in pt.clean_text
+
+
+def test_provider_claim_numbers_support_semantic_lines_and_flattened_ppubs_text():
+    assert extract_claim_numbers(
+        "1. A system comprising a processor.\n2. The system of claim 1.\n"
+        "3. The system of claim 2."
+    ) == (1, 2, 3)
+    assert extract_claim_numbers(
+        "1. A transport method. 2. The method of claim 1. 3. The method of claim 2."
+    ) == (1, 2, 3)
+
+
+def test_provider_claim_numbers_ignore_decimal_values_and_nonsequential_noise():
+    assert extract_claim_numbers(
+        "1. A mixture containing 2.5 percent additive. 2. The mixture of claim 1."
+    ) == (1, 2)
 
 
 def test_enrich_from_page_html_verified():

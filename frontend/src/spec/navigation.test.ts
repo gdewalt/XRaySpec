@@ -165,6 +165,70 @@ describe("outline + scopes", () => {
     expect(items.map((i) => i.claimNumber)).toEqual([1, 2, 3]);
     expect(items[0].ref).toBe("1:6");
   });
+  it("falls back to the longest backward sequence when the claims heading is missing", () => {
+    const patent = [
+      grant(0, 1, "1. First setup instruction."),
+      grant(1, 2, "2. Second setup instruction."),
+      grant(2, 40, "Description prose."),
+      grant(3, 50, "1. A system comprising a processor.", 18),
+      grant(4, 55, "additional limitations of the first claim", 18),
+      grant(5, 60, "2. The system of claim 1.", 18),
+      grant(6, 65, "3. The system of claim 2.", 18),
+    ];
+
+    expect(detectClaims(patent).map((item) => item.label)).toEqual([
+      "Claim 1",
+      "Claim 2",
+      "Claim 3",
+    ]);
+    expect(claimsStartOrdinal(patent)).toBe(3);
+  });
+  it("rejects an incomplete descending tail that never reaches claim 1", () => {
+    const patent = [
+      grant(0, 40, "Description prose."),
+      grant(1, 55, "7. A numbered appendix item.", 18),
+      grant(2, 60, "8. Another appendix item.", 18),
+    ];
+
+    expect(detectClaims(patent)).toEqual([]);
+    expect(claimsStartOrdinal(patent)).toBeNull();
+  });
+  it("supports compact and number-only claim starts", () => {
+    const patent = [
+      grant(0, 50, "The invention claimed is:", 18),
+      grant(1, 51, "1.A system comprising a processor.", 18),
+      grant(2, 58, "2.", 18),
+      grant(3, 59, "The system of claim 1, further comprising memory.", 18),
+    ];
+
+    expect(detectClaims(patent).map((item) => item.label)).toEqual(["Claim 1", "Claim 2"]);
+  });
+  it("uses provider evidence to validate a single-claim patent without a heading", () => {
+    const patent = [
+      grant(0, 40, "Description prose."),
+      grant(1, 60, "1. A single claim comprising a controller.", 18),
+    ];
+
+    expect(detectClaims(patent)).toEqual([]);
+    expect(detectClaims(patent, [1]).map((item) => item.label)).toEqual(["Claim 1"]);
+  });
+  it("prefers the full claims sequence over a shorter numbered tail", () => {
+    const patent = [
+      grant(0, 40, "1. A system.", 18),
+      grant(1, 45, "2. The system of claim 1.", 18),
+      grant(2, 50, "3. The system of claim 2.", 18),
+      grant(3, 55, "4. The system of claim 3.", 18),
+      grant(4, 60, "1. First certificate item.", 20),
+      grant(5, 65, "2. Second certificate item.", 20),
+    ];
+
+    expect(detectClaims(patent, [1, 2, 3, 4]).map((item) => item.label)).toEqual([
+      "Claim 1",
+      "Claim 2",
+      "Claim 3",
+      "Claim 4",
+    ]);
+  });
   it("scopes to claims from that ordinal", () => {
     const sub = scopedEntries(entries, "claims", new Set());
     expect(sub.map((e) => e.ordinal)).toEqual([3, 4]);

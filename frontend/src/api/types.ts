@@ -222,6 +222,7 @@ export interface ArtifactEntries {
   disposition: string | null;
   page_count: number | null;
   warnings: string[];
+  claim_numbers?: number[];
   front_matter?: PatentFrontMatterDto | null;
   entries: EntryDto[];
   figure_mentions: FigureMentionDto[];

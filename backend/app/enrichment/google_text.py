@@ -23,6 +23,8 @@ _ABSTRACT = re.compile(_SECTION.format(prop="abstract"), re.IGNORECASE | re.DOTA
 _TAG = re.compile(r"<[^>]+>")
 _WS = re.compile(r"\s+")
 _VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta"}
+_CLAIM_LINE = re.compile(r"^\s*(\d{1,3})\s*\.(?:\s+|$)", re.MULTILINE)
+_CLAIM_INLINE = re.compile(r"(?<![\d.])(\d{1,3})\s*\.\s+(?=[A-Z(])")
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +42,28 @@ class ProviderText:
         # between description and claims prevents that section boundary alone
         # from introducing a synthetic paragraph.
         return " ".join(p for p in (self.description, self.claims) if p)
+
+
+def extract_claim_numbers(claims: str) -> tuple[int, ...]:
+    """Return the leading sequential claim numbers in provider claims text.
+
+    Semantic claim containers normally survive as separate lines. PPUBS can
+    flatten ``<br>``-separated claims into one line, so a conservative inline
+    fallback recognizes only a number followed by sentence-like claim text.
+    """
+    matches = [int(match.group(1)) for match in _CLAIM_LINE.finditer(claims)]
+    if len(matches) <= 1:
+        inline = [int(match.group(1)) for match in _CLAIM_INLINE.finditer(claims)]
+        if len(inline) > len(matches):
+            matches = inline
+
+    sequential: list[int] = []
+    for number in matches:
+        if number == len(sequential) + 1:
+            sequential.append(number)
+        elif sequential and number <= sequential[-1]:
+            continue
+    return tuple(sequential)
 
 
 def _strip(fragment: str) -> str:
