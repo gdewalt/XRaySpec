@@ -239,6 +239,22 @@ def test_fuzzy_figure_prefixes_are_recovered_on_drawing_sheets():
     }
 
 
+def test_widely_spaced_drafting_figure_labels_are_recovered():
+    labels = ["FIlG..1", "FIlG.2", "FIG.3", "FlG.4", "FIlG.S", "FlG.6", "FIG.7"]
+    figures = []
+    for page_index, label in enumerate(labels, start=1):
+        figures.extend(
+            detect_figure_occurrences(
+                [Word(label, 0.40, 0.75, 0.58, 0.79, confidence=55.0)],
+                page_index=page_index,
+            )
+        )
+
+    assert [(figure.figure_id, figure.page_index) for figure in figures] == [
+        (str(figure_id), figure_id) for figure_id in range(1, 8)
+    ]
+
+
 def test_page_order_penalizes_an_unsupported_figure_outlier():
     figures = [
         FigureOccurrence("1", 1, (0.1, 0.2, 0.2, 0.3), confidence=95.0),

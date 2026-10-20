@@ -48,11 +48,12 @@ _DRAWING_FIG_REF = re.compile(
 )
 _FUZZY_DRAWING_FIG_REF = re.compile(
     # Common Tesseract damage in the label itself: F1G./FlG./FIC. and
-    # Fiqure/F1gure.  Keep this drawing-side only; specification references are
-    # aligned to provider text and should not need such a permissive prefix.
-    r"\b(?:F[1IilL|!][Gg6Cc][Ss5]?|F[iI1lL][gqG9][uoU0][rnR][eaE3][sS5]?)"
-    r"[.,;:'`]?\s*"
-    r"([0-9ILOilo]+(?:[A-Za-z]|\s+[A-Za-z](?![A-Za-z]))?)"
+    # FIlG. produced by widely spaced drafting lettering, and Fiqure/F1gure.
+    # Keep this drawing-side only; specification references are aligned to
+    # provider text and should not need such a permissive prefix.
+    r"\b(?:F[1IilL|!]{1,2}[Gg6Cc][Ss5]?|F[iI1lL][gqG9][uoU0][rnR][eaE3][sS5]?)"
+    r"[.,;:'`]*\s*"
+    r"([0-9ILOQSBZiloqsbz]+(?:[A-Za-z]|\s+[A-Za-z](?![A-Za-z]))?)"
 )
 _DRAWING_CALLOUT = re.compile(r"^[0-9ILOQSBZ]{2,4}[A-Z]?$", re.IGNORECASE)
 _DIGIT_CONFUSIONS = str.maketrans(
@@ -321,11 +322,19 @@ def detect_page_figure(words: list[Word]) -> str | None:
 def _drawing_figure_candidates(raw: str) -> set[str]:
     """Normalize drawing OCR, including common I/l/1 and O/0 confusions."""
     compact = re.sub(r"\s+", "", raw).upper()
-    candidates = {compact.translate(str.maketrans({"I": "1", "L": "1", "O": "0"}))}
-    if len(compact) > 1 and compact[-1].isalpha():
-        prefix = compact[:-1].translate(str.maketrans({"I": "1", "L": "1", "O": "0"}))
-        if prefix.isdigit():
-            candidates.add(f"{prefix}{compact[-1]}")
+    # Thin drafting numerals are commonly read as letters. Repeated alphabetic
+    # confusion glyphs (``sS`` for a single stylized 5) are another frequent
+    # artifact, but repeated real digits such as ``11`` must remain intact.
+    forms = {compact, re.sub(r"([A-Z])\1+", r"\1", compact)}
+    translation = str.maketrans(
+        {"I": "1", "L": "1", "O": "0", "Q": "0", "S": "5", "B": "8", "Z": "2"}
+    )
+    candidates = {form.translate(translation) for form in forms}
+    for form in forms:
+        if len(form) > 1 and form[-1].isalpha():
+            prefix = form[:-1].translate(translation)
+            if prefix.isdigit():
+                candidates.add(f"{prefix}{form[-1]}")
     return {candidate for candidate in candidates if re.fullmatch(r"\d+[A-Z]?", candidate)}
 
 
