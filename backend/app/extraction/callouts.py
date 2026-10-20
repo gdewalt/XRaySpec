@@ -43,7 +43,7 @@ _SHEET_HEADER = re.compile(r"\bsheet\s+\d+\s+(?:of|/)\s+\d+\b", re.IGNORECASE)
 _SPEC_TOKEN_TRIM = ".,;:()[]{}"
 _DRAWING_FIG_REF = re.compile(
     r"\b(?:FIGS?|FIGURES?)\s*\.?\s*"
-    r"([0-9ILOilo]+(?:[A-Za-z]|\s+[A-Za-z](?![A-Za-z]))?)",
+    r"([0-9ILOilo]+(?:[A-Za-z](?![A-Za-z])|\s+[A-Za-z](?![A-Za-z]))?)",
     re.IGNORECASE,
 )
 _FUZZY_DRAWING_FIG_REF = re.compile(
@@ -51,9 +51,9 @@ _FUZZY_DRAWING_FIG_REF = re.compile(
     # FIlG. produced by widely spaced drafting lettering, and Fiqure/F1gure.
     # Keep this drawing-side only; specification references are aligned to
     # provider text and should not need such a permissive prefix.
-    r"\b(?:F[1IilL|!]{1,2}[Gg6Cc][Ss5]?|F[iI1lL][gqG9][uoU0][rnR][eaE3][sS5]?)"
+    r"\b(?:F[1IilL|!]{1,2}[Gg6Cc][Ss5]?|[FfRrSs][iI1lL][gqG9][uoU0][rnR][eaEA3][sS5]?)"
     r"[.,;:'`]*\s*"
-    r"([0-9ILOQSBZiloqsbz]+(?:[A-Za-z]|\s+[A-Za-z](?![A-Za-z]))?)"
+    r"([0-9ILOQSBZFW|iloqsbzfw]+(?:[A-Za-z](?![A-Za-z])|\s+[A-Za-z](?![A-Za-z]))?)"
 )
 _DRAWING_CALLOUT = re.compile(r"^[0-9ILOQSBZ]{2,4}[A-Z]?$", re.IGNORECASE)
 _DIGIT_CONFUSIONS = str.maketrans(
@@ -327,7 +327,10 @@ def _drawing_figure_candidates(raw: str) -> set[str]:
     # artifact, but repeated real digits such as ``11`` must remain intact.
     forms = {compact, re.sub(r"([A-Z])\1+", r"\1", compact)}
     translation = str.maketrans(
-        {"I": "1", "L": "1", "O": "0", "Q": "0", "S": "5", "B": "8", "Z": "2"}
+        {
+            "I": "1", "L": "1", "|": "1", "W": "1", "O": "0", "Q": "0",
+            "S": "5", "B": "8", "Z": "2", "F": "7",
+        }
     )
     candidates = {form.translate(translation) for form in forms}
     for form in forms:
@@ -492,7 +495,11 @@ def _sequence_score_figures(
     for index, ((page, order_key), _occurrence) in enumerate(ordered):
         for previous in range(index):
             (previous_page, previous_key), _ = ordered[previous]
-            if previous_page > page or previous_key > order_key:
+            # Repeated recognition of the same identifier on a later sheet is
+            # not sequence progress. Requiring strict figure order lets the
+            # surrounding run distinguish a real FIGURE 40 from a high-quality
+            # OCR misread as a second FIGURE 5.
+            if previous_page > page or previous_key >= order_key:
                 continue
             candidate = (
                 lengths[previous] + 1,
@@ -502,11 +509,34 @@ def _sequence_score_figures(
                 lengths[index], weights[index] = candidate
                 parents[index] = previous
 
-    cursor = max(range(len(ordered)), key=lambda i: (lengths[i], weights[i]))
+    # Sequence length is decisive. For equal-length paths prefer the lower
+    # natural figure identifier, then the earlier terminal sheet, before OCR
+    # confidence. This prevents both a distant ``99`` outlier and a confidently
+    # hallucinated repeat near the end from displacing the coherent run.
+    cursor = max(
+        range(len(ordered)),
+        key=lambda i: (
+            lengths[i],
+            -ordered[i][0][1][0],
+            -ordered[i][0][1][1],
+            -ordered[i][0][0],
+            weights[i],
+        ),
+    )
     sequence_keys: set[tuple[int, tuple[int, int]]] = set()
     while cursor >= 0:
         sequence_keys.add(ordered[cursor][0])
         cursor = parents[cursor]
+
+    def sequence_violation(page: int, order_key: tuple[int, int]) -> int:
+        previous = [key for candidate_page, key in sequence_keys if candidate_page < page]
+        following = [key for candidate_page, key in sequence_keys if candidate_page > page]
+        violation = 0
+        if previous and order_key < max(previous):
+            violation = max(violation, max(previous)[0] - order_key[0])
+        if following and order_key > min(following):
+            violation = max(violation, order_key[0] - min(following)[0])
+        return violation
 
     rescored: list[FigureOccurrence] = []
     for occurrence in occurrences:
@@ -515,15 +545,42 @@ def _sequence_score_figures(
             rescored.append(occurrence)
             continue
         in_sequence = (occurrence.page_index, order_key) in sequence_keys
+        violation = 0 if in_sequence else sequence_violation(occurrence.page_index, order_key)
+        # Patent sheets sometimes place adjacent figures out of numerical order
+        # (for example 2/4 on one sheet and 3/5 on the next). Treat those small
+        # inversions gently while still rejecting a distant number hallucinated
+        # in the middle of an otherwise strong run.
+        adjustment = 0.04 if in_sequence else (-0.04 if violation <= 2 else -0.20)
         score = max(
             0.0,
-            min(1.0, (occurrence.detection_score or 0.0) + (0.04 if in_sequence else -0.20)),
+            min(1.0, (occurrence.detection_score or 0.0) + adjustment),
         )
         supported = occurrence.method.startswith("spec_")
         if score < (0.34 if supported else 0.70):
             continue
         rescored.append(replace(occurrence, detection_score=round(score, 3)))
-    return rescored
+
+    # When one identifier appears on several sheets, prefer its occurrence in
+    # the coherent sequence. This is the final guard against a caption such as
+    # FIGURE 40 being OCR'd as FIGURE 5 after the genuine FIGURE 5 was already
+    # seen near the beginning of the drawings.
+    sequence_by_id = {
+        occurrence.figure_id
+        for occurrence in rescored
+        if (
+            (key := _figure_order_key(occurrence.figure_id)) is not None
+            and (occurrence.page_index, key) in sequence_keys
+        )
+    }
+    return [
+        occurrence
+        for occurrence in rescored
+        if occurrence.figure_id not in sequence_by_id
+        or (
+            (key := _figure_order_key(occurrence.figure_id)) is not None
+            and (occurrence.page_index, key) in sequence_keys
+        )
+    ]
 
 
 def filter_figure_occurrences(
@@ -540,10 +597,18 @@ def filter_figure_occurrences(
     for occurrence in occurrences:
         normalized = re.sub(r"\s+", "", occurrence.figure_id).upper()
         exact = expected.get(normalized)
+        fuzzy_candidates = _drawing_figure_candidates(normalized)
+        # OCR frequently glues the first letter of an adjacent word to a
+        # numeric caption (``FIGURE 2PRIOR``) or mistakes the final digit for a
+        # letter (``50Q``). Consider the numeric base only while matching
+        # specification evidence so genuine subfigures remain distinct.
+        trailing = re.fullmatch(r"(\d+)[A-Z]", normalized)
+        if trailing:
+            fuzzy_candidates.add(trailing.group(1))
         fuzzy = next(
             (
                 expected[candidate]
-                for candidate in _drawing_figure_candidates(normalized)
+                for candidate in fuzzy_candidates
                 if candidate in expected
             ),
             None,
@@ -556,7 +621,8 @@ def filter_figure_occurrences(
             ocr *= 0.82
         support = 1.0 if exact else (0.82 if fuzzy else 0.0)
         score = 0.62 * ocr + 0.38 * support if support else 0.82 * ocr
-        if (support and score < 0.34) or (not support and score < 0.70):
+        minimum_supported = 0.30 if fuzzy and not exact else 0.34
+        if (support and score < minimum_supported) or (not support and score < 0.70):
             continue
         match_method = "spec_exact" if exact else ("spec_fuzzy" if fuzzy else "drawing_only")
         candidate = replace(
@@ -572,6 +638,35 @@ def filter_figure_occurrences(
         ):
             strongest[key] = candidate
     ordered = sorted(strongest.values(), key=lambda item: (item.page_index, item.figure_id))
+
+    # A tiny first-sheet caption is a common one-off OCR error (``FIGURE 1``
+    # read as ``FIGURE 2``). Correct it only when the specification starts with
+    # that missing identifier and the apparent next identifier is independently
+    # present on a later sheet. The duplicate is the corroboration; page order
+    # alone is not enough to rewrite a label.
+    expected_keys = sorted(
+        key for value in expected_ids if (key := _figure_order_key(value)) is not None
+    )
+    observed_keys = [_figure_order_key(item.figure_id) for item in ordered]
+    if expected_keys:
+        first_key = expected_keys[0]
+        next_key = (first_key[0] + 1, 0)
+        duplicates = [
+            index for index, key in enumerate(observed_keys) if key == next_key
+        ]
+        if first_key not in observed_keys and len(duplicates) >= 2:
+            earliest_index = min(duplicates, key=lambda index: ordered[index].page_index)
+            earliest = ordered[earliest_index]
+            if (
+                earliest.page_index == min(item.page_index for item in ordered)
+                and (earliest.confidence or 0.0) < 45.0
+            ):
+                canonical_first = expected.get(str(first_key[0]), str(first_key[0]))
+                ordered[earliest_index] = replace(
+                    earliest,
+                    figure_id=canonical_first,
+                    method="spec_sequence_corrected",
+                )
     return sorted(
         _sequence_score_figures(ordered),
         key=lambda item: (item.page_index, _figure_order_key(item.figure_id) or (0, 0)),
@@ -583,32 +678,67 @@ def infer_missing_figure_occurrences(
     drawing_sheet_pages: Iterable[int],
     expected_ids: set[str],
 ) -> list[FigureOccurrence]:
-    """Infer labels only for bounded runs of explicitly identified drawing sheets.
+    """Recover specification-supported labels omitted by drawing OCR.
 
-    A run is filled only when detected figures exist on both neighboring sheets
-    and the specification contains exactly one naturally ordered missing figure
-    per unlabeled sheet between those anchors. Nothing is inferred before the
-    first anchor, after the last anchor, or from page position alone.
+    Patent drawings commonly put several consecutive figures on one sheet and
+    sometimes hand-letter a caption that Tesseract cannot read.  Strong labels
+    on neighboring sheets still provide useful, bounded evidence.  Inference is
+    limited to identifiers explicitly found in the specification and to gaps
+    enclosed by drawing-sheet anchors; it never invents a new figure number.
     """
     result = list(occurrences)
     sheet_pages = sorted(set(drawing_sheet_pages))
-    if len(sheet_pages) < 3:
+    if not sheet_pages:
         return result
-
-    by_page: dict[int, list[FigureOccurrence]] = {}
-    detected_keys: set[tuple[int, int]] = set()
-    for occurrence in result:
-        key = _figure_order_key(occurrence.figure_id)
-        if key is None:
-            continue
-        by_page.setdefault(occurrence.page_index, []).append(occurrence)
-        detected_keys.add(key)
 
     expected_by_key = {
         key: re.sub(r"\s+", "", figure_id).upper()
         for figure_id in expected_ids
         if (key := _figure_order_key(figure_id)) is not None
     }
+
+    def state() -> tuple[dict[int, list[FigureOccurrence]], set[tuple[int, int]]]:
+        by_page: dict[int, list[FigureOccurrence]] = {}
+        detected: set[tuple[int, int]] = set()
+        for occurrence in result:
+            key = _figure_order_key(occurrence.figure_id)
+            if key is None:
+                continue
+            by_page.setdefault(occurrence.page_index, []).append(occurrence)
+            detected.add(key)
+        return by_page, detected
+
+    def score_from(*groups: list[FigureOccurrence]) -> float:
+        strengths = [
+            max((item.detection_score or 0.0 for item in group), default=0.0)
+            for group in groups
+            if group
+        ]
+        return round(min(0.65, min(strengths, default=0.55) * 0.65), 3)
+
+    def add(page_index: int, key: tuple[int, int], score: float) -> None:
+        nonlocal result
+        figure_id = expected_by_key.get(key)
+        if figure_id is None or any(
+            _figure_order_key(item.figure_id) == key for item in result
+        ):
+            return
+        result.append(
+            FigureOccurrence(
+                figure_id=figure_id,
+                page_index=page_index,
+                # There is no label box to highlight; this tiny valid sentinel is
+                # ignored by the viewer for sequence-inferred navigation targets.
+                box=(0.4999, 0.1000, 0.5001, 0.1002),
+                confidence=None,
+                detection_score=score,
+                method="sequence_inferred",
+            )
+        )
+
+    # First retain the original high-certainty rule: one missing identifier per
+    # blank sheet between exact natural-order anchors (including 14A/14B/14C).
+    by_page, detected_keys = state()
     index = 0
     while index < len(sheet_pages):
         if sheet_pages[index] in by_page:
@@ -620,48 +750,245 @@ def infer_missing_figure_occurrences(
         run_pages = sheet_pages[run_start:index]
         if run_start == 0 or index >= len(sheet_pages):
             continue
-
-        previous_page = sheet_pages[run_start - 1]
-        next_page = sheet_pages[index]
-        previous_items = by_page.get(previous_page, [])
-        next_items = by_page.get(next_page, [])
+        previous_items = by_page.get(sheet_pages[run_start - 1], [])
+        next_items = by_page.get(sheet_pages[index], [])
         previous_keys = [
             key for item in previous_items if (key := _figure_order_key(item.figure_id))
         ]
-        next_keys = [key for item in next_items if (key := _figure_order_key(item.figure_id))]
+        next_keys = [
+            key for item in next_items if (key := _figure_order_key(item.figure_id))
+        ]
         if not previous_keys or not next_keys:
             continue
         lower, upper = max(previous_keys), min(next_keys)
-        if lower >= upper:
-            continue
-
         candidates = [
-            (key, figure_id)
-            for key, figure_id in sorted(expected_by_key.items())
+            key for key in sorted(expected_by_key)
             if lower < key < upper and key not in detected_keys
         ]
-        if len(candidates) != len(run_pages):
+        if len(candidates) == len(run_pages):
+            score = score_from(previous_items, next_items)
+            for page_index, key in zip(run_pages, candidates, strict=True):
+                add(page_index, key, score)
+
+    # A blank run can represent several captions per sheet. Distribute missing
+    # numeric groups proportionally between the surrounding anchors, keeping all
+    # subfigures of the same base number on the same sheet.
+    by_page, detected_keys = state()
+    index = 0
+    while index < len(sheet_pages):
+        if sheet_pages[index] in by_page:
+            index += 1
+            continue
+        run_start = index
+        while index < len(sheet_pages) and sheet_pages[index] not in by_page:
+            index += 1
+        run_pages = sheet_pages[run_start:index]
+        if run_start == 0 or index >= len(sheet_pages):
+            # A leading sheet is still bounded by the document's first expected
+            # figure and the first detected label. Require one numeric group per
+            # sheet so a weak first-page guess cannot fan out.
+            if run_start == 0 and index < len(sheet_pages):
+                next_items = by_page.get(sheet_pages[index], [])
+                next_keys = [
+                    key for item in next_items
+                    if (key := _figure_order_key(item.figure_id))
+                ]
+                if next_keys:
+                    candidates = [
+                        key for key in sorted(expected_by_key)
+                        if key < min(next_keys) and key not in detected_keys
+                    ]
+                    bases = sorted({key[0] for key in candidates})
+                    if len(bases) == len(run_pages):
+                        score = score_from(next_items)
+                        for page_index, base in zip(run_pages, bases, strict=True):
+                            for key in candidates:
+                                if key[0] == base:
+                                    add(page_index, key, score)
             continue
 
-        anchor_score = min(
-            max(item.detection_score or 0.0 for item in previous_items),
-            max(item.detection_score or 0.0 for item in next_items),
+        previous_items = by_page.get(sheet_pages[run_start - 1], [])
+        next_items = by_page.get(sheet_pages[index], [])
+        previous_bases = [
+            key[0] for item in previous_items
+            if (key := _figure_order_key(item.figure_id))
+        ]
+        next_bases = [
+            key[0] for item in next_items
+            if (key := _figure_order_key(item.figure_id))
+        ]
+        if not previous_bases or not next_bases:
+            continue
+        lower, upper = max(previous_bases), min(next_bases)
+        if lower >= upper:
+            continue
+        candidates = [
+            key for key in sorted(expected_by_key)
+            if lower < key[0] < upper and key not in detected_keys
+        ]
+        bases = sorted({key[0] for key in candidates})
+        if not bases:
+            continue
+        score = score_from(previous_items, next_items)
+        sheet_span = len(run_pages) + 1
+        number_span = upper - lower
+        for base in bases:
+            offset = int(((base - lower) * sheet_span / number_span) + 0.5)
+            offset = min(len(run_pages), max(1, offset))
+            for key in candidates:
+                if key[0] == base:
+                    add(run_pages[offset - 1], key, score)
+
+    # A populated sheet can begin a short missing run and an immediately
+    # following blank sheet can finish it. This covers interleaved layouts such
+    # as 50/52-56 on one sheet followed by a hand-lettered 51 on the next.
+    by_page, detected_keys = state()
+    for position in range(1, len(sheet_pages) - 2):
+        previous_page = sheet_pages[position - 1]
+        current_page = sheet_pages[position]
+        if previous_page not in by_page or current_page not in by_page:
+            continue
+        next_position = position + 1
+        while next_position < len(sheet_pages) and sheet_pages[next_position] not in by_page:
+            next_position += 1
+        blank_pages = sheet_pages[position + 1 : next_position]
+        if not blank_pages or next_position >= len(sheet_pages):
+            continue
+        next_page = sheet_pages[next_position]
+        previous_items = by_page[previous_page]
+        current_items = by_page[current_page]
+        next_items = by_page[next_page]
+        previous_bases = [
+            key[0] for item in previous_items
+            if (key := _figure_order_key(item.figure_id))
+        ]
+        current_bases = [
+            key[0] for item in current_items
+            if (key := _figure_order_key(item.figure_id))
+        ]
+        next_bases = [
+            key[0] for item in next_items
+            if (key := _figure_order_key(item.figure_id))
+        ]
+        if not previous_bases or not current_bases or not next_bases:
+            continue
+        if min(next_bases) != max(current_bases) + 1:
+            continue
+        candidates = [
+            key for key in sorted(expected_by_key)
+            if max(previous_bases) < key[0] < min(current_bases)
+            and key not in detected_keys
+        ]
+        bases = sorted({key[0] for key in candidates})
+        if len(bases) != len(blank_pages) + 1:
+            continue
+        score = score_from(previous_items, current_items, next_items)
+        target_pages = [current_page, *blank_pages]
+        for page_index, base in zip(target_pages, bases, strict=True):
+            for key in candidates:
+                if key[0] == base:
+                    add(page_index, key, score)
+
+    # Some layouts deliberately continue an earlier numerical group on the next
+    # otherwise blank sheet. If the following sheet begins exactly after the
+    # prior sheet's range, assign a single specification-supported hole to that
+    # intervening blank sheet.
+    by_page, detected_keys = state()
+    for position in range(1, len(sheet_pages) - 1):
+        page = sheet_pages[position]
+        if page in by_page:
+            continue
+        previous_items = by_page.get(sheet_pages[position - 1], [])
+        next_items = by_page.get(sheet_pages[position + 1], [])
+        previous_bases = sorted(
+            {
+                key[0] for item in previous_items
+                if (key := _figure_order_key(item.figure_id))
+            }
         )
-        inferred_score = round(min(0.65, anchor_score * 0.65), 3)
-        for page_index, (key, figure_id) in zip(run_pages, candidates, strict=True):
-            inferred = FigureOccurrence(
-                figure_id=figure_id,
-                page_index=page_index,
-                # There is no label box to highlight; this tiny valid sentinel is
-                # ignored by the viewer for sequence-inferred navigation targets.
-                box=(0.4999, 0.1000, 0.5001, 0.1002),
-                confidence=None,
-                detection_score=inferred_score,
-                method="sequence_inferred",
+        next_bases = sorted(
+            {
+                key[0] for item in next_items
+                if (key := _figure_order_key(item.figure_id))
+            }
+        )
+        if not previous_bases or not next_bases or next_bases[0] != previous_bases[-1] + 1:
+            continue
+        holes = [
+            key for key in sorted(expected_by_key)
+            if previous_bases[0] <= key[0] <= previous_bases[-1]
+            and key not in detected_keys
+        ]
+        if len({key[0] for key in holes}) == 1:
+            score = score_from(previous_items, next_items)
+            for key in holes:
+                add(page, key, score)
+
+    # Finally fill internal holes on a multi-figure sheet, except when that ID
+    # was already recovered elsewhere (important for interleaved 2/4 and 3/5
+    # layouts on adjacent sheets).
+    by_page, detected_keys = state()
+    for page_index, items in by_page.items():
+        bases = sorted(
+            {
+                key[0] for item in items
+                if (key := _figure_order_key(item.figure_id))
+            }
+        )
+        if len(bases) < 2:
+            continue
+        score = score_from(items)
+        for key in sorted(expected_by_key):
+            if bases[0] < key[0] < bases[-1] and key not in detected_keys:
+                add(page_index, key, score)
+
+    # Consecutive populated sheets can still have a short numerical gap when a
+    # caption on the first sheet is handwritten or omitted by OCR. Assign those
+    # intervening specification IDs to the preceding sheet; a longer interleaved
+    # run with a blank sheet was already handled above.
+    by_page, detected_keys = state()
+    for current_page, next_page in zip(sheet_pages, sheet_pages[1:], strict=False):
+        current_items = by_page.get(current_page, [])
+        next_items = by_page.get(next_page, [])
+        if not current_items or not next_items:
+            continue
+        current_bases = [
+            key[0] for item in current_items
+            if (key := _figure_order_key(item.figure_id))
+        ]
+        next_bases = [
+            key[0] for item in next_items
+            if (key := _figure_order_key(item.figure_id))
+        ]
+        if not current_bases or not next_bases or max(current_bases) >= min(next_bases):
+            continue
+        score = score_from(current_items, next_items)
+        for key in sorted(expected_by_key):
+            if (
+                max(current_bases) < key[0] < min(next_bases)
+                and key not in detected_keys
+            ):
+                add(current_page, key, score)
+
+    # If the specification refers to a base figure as well as its subfigures,
+    # let the base navigate to the first detected subfigure sheet.
+    by_page, detected_keys = state()
+    for key in sorted(expected_by_key):
+        if key[1] != 0 or key in detected_keys:
+            continue
+        subfigures = [
+            item
+            for items in by_page.values()
+            for item in items
+            if (
+                (item_key := _figure_order_key(item.figure_id)) is not None
+                and item_key[0] == key[0]
+                and item_key[1] > 0
             )
-            result.append(inferred)
-            by_page.setdefault(page_index, []).append(inferred)
-            detected_keys.add(key)
+        ]
+        if subfigures:
+            first = min(subfigures, key=lambda item: item.page_index)
+            add(first.page_index, key, score_from([first]))
 
     return sorted(
         result,

@@ -22,12 +22,17 @@ OcrPolicy = Literal["auto", "force", "disabled"]
 @dataclass(frozen=True, slots=True)
 class ExtractionConfig:
     # Engine identity
-    version: str = "0.18.0"
+    version: str = "0.19.0"
 
     # OCR
     ocr_policy: OcrPolicy = "auto"
     ocr_dpi: int = 300
     ocr_drawing_dpi: int = 400
+    # Patent drawing scans are often bilevel TIFFs. Rendering at 400 dpi keeps
+    # fine geometry, but feeding that dither pattern directly to Tesseract can
+    # make large, clean captions less legible. Run caption recognition over two
+    # downsampled views and fuse their labels in PDF coordinates.
+    ocr_drawing_label_dpis: tuple[int, ...] = (200, 150)
     ocr_languages: tuple[str, ...] = ("eng",)
     ocr_min_confidence: float = 0.0  # keep all non-empty tokens by default
     min_native_words_per_page: int = 15  # below this a page is treated as image-only

@@ -255,6 +255,15 @@ def test_widely_spaced_drafting_figure_labels_are_recovered():
     ]
 
 
+def test_adjacent_caption_word_is_not_attached_as_a_subfigure_suffix():
+    figures = detect_figure_occurrences(
+        [Word("FIGURE", 0.2, 0.3, 0.3, 0.34), Word("2PRIOR", 0.31, 0.3, 0.42, 0.34)],
+        page_index=3,
+    )
+
+    assert [figure.figure_id for figure in figures] == ["2"]
+
+
 def test_page_order_penalizes_an_unsupported_figure_outlier():
     figures = [
         FigureOccurrence("1", 1, (0.1, 0.2, 0.2, 0.3), confidence=95.0),
@@ -292,6 +301,178 @@ def test_missing_sheet_is_inferred_only_when_neighbors_and_specification_agree()
         detected, [10, 11, 12], {"14A", "14C"}
     )
     assert [figure.figure_id for figure in not_inferred] == ["14A", "14C"]
+
+
+def test_multiple_figure_groups_are_distributed_across_blank_sheets():
+    detected = [
+        FigureOccurrence(
+            "8", 8, (0.1, 0.2, 0.2, 0.3), detection_score=0.94, method="spec_exact"
+        ),
+        FigureOccurrence(
+            "12A", 11, (0.1, 0.2, 0.2, 0.3), detection_score=0.91, method="spec_exact"
+        ),
+    ]
+
+    inferred = infer_missing_figure_occurrences(
+        detected,
+        [8, 9, 10, 11],
+        {"8", "9", "9A", "9B", "10", "11", "12A"},
+    )
+    pages = {figure.figure_id: figure.page_index for figure in inferred}
+
+    assert pages == {
+        "8": 8,
+        "9": 9,
+        "9A": 9,
+        "9B": 9,
+        "10": 10,
+        "11": 10,
+        "12A": 11,
+    }
+
+
+def test_internal_multifigure_hole_is_assigned_to_that_sheet():
+    detected = [
+        FigureOccurrence(
+            str(value),
+            20,
+            (0.1, 0.2, 0.2, 0.3),
+            detection_score=0.9,
+            method="spec_exact",
+        )
+        for value in (37, 39, 40, 41)
+    ]
+
+    inferred = infer_missing_figure_occurrences(
+        detected, [20], {str(value) for value in range(37, 42)}
+    )
+
+    assert {figure.figure_id: figure.page_index for figure in inferred} == {
+        str(value): 20 for value in range(37, 42)
+    }
+
+
+def test_interleaved_figure_spills_to_the_blank_sheet_after_its_group():
+    detected = [
+        *[
+            FigureOccurrence(
+                str(value),
+                22,
+                (0.1, 0.2, 0.2, 0.3),
+                detection_score=0.9,
+                method="spec_exact",
+            )
+            for value in (50, 52, 53, 54, 55, 56)
+        ],
+        FigureOccurrence("57", 24, (0.1, 0.2, 0.2, 0.3), detection_score=0.9, method="spec_exact"),
+    ]
+
+    inferred = infer_missing_figure_occurrences(
+        detected, [22, 23, 24], {str(value) for value in range(50, 58)}
+    )
+    figure_51 = next(figure for figure in inferred if figure.figure_id == "51")
+
+    assert figure_51.page_index == 23
+    assert figure_51.method == "sequence_inferred"
+
+
+def test_sequence_keeps_small_sheet_inversion_and_drops_distant_duplicate():
+    figures = [
+        FigureOccurrence("2", 4, (0.1, 0.2, 0.2, 0.3), confidence=0.0),
+        FigureOccurrence("4", 4, (0.3, 0.2, 0.4, 0.3), confidence=0.0),
+        FigureOccurrence("3", 5, (0.1, 0.2, 0.2, 0.3), confidence=0.0),
+        FigureOccurrence("5", 5, (0.3, 0.2, 0.4, 0.3), confidence=0.0),
+        FigureOccurrence("5", 20, (0.1, 0.2, 0.2, 0.3), confidence=95.0),
+    ]
+
+    filtered = filter_figure_occurrences(figures, {"2", "3", "4", "5"})
+
+    assert {(figure.figure_id, figure.page_index) for figure in filtered} == {
+        ("2", 4),
+        ("4", 4),
+        ("3", 5),
+        ("5", 5),
+    }
+
+
+def test_first_sheet_duplicate_of_figure_two_is_corrected_to_figure_one():
+    figures = [
+        FigureOccurrence("2", 3, (0.1, 0.2, 0.2, 0.3), confidence=2.0),
+        FigureOccurrence("2", 4, (0.1, 0.2, 0.2, 0.3), confidence=80.0),
+        FigureOccurrence("3", 5, (0.1, 0.2, 0.2, 0.3), confidence=80.0),
+    ]
+
+    filtered = filter_figure_occurrences(figures, {"1", "2", "3"})
+
+    assert {(figure.figure_id, figure.page_index) for figure in filtered} == {
+        ("1", 3),
+        ("2", 4),
+        ("3", 5),
+    }
+
+
+def test_leading_gap_spans_populated_sheet_and_following_blank_sheet():
+    detected = [
+        FigureOccurrence("49", 21, (0.1, 0.2, 0.2, 0.3), detection_score=0.9, method="spec_exact"),
+        *[
+            FigureOccurrence(
+                str(value),
+                22,
+                (0.1, 0.2, 0.2, 0.3),
+                detection_score=0.9,
+                method="spec_exact",
+            )
+            for value in (52, 53, 54, 55, 56)
+        ],
+        FigureOccurrence("57", 24, (0.1, 0.2, 0.2, 0.3), detection_score=0.9, method="spec_exact"),
+    ]
+
+    inferred = infer_missing_figure_occurrences(
+        detected, [21, 22, 23, 24], {str(value) for value in range(49, 58)}
+    )
+    pages = {figure.figure_id: figure.page_index for figure in inferred}
+
+    assert pages["50"] == 22
+    assert pages["51"] == 23
+
+
+def test_short_gap_between_populated_sheets_is_assigned_to_preceding_sheet():
+    detected = [
+        FigureOccurrence("10", 10, (0.1, 0.2, 0.2, 0.3), detection_score=0.9, method="spec_exact"),
+        FigureOccurrence("12A", 11, (0.1, 0.2, 0.2, 0.3), detection_score=0.9, method="spec_exact"),
+    ]
+
+    inferred = infer_missing_figure_occurrences(
+        detected, [10, 11], {"10", "11", "12", "12A"}
+    )
+    pages = {figure.figure_id: figure.page_index for figure in inferred}
+
+    assert pages["11"] == 10
+    assert pages["12"] == 11
+
+
+def test_multiple_missing_captions_before_next_sheet_stay_on_dense_sheet():
+    detected = [
+        *[
+            FigureOccurrence(
+                str(value),
+                19,
+                (0.1, 0.2, 0.2, 0.3),
+                detection_score=0.9,
+                method="spec_exact",
+            )
+            for value in range(29, 35)
+        ],
+        FigureOccurrence("37", 20, (0.1, 0.2, 0.2, 0.3), detection_score=0.9, method="spec_exact"),
+    ]
+
+    inferred = infer_missing_figure_occurrences(
+        detected, [19, 20], {str(value) for value in range(29, 38)}
+    )
+    pages = {figure.figure_id: figure.page_index for figure in inferred}
+
+    assert pages["35"] == 19
+    assert pages["36"] == 19
 
 
 def test_drawing_figures_prefer_specification_ids_without_hard_filtering_clear_labels():

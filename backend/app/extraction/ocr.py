@@ -564,6 +564,40 @@ def ocr_drawing_words(
     figure_chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz."
     callout_chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
+    def label_image(image, dpi: int):
+        """Downsample bilevel drawings before caption recognition.
+
+        High-resolution rendering preserves fine drawing geometry, but the
+        source TIFF's dither becomes artificial strokes at 400 dpi.  Caption
+        OCR is markedly more reliable after a high-quality reduction while
+        normalized word coordinates remain unchanged.
+        """
+        from PIL import Image
+
+        ratio = min(1.0, dpi / max(1, config.ocr_drawing_dpi))
+        if ratio >= 0.999:
+            return image
+        return image.resize(
+            (max(1, round(image.width * ratio)), max(1, round(image.height * ratio))),
+            Image.Resampling.LANCZOS,
+        )
+
+    def canonical_label_words(words: list[Word]) -> list[Word]:
+        """Turn independently parsed captions into conflict-free OCR tokens."""
+        from .callouts import detect_figure_occurrences
+
+        return [
+            Word(
+                text=f"FIG.{occurrence.figure_id}",
+                x0=occurrence.box[0],
+                y0=occurrence.box[1],
+                x1=occurrence.box[2],
+                y1=occurrence.box[3],
+                confidence=occurrence.confidence,
+            )
+            for occurrence in detect_figure_occurrences(words, page_index)
+        ]
+
     def credible_figure(words: list[Word]) -> bool:
         from .callouts import detect_figure_occurrences
 
@@ -580,6 +614,11 @@ def ocr_drawing_words(
         such as ``Figure 14b`` while retaining enough width for long captions.
         """
         rotated = clean.rotate(rotation, expand=True, fillcolor=255)
+        # Tiles exist to simplify segmentation, not to preserve tiny callout
+        # geometry. Run them at the smallest caption scale to avoid feeding
+        # millions of dither pixels through each fallback invocation.
+        tile_dpi = min(config.ocr_drawing_label_dpis or (config.ocr_drawing_dpi,))
+        rotated = label_image(rotated, tile_dpi)
         tiled: list[Word] = []
         for y0 in (0.08, 0.30, 0.52, 0.70):
             crop = (0.04, y0, 0.96, min(0.97, y0 + 0.28))
@@ -601,12 +640,27 @@ def ocr_drawing_words(
 
     def orientation_pass(rotation: int) -> list[Word]:
         rotated = clean.rotate(rotation, expand=True, fillcolor=255)
-        figures = _tesseract_words(
-            rotated,
-            config,
-            psm=config.ocr_drawing_figure_psm,
-            thresholding_method=2,
-            char_whitelist=figure_chars,
+        figure_labels: list[Word] = []
+        raw_figure_candidates: list[list[Word]] = []
+        for dpi in config.ocr_drawing_label_dpis or (config.ocr_drawing_dpi,):
+            recognized = _tesseract_words(
+                label_image(rotated, dpi),
+                config,
+                psm=config.ocr_drawing_figure_psm,
+                thresholding_method=2,
+                char_whitelist=figure_chars,
+            )
+            restored = _unrotate_right_angle_words(recognized, rotation)
+            raw_figure_candidates.append(restored)
+            figure_labels.extend(canonical_label_words(restored))
+        figures = (
+            fuse_drawing_words(figure_labels)
+            if figure_labels
+            else max(
+                raw_figure_candidates,
+                key=lambda words: _candidate_score(words, config),
+                default=[],
+            )
         )
         callouts = (
             _tesseract_words(
@@ -619,7 +673,8 @@ def ocr_drawing_words(
             if config.callout_detection_enabled
             else []
         )
-        return fuse_drawing_words(_unrotate_right_angle_words([*figures, *callouts], rotation))
+        restored_callouts = _unrotate_right_angle_words(callouts, rotation)
+        return fuse_drawing_words([*figures, *restored_callouts])
 
     rotations = config.ocr_drawing_rotations or (0,)
     normal_candidates: list[list[Word]] = []
@@ -629,8 +684,8 @@ def ocr_drawing_words(
         if credible_figure(candidate):
             return _unrotate_words(candidate, prepared.deskew_angle, clean.size)
 
-    # Local tiles are substantially more expensive (eight Tesseract calls per
-    # orientation), so use them only after both full-page orientations fail.
+    # Local tiles require several extra Tesseract calls per orientation, so use
+    # them only after both full-page orientations fail.
     fallback_candidates: list[list[Word]] = []
     for index, rotation in enumerate(rotations):
         tiled = fuse_drawing_words(tiled_figure_pass(rotation))

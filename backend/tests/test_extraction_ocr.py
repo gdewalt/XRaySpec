@@ -160,7 +160,7 @@ def test_default_drawing_ocr_stops_after_credible_upright_label(monkeypatch):
     ocr_drawing_words(b"pdf", 0, DEFAULT_CONFIG)
 
     assert DEFAULT_CONFIG.ocr_drawing_rotations == (0, -90)
-    assert sizes == [(100, 120)]
+    assert sizes == [(50, 60), (38, 45)]
 
 
 def test_drawing_ocr_tries_clockwise_correction_after_upright_miss(monkeypatch):
@@ -179,7 +179,7 @@ def test_drawing_ocr_tries_clockwise_correction_after_upright_miss(monkeypatch):
     ):
         del psm, thresholding_method, char_whitelist
         sizes.append(candidate.size)
-        if candidate.size == (120, 100):
+        if candidate.width > candidate.height:
             return [Word("FIG.1", 0.1, 0.1, 0.2, 0.15, confidence=92.0)]
         return []
 
@@ -187,7 +187,36 @@ def test_drawing_ocr_tries_clockwise_correction_after_upright_miss(monkeypatch):
     words = ocr_drawing_words(b"pdf", 0, DEFAULT_CONFIG)
 
     assert any(word.text == "FIG.1" for word in words)
-    assert sizes == [(100, 120), (120, 100)]
+    assert sizes == [(50, 60), (38, 45), (60, 50), (45, 38)]
+
+
+def test_drawing_ocr_fuses_complementary_caption_scales(monkeypatch):
+    image = Image.new("L", (100, 120), 255)
+    monkeypatch.setattr(ocr_module, "render_page", lambda *_args: image)
+    monkeypatch.setattr(ocr_module, "preprocess_image", lambda value, _config: (value, 0.0))
+
+    def recognize(
+        candidate,
+        _config,
+        *,
+        psm,
+        thresholding_method,
+        char_whitelist=None,
+    ):
+        del psm, thresholding_method, char_whitelist
+        figure_id = "37" if candidate.width == 50 else "38"
+        return [Word(f"Figure{figure_id}", 0.1, 0.1, 0.3, 0.15, confidence=75.0)]
+
+    monkeypatch.setattr(ocr_module, "_tesseract_words", recognize)
+
+    words = ocr_drawing_words(
+        b"pdf", 0, replace(DEFAULT_CONFIG, ocr_drawing_rotations=(0,))
+    )
+
+    assert {figure.figure_id for figure in detect_figure_occurrences(words, 0)} == {
+        "37",
+        "38",
+    }
 
 
 def test_orientation_passes_deduplicate_the_same_label_by_confidence():
@@ -243,10 +272,11 @@ def test_drawing_ocr_runs_separate_figure_and_callout_profiles(monkeypatch):
     assert [word.text for word in words] == ["FIG.1", "104"]
     assert [psm for psm, _ in calls] == [
         config.ocr_drawing_figure_psm,
+        config.ocr_drawing_figure_psm,
         config.ocr_drawing_callout_psm,
     ]
     assert "." in (calls[0][1] or "")
-    assert "." not in (calls[1][1] or "")
+    assert "." not in (calls[2][1] or "")
 
 
 def test_drawing_ocr_falls_back_to_local_tiles_when_full_page_misses_figure(monkeypatch):
@@ -265,7 +295,7 @@ def test_drawing_ocr_falls_back_to_local_tiles_when_full_page_misses_figure(monk
     ):
         del thresholding_method, char_whitelist
         calls.append((psm, _image.size))
-        if _image.height < 50:
+        if _image.height < 35:
             return [Word("Fig12a", 0.1, 0.1, 0.3, 0.2, confidence=70.0)]
         return [Word("104", 0.4, 0.4, 0.5, 0.45, confidence=90.0)]
 
@@ -273,13 +303,15 @@ def test_drawing_ocr_falls_back_to_local_tiles_when_full_page_misses_figure(monk
     config = DEFAULT_CONFIG
     words = ocr_drawing_words(b"pdf", 0, config)
 
-    assert any("fig12a" in word.text.casefold() for word in words)
-    assert calls[:2] == [
-        (config.ocr_drawing_figure_psm, (100, 120)),
-        (config.ocr_drawing_figure_psm, (120, 100)),
+    assert {figure.figure_id for figure in detect_figure_occurrences(words, 0)} == {"12A"}
+    assert calls[:4] == [
+        (config.ocr_drawing_figure_psm, (50, 60)),
+        (config.ocr_drawing_figure_psm, (38, 45)),
+        (config.ocr_drawing_figure_psm, (60, 50)),
+        (config.ocr_drawing_figure_psm, (45, 38)),
     ]
     assert sum(
-        psm == config.ocr_drawing_figure_psm and height < 50
+        psm == config.ocr_drawing_figure_psm and height < 35
         for psm, (_width, height) in calls
     ) == 4
 
@@ -337,8 +369,8 @@ def test_drawing_ocr_skips_callout_profile_while_identification_is_disabled(monk
     config = replace(DEFAULT_CONFIG, ocr_drawing_rotations=(0,))
     words = ocr_drawing_words(b"pdf", 0, config)
 
-    assert [word.text for word in words] == ["Figure", "1"]
-    assert calls == [config.ocr_drawing_figure_psm]
+    assert [word.text for word in words] == ["FIG.1"]
+    assert calls == [config.ocr_drawing_figure_psm, config.ocr_drawing_figure_psm]
 
 
 def test_route_page_uses_separate_column_ocr_for_scanned_specification():

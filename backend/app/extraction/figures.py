@@ -17,7 +17,7 @@ from .artifact import Entry, FigureMention, NumeralMention
 
 # --- figure references -------------------------------------------------------
 
-_FIG_ID = r"\d+(?:[A-Za-z]|\s+[A-Za-z](?![A-Za-z]))?"
+_FIG_ID = r"\d+(?:[A-Za-z](?![A-Za-z])|\s+[A-Za-z](?![A-Za-z]))?"
 _FIG_REF = re.compile(
     rf"\b(?:FIGS?|FIGURES?)\s*\.?\s*"
     rf"({_FIG_ID}(?:\s*(?:[-–,]|and|to)\s*{_FIG_ID})*)",
