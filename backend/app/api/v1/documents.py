@@ -27,6 +27,7 @@ from ...db.models import (
     SourceDocument,
     UserDocument,
 )
+from ...extraction.config import DEFAULT_CONFIG
 from ...patents import PatentParseError, parse_patent_identifier
 from ...schemas.annotations import AnnotationCreate, AnnotationRead, AnnotationUpdate
 from ...schemas.asserted_claims import AssertedClaimRead, AssertedClaimUpsert
@@ -37,6 +38,7 @@ from ...schemas.overrides import OverrideRead, OverrideUpsert
 from ...schemas.pdf_annotations import PdfAnnotationCreate, PdfAnnotationRead
 from ...services.audit import record_audit
 from ...services.deletion import purge_document
+from ...services.publication import find_reusable_artifact
 from ..deps import CurrentUser, DbSession, Storage
 
 router = APIRouter(tags=["documents"])
@@ -64,24 +66,22 @@ def _document_read(document: UserDocument, patent_canonical: str | None = None) 
             patent_number = parse_patent_identifier(patent_canonical).display
         except PatentParseError:
             patent_number = patent_canonical
-    return DocumentRead.model_validate(document).model_copy(
-        update={"patent_number": patent_number}
-    )
+    return DocumentRead.model_validate(document).model_copy(update={"patent_number": patent_number})
 
 
 @router.post("/documents", response_model=DocumentRead, status_code=status.HTTP_201_CREATED)
 async def create_document(
-    body: DocumentCreate, user: CurrentUser, session: DbSession
+    body: DocumentCreate, user: CurrentUser, session: DbSession, store: Storage
 ) -> DocumentRead:
     """Create a document from a canonical patent identifier (fetch) or as a
     placeholder. Direct PDF uploads go through ``POST /uploads`` instead."""
     if body.source_type == "fetch":
-        return await _create_fetch_document(body, user, session)
+        return await _create_fetch_document(body, user, session, store)
     return await _create_placeholder_document(body, user, session)
 
 
 async def _create_fetch_document(
-    body: DocumentCreate, user: CurrentUser, session: DbSession
+    body: DocumentCreate, user: CurrentUser, session: DbSession, store: Storage
 ) -> DocumentRead:
     if not body.patent_identifier:
         raise HTTPException(
@@ -91,6 +91,56 @@ async def _create_fetch_document(
         identity = parse_patent_identifier(body.patent_identifier)
     except PatentParseError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"{exc.reason}: {exc.message}") from None
+
+    existing_sources = await session.scalars(
+        select(SourceDocument)
+        .where(
+            SourceDocument.owner_id == user.id,
+            SourceDocument.patent_canonical == identity.canonical,
+            SourceDocument.sha256.is_not(None),
+            SourceDocument.pdf_object_key.is_not(None),
+        )
+        .order_by(SourceDocument.created_at.desc())
+    )
+    for existing_source in existing_sources:
+        reusable = await find_reusable_artifact(
+            session,
+            store,
+            owner_id=user.id,
+            source_sha256=existing_source.sha256,
+            config_hash=DEFAULT_CONFIG.config_hash(),
+            max_bytes=get_settings().max_upload_bytes,
+        )
+        if reusable is None:
+            continue
+        prior_document = await session.scalar(
+            select(UserDocument)
+            .where(
+                UserDocument.source_id == reusable.source_id,
+                UserDocument.owner_id == user.id,
+                UserDocument.state != "deleted",
+            )
+            .order_by(UserDocument.created_at.desc())
+        )
+        doc = UserDocument(
+            owner_id=user.id,
+            source_id=reusable.source_id,
+            title=body.title or (prior_document.title if prior_document else identity.display),
+            active_artifact_id=reusable.artifact_id,
+            state=reusable.document_state,
+        )
+        session.add(doc)
+        await session.flush()
+        record_audit(
+            session,
+            actor_user_id=user.id,
+            action="document.create.reuse",
+            resource_class="user_document",
+            resource_id=doc.id,
+        )
+        await session.commit()
+        await session.refresh(doc)
+        return _document_read(doc, identity.canonical)
 
     source = SourceDocument(
         owner_id=user.id,
@@ -119,12 +169,18 @@ async def _create_fetch_document(
     await session.flush()
 
     record_audit(
-        session, actor_user_id=user.id, action="document.create",
-        resource_class="user_document", resource_id=doc.id,
+        session,
+        actor_user_id=user.id,
+        action="document.create",
+        resource_class="user_document",
+        resource_id=doc.id,
     )
     record_audit(
-        session, actor_user_id=user.id, action="job.create",
-        resource_class="extraction_job", resource_id=job.id,
+        session,
+        actor_user_id=user.id,
+        action="job.create",
+        resource_class="extraction_job",
+        resource_id=job.id,
     )
     await session.commit()
     await session.refresh(doc)
@@ -179,9 +235,7 @@ async def get_source_pdf(
 
 
 @router.get("/documents/{document_id}/job", response_model=JobRead)
-async def get_document_job(
-    document_id: str, user: CurrentUser, session: DbSession
-) -> JobRead:
+async def get_document_job(document_id: str, user: CurrentUser, session: DbSession) -> JobRead:
     """The document's most recent extraction job (DESIGN.md §10.2), so the UI can
     open its SSE progress stream. Owner-scoped via the document; 404 if the
     document isn't the caller's or has no job yet."""
@@ -225,9 +279,7 @@ async def delete_document(
 ) -> None:
     # Fetch regardless of state so a partially-purged document can be retried.
     doc = await session.scalar(
-        select(UserDocument).where(
-            UserDocument.id == document_id, UserDocument.owner_id == user.id
-        )
+        select(UserDocument).where(UserDocument.id == document_id, UserDocument.owner_id == user.id)
     )
     if doc is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
@@ -428,9 +480,7 @@ async def update_annotation(
     return AnnotationRead.model_validate(annotation)
 
 
-@router.get(
-    "/documents/{document_id}/pdf-annotations", response_model=list[PdfAnnotationRead]
-)
+@router.get("/documents/{document_id}/pdf-annotations", response_model=list[PdfAnnotationRead])
 async def list_pdf_annotations(
     document_id: str, user: CurrentUser, session: DbSession
 ) -> list[PdfAnnotationRead]:
@@ -468,9 +518,7 @@ async def create_pdf_annotation(
 
 
 @router.delete("/pdf-annotations/{annotation_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_pdf_annotation(
-    annotation_id: str, user: CurrentUser, session: DbSession
-) -> None:
+async def delete_pdf_annotation(annotation_id: str, user: CurrentUser, session: DbSession) -> None:
     annotation = await session.scalar(
         select(PdfAnnotation).where(
             PdfAnnotation.id == annotation_id, PdfAnnotation.owner_id == user.id

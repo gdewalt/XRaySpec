@@ -78,9 +78,7 @@ def test_ocr_quality_tracks_confidence_and_coverage():
 
 def test_adaptive_ocr_skips_retries_for_a_strong_first_pass(monkeypatch):
     calls: list[tuple[int, int]] = []
-    strong = [
-        Word(f"word{i}", 0.1, 0.1, 0.2, 0.2, confidence=92.0) for i in range(12)
-    ]
+    strong = [Word(f"word{i}", 0.1, 0.1, 0.2, 0.2, confidence=92.0) for i in range(12)]
 
     def recognize(_image, _config, *, psm, thresholding_method):
         calls.append((psm, thresholding_method))
@@ -101,9 +99,7 @@ def test_adaptive_ocr_skips_retries_for_a_strong_first_pass(monkeypatch):
 def test_adaptive_ocr_retries_weak_text_and_keeps_better_candidate(monkeypatch):
     calls: list[tuple[int, int]] = []
     weak = [Word("nolse", 0.1, 0.1, 0.2, 0.2, confidence=22.0)]
-    strong = [
-        Word(f"word{i}", 0.1, 0.1, 0.2, 0.2, confidence=94.0) for i in range(12)
-    ]
+    strong = [Word(f"word{i}", 0.1, 0.1, 0.2, 0.2, confidence=94.0) for i in range(12)]
 
     def recognize(_image, _config, *, psm, thresholding_method):
         calls.append((psm, thresholding_method))
@@ -141,7 +137,7 @@ def test_crop_and_rotation_coordinates_map_back_to_pdf_space():
     assert clockwise_restored.y1 == pytest.approx(0.30)
 
 
-def test_default_drawing_ocr_checks_only_upright_and_clockwise_correction(monkeypatch):
+def test_default_drawing_ocr_stops_after_credible_upright_label(monkeypatch):
     image = Image.new("L", (100, 120), 255)
     sizes: list[tuple[int, int]] = []
     monkeypatch.setattr(ocr_module, "render_page", lambda *_args: image)
@@ -163,6 +159,33 @@ def test_default_drawing_ocr_checks_only_upright_and_clockwise_correction(monkey
     ocr_drawing_words(b"pdf", 0, DEFAULT_CONFIG)
 
     assert DEFAULT_CONFIG.ocr_drawing_rotations == (0, -90)
+    assert sizes == [(100, 120)]
+
+
+def test_drawing_ocr_tries_clockwise_correction_after_upright_miss(monkeypatch):
+    image = Image.new("L", (100, 120), 255)
+    sizes: list[tuple[int, int]] = []
+    monkeypatch.setattr(ocr_module, "render_page", lambda *_args: image)
+    monkeypatch.setattr(ocr_module, "preprocess_image", lambda value, _config: (value, 0.0))
+
+    def recognize(
+        candidate,
+        _config,
+        *,
+        psm,
+        thresholding_method,
+        char_whitelist=None,
+    ):
+        del psm, thresholding_method, char_whitelist
+        sizes.append(candidate.size)
+        if candidate.size == (120, 100):
+            return [Word("FIG.1", 0.1, 0.1, 0.2, 0.15, confidence=92.0)]
+        return []
+
+    monkeypatch.setattr(ocr_module, "_tesseract_words", recognize)
+    words = ocr_drawing_words(b"pdf", 0, DEFAULT_CONFIG)
+
+    assert any(word.text == "FIG.1" for word in words)
     assert sizes == [(100, 120), (120, 100)]
 
 
@@ -205,7 +228,7 @@ def test_drawing_ocr_runs_separate_figure_and_callout_profiles(monkeypatch):
         del thresholding_method
         calls.append((psm, char_whitelist))
         if char_whitelist and "." in char_whitelist:
-            return [Word("FIG.", 0.1, 0.1, 0.2, 0.15, confidence=92.0)]
+            return [Word("FIG.1", 0.1, 0.1, 0.2, 0.15, confidence=92.0)]
         return [Word("104", 0.4, 0.4, 0.5, 0.45, confidence=94.0)]
 
     monkeypatch.setattr(ocr_module, "_tesseract_words", recognize)
@@ -216,7 +239,7 @@ def test_drawing_ocr_runs_separate_figure_and_callout_profiles(monkeypatch):
     )
     words = ocr_drawing_words(b"pdf", 0, config)
 
-    assert [word.text for word in words] == ["FIG.", "104"]
+    assert [word.text for word in words] == ["FIG.1", "104"]
     assert [psm for psm, _ in calls] == [
         config.ocr_drawing_figure_psm,
         config.ocr_drawing_callout_psm,
@@ -227,7 +250,7 @@ def test_drawing_ocr_runs_separate_figure_and_callout_profiles(monkeypatch):
 
 def test_drawing_ocr_falls_back_to_local_tiles_when_full_page_misses_figure(monkeypatch):
     image = Image.new("L", (100, 120), 255)
-    calls: list[int] = []
+    calls: list[tuple[int, tuple[int, int]]] = []
     monkeypatch.setattr(ocr_module, "render_page", lambda *_args: image)
     monkeypatch.setattr(ocr_module, "preprocess_image", lambda value, _config: (value, 0.0))
 
@@ -240,17 +263,21 @@ def test_drawing_ocr_falls_back_to_local_tiles_when_full_page_misses_figure(monk
         char_whitelist=None,
     ):
         del thresholding_method, char_whitelist
-        calls.append(psm)
+        calls.append((psm, _image.size))
         if psm == 6:
             return [Word("Fig12a", 0.1, 0.1, 0.3, 0.2, confidence=70.0)]
         return [Word("104", 0.4, 0.4, 0.5, 0.45, confidence=90.0)]
 
     monkeypatch.setattr(ocr_module, "_tesseract_words", recognize)
-    config = replace(DEFAULT_CONFIG, ocr_drawing_rotations=(0,))
+    config = DEFAULT_CONFIG
     words = ocr_drawing_words(b"pdf", 0, config)
 
     assert any("fig12a" in word.text.casefold() for word in words)
-    assert calls.count(6) == 8
+    assert calls[:2] == [
+        (config.ocr_drawing_figure_psm, (100, 120)),
+        (config.ocr_drawing_figure_psm, (120, 100)),
+    ]
+    assert sum(psm == 6 for psm, _size in calls) == 8
 
 
 def test_drawing_ocr_skips_callout_profile_while_identification_is_disabled(monkeypatch):
@@ -337,8 +364,14 @@ def test_route_page_reuses_one_render_for_full_and_column_ocr(monkeypatch):
         if psm == 3:
             return full_words
         return [
-            Word(f"column{index}", 0.10, 0.10 + index * 0.05, 0.30, 0.12 + index * 0.05,
-                 confidence=92.0)
+            Word(
+                f"column{index}",
+                0.10,
+                0.10 + index * 0.05,
+                0.30,
+                0.12 + index * 0.05,
+                confidence=92.0,
+            )
             for index in range(8)
         ]
 
@@ -477,16 +510,37 @@ def test_ocr_paragraph_hierarchy_alone_does_not_create_random_breaks():
         paragraph = 1 if i < 5 else 2
         words += [
             Word(
-                "line", 0.12, cy - 0.008, 0.20, cy + 0.008,
-                confidence=90.0, block_num=1, paragraph_num=paragraph, line_num=i + 1,
+                "line",
+                0.12,
+                cy - 0.008,
+                0.20,
+                cy + 0.008,
+                confidence=90.0,
+                block_num=1,
+                paragraph_num=paragraph,
+                line_num=i + 1,
             ),
             Word(
-                str(i), 0.22, cy - 0.008, 0.25, cy + 0.008,
-                confidence=90.0, block_num=1, paragraph_num=paragraph, line_num=i + 1,
+                str(i),
+                0.22,
+                cy - 0.008,
+                0.25,
+                cy + 0.008,
+                confidence=90.0,
+                block_num=1,
+                paragraph_num=paragraph,
+                line_num=i + 1,
             ),
             Word(
-                "right", 0.55, cy - 0.008, 0.66, cy + 0.008,
-                confidence=90.0, block_num=2, paragraph_num=1, line_num=i + 1,
+                "right",
+                0.55,
+                cy - 0.008,
+                0.66,
+                cy + 0.008,
+                confidence=90.0,
+                block_num=2,
+                paragraph_num=1,
+                line_num=i + 1,
             ),
         ]
         if (i + 1) % 5 == 0:

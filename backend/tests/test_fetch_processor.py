@@ -74,7 +74,7 @@ async def test_fetch_source_downloads_and_records(client):
         lease_seconds=30,
     )
     fetcher = FakeFetcher(HTML, PDF)
-    await fetch_source(ctx, job, fetcher=fetcher)
+    seed = await fetch_source(ctx, job, fetcher=fetcher)
 
     async with client.sessionmaker() as s:
         source = await s.get(SourceDocument, source_id)
@@ -85,6 +85,8 @@ async def test_fetch_source_downloads_and_records(client):
     # Resolved the page first, then the PDF.
     assert fetcher.calls[0].endswith("/en")
     assert fetcher.calls[1] == PDF_URL
+    assert seed.google_html == HTML.decode()
+    assert seed.ppubs_unavailable is True
 
 
 async def test_fetch_source_replaces_default_number_with_patent_title(client):

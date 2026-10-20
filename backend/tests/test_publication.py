@@ -10,7 +10,11 @@ from app.db.models import ExtractionArtifact, SourceDocument, User, UserDocument
 from app.extraction.config import DEFAULT_CONFIG
 from app.extraction.core import extract_from_pages
 from app.extraction.model import Page, Word
-from app.services.publication import publish_artifact
+from app.services.publication import (
+    find_reusable_artifact,
+    publish_artifact,
+    publish_reused_artifact,
+)
 
 
 def _artifact():
@@ -34,7 +38,12 @@ async def _seed(client) -> tuple[str, str, str]:
         user = User(subject=uuid.uuid4().hex, email="o@example.com")
         s.add(user)
         await s.flush()
-        source = SourceDocument(owner_id=user.id, source_type="upload", state="uploaded")
+        source = SourceDocument(
+            owner_id=user.id,
+            source_type="upload",
+            sha256="abc",
+            state="uploaded",
+        )
         s.add(source)
         await s.flush()
         doc = UserDocument(owner_id=user.id, source_id=source.id, title="t", state="processing")
@@ -77,13 +86,21 @@ async def test_reprocess_demotes_prior_active(client):
     doc_id, source_id, owner_id = await _seed(client)
     async with client.sessionmaker() as s:
         first = await publish_artifact(
-            s, client.object_store, document_id=doc_id, source_id=source_id,
-            owner_id=owner_id, artifact=_artifact(),
+            s,
+            client.object_store,
+            document_id=doc_id,
+            source_id=source_id,
+            owner_id=owner_id,
+            artifact=_artifact(),
         )
     async with client.sessionmaker() as s:
         second = await publish_artifact(
-            s, client.object_store, document_id=doc_id, source_id=source_id,
-            owner_id=owner_id, artifact=_artifact(),
+            s,
+            client.object_store,
+            document_id=doc_id,
+            source_id=source_id,
+            owner_id=owner_id,
+            artifact=_artifact(),
         )
 
     async with client.sessionmaker() as s:
@@ -93,3 +110,90 @@ async def test_reprocess_demotes_prior_active(client):
     assert old.is_active is False and old.is_rollback is True
     assert new.is_active is True
     assert doc.active_artifact_id == second
+
+
+async def test_matching_pdf_and_config_reuse_completed_artifact(client):
+    first_doc, first_source, owner_id = await _seed(client)
+    artifact = _artifact()
+    async with client.sessionmaker() as session:
+        first_artifact = await publish_artifact(
+            session,
+            client.object_store,
+            document_id=first_doc,
+            source_id=first_source,
+            owner_id=owner_id,
+            artifact=artifact,
+        )
+
+    async with client.sessionmaker() as session:
+        second_source = SourceDocument(
+            owner_id=owner_id,
+            source_type="upload",
+            sha256="abc",
+            state="uploaded",
+        )
+        session.add(second_source)
+        await session.flush()
+        second_doc = UserDocument(
+            owner_id=owner_id,
+            source_id=second_source.id,
+            title="same PDF",
+            state="processing",
+        )
+        session.add(second_doc)
+        await session.commit()
+        second_source_id = second_source.id
+        second_doc_id = second_doc.id
+
+    async with client.sessionmaker() as session:
+        reusable = await find_reusable_artifact(
+            session,
+            client.object_store,
+            owner_id=owner_id,
+            source_sha256="abc",
+            config_hash=DEFAULT_CONFIG.config_hash(),
+            exclude_source_id=second_source_id,
+            max_bytes=10_000_000,
+        )
+        assert reusable is not None
+        reused_id = await publish_reused_artifact(
+            session,
+            client.object_store,
+            document_id=second_doc_id,
+            source_id=second_source_id,
+            owner_id=owner_id,
+            reusable=reusable,
+        )
+
+    first_key = f"artifacts/{owner_id}/{first_artifact}.json.gz"
+    reused_key = f"artifacts/{owner_id}/{reused_id}.json.gz"
+    assert first_key != reused_key
+    assert client.object_store._objects[first_key] == client.object_store._objects[reused_key]
+    async with client.sessionmaker() as session:
+        second_doc = await session.get(UserDocument, second_doc_id)
+    assert second_doc.active_artifact_id == reused_id
+    assert second_doc.state == "ready"
+
+
+async def test_artifact_reuse_rejects_changed_config(client):
+    doc_id, source_id, owner_id = await _seed(client)
+    async with client.sessionmaker() as session:
+        await publish_artifact(
+            session,
+            client.object_store,
+            document_id=doc_id,
+            source_id=source_id,
+            owner_id=owner_id,
+            artifact=_artifact(),
+        )
+
+    async with client.sessionmaker() as session:
+        reusable = await find_reusable_artifact(
+            session,
+            client.object_store,
+            owner_id=owner_id,
+            source_sha256="abc",
+            config_hash="different",
+            max_bytes=10_000_000,
+        )
+    assert reusable is None

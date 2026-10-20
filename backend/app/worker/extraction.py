@@ -32,26 +32,7 @@ from .checkpoints import (
 from .engine import JobContext
 
 _CHECKPOINT_BATCH_SIZE = 4
-
-
-async def _route_page_with_lease(
-    ctx: JobContext,
-    route_page: Callable[..., PageResult],
-    pdf_bytes: bytes,
-    native_page: Page,
-    config: ExtractionConfig,
-    can_ocr: bool,
-) -> PageResult:
-    """Run CPU-bound page OCR while renewing the database lease."""
-    task = asyncio.create_task(
-        asyncio.to_thread(route_page, pdf_bytes, native_page, config, can_ocr)
-    )
-    interval = max(5.0, min(20.0, ctx.lease_seconds / 3))
-    while True:
-        done, _ = await asyncio.wait({task}, timeout=interval)
-        if task in done:
-            return await task
-        await ctx.heartbeat()
+_PAGE_WORKERS = 2
 
 
 async def run_extraction(
@@ -117,8 +98,11 @@ async def run_extraction(
         total_pages = len(native_pages)
         async with ctx.sessionmaker() as session:
             await save_source_ready(
-                session, owner_id=owner_id, source_id=source_id,
-                cache_key=cache_key, total_pages=total_pages,
+                session,
+                owner_id=owner_id,
+                source_id=source_id,
+                cache_key=cache_key,
+                total_pages=total_pages,
             )
 
         can_ocr = ocr_available()
@@ -130,45 +114,75 @@ async def run_extraction(
             unit="pages",
             indeterminate=False,
         )
-        results = []
+        results_by_index = {
+            page.index: cached[page.index] for page in native_pages if page.index in cached
+        }
         pending_checkpoints: list[PageResult] = []
         last_checkpoint_commit = time.monotonic()
         checkpoint_interval = max(5.0, min(20.0, ctx.lease_seconds / 3))
-        for done, native_page in enumerate(native_pages, start=1):
-            if native_page.index in cached:
-                results.append(cached[native_page.index])
-            else:
-                result = await _route_page_with_lease(
-                    ctx, route_page, pdf_bytes, native_page, config, can_ocr
-                )
-                results.append(result)
-                pending_checkpoints.append(result)
+        completed = len(results_by_index)
+        missing = [page for page in native_pages if page.index not in results_by_index]
+        worker_slots = asyncio.Semaphore(_PAGE_WORKERS)
 
-            # Commit checkpoints and their matching progress update together.
-            # Small batches retain durable resume points while avoiding two
-            # Supabase transactions for every page.
-            commit_due = (
-                done % _CHECKPOINT_BATCH_SIZE == 0
-                or done == total_pages
-                or time.monotonic() - last_checkpoint_commit >= checkpoint_interval
-            )
-            if commit_due:
-                async with ctx.sessionmaker() as session:
-                    for checkpoint in pending_checkpoints:
-                        await save_page_text(
-                            session,
-                            owner_id=owner_id,
-                            source_id=source_id,
-                            cache_key=cache_key,
-                            result=checkpoint,
-                            commit=False,
-                        )
-                    await ctx.heartbeat_in_session(session, completed_units=done)
-                    await session.commit()
-                pending_checkpoints.clear()
-                last_checkpoint_commit = time.monotonic()
+        async def compute(native_page: Page) -> PageResult:
+            async with worker_slots:
+                return await asyncio.to_thread(route_page, pdf_bytes, native_page, config, can_ocr)
+
+        tasks = {asyncio.create_task(compute(page)) for page in missing}
+        all_tasks = set(tasks)
+        try:
+            while tasks:
+                finished, tasks = await asyncio.wait(
+                    tasks,
+                    timeout=checkpoint_interval,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if not finished:
+                    await ctx.heartbeat(completed_units=completed)
+                    continue
+
+                for task in finished:
+                    result = await task
+                    results_by_index[result.page_index] = result
+                    pending_checkpoints.append(result)
+                    completed += 1
+
+                # Commit checkpoints and their matching progress update together.
+                # Small batches retain durable resume points while avoiding two
+                # Supabase transactions for every page.
+                commit_due = (
+                    len(pending_checkpoints) >= _CHECKPOINT_BATCH_SIZE
+                    or not tasks
+                    or time.monotonic() - last_checkpoint_commit >= checkpoint_interval
+                )
+                if commit_due:
+                    async with ctx.sessionmaker() as session:
+                        for checkpoint in pending_checkpoints:
+                            await save_page_text(
+                                session,
+                                owner_id=owner_id,
+                                source_id=source_id,
+                                cache_key=cache_key,
+                                result=checkpoint,
+                                commit=False,
+                            )
+                        await ctx.heartbeat_in_session(session, completed_units=completed)
+                        await session.commit()
+                    pending_checkpoints.clear()
+                    last_checkpoint_commit = time.monotonic()
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*all_tasks, return_exceptions=True)
+            raise
+
+        results = [results_by_index[page.index] for page in native_pages]
 
     return await asyncio.to_thread(
         assemble_from_results,
-        results, config, source_sha256=source_sha256, doc_type=doc_type, total_pages=total_pages,
+        results,
+        config,
+        source_sha256=source_sha256,
+        doc_type=doc_type,
+        total_pages=total_pages,
     )

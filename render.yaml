@@ -51,7 +51,7 @@ services:
   - type: worker
     name: xray-spec-worker
     runtime: docker
-    plan: 1c-2g
+    plan: 2c-4g
     region: oregon
     dockerfilePath: ./Dockerfile
     dockerContext: .

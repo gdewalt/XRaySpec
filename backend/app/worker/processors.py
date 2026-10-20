@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from ..config import get_settings
 from ..db.models import ExtractionJob, SourceDocument, UserDocument
@@ -23,10 +23,32 @@ from ..fetch.adapter import RestrictedFetcher
 from ..fetch.errors import FetchError
 from ..fetch.google_patents import extract_pdf_url, patent_page_url
 from ..fetch.guard import check_url
-from ..fetch.ppubs import PpubsClient
+from ..fetch.ppubs import PpubsClient, PpubsDocument
 from ..patents import PatentParseError, parse_patent_identifier
-from ..services.publication import publish_artifact
+from ..services.publication import (
+    find_reusable_artifact,
+    publish_artifact,
+    publish_reused_artifact,
+)
 from .engine import JobContext
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderFetchSeed:
+    """Provider work already completed while resolving the source PDF."""
+
+    ppubs_client: PpubsClient | None = None
+    ppubs_document: PpubsDocument | None = None
+    google_html: str | None = None
+    ppubs_unavailable: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderPages:
+    """Provider responses fetched once and reused by the enrichment stage."""
+
+    ppubs_html: str | None = None
+    google_html: str | None = None
 
 
 async def stub_processor(ctx: JobContext, job: ExtractionJob) -> None:
@@ -47,7 +69,7 @@ async def stub_processor(ctx: JobContext, job: ExtractionJob) -> None:
 
 async def fetch_source(
     ctx: JobContext, job: ExtractionJob, *, fetcher: RestrictedFetcher | None = None
-) -> None:
+) -> ProviderFetchSeed:
     """Download the source PDF for a fetch job through the restricted adapter.
 
     Resolves and downloads the official PPUBS PDF first, with Google Patents as a
@@ -77,6 +99,10 @@ async def fetch_source(
         document = await ppubs.resolve(identity)
         pdf = await ppubs.fetch_pdf(document, max_bytes=settings.fetch_max_pdf_bytes)
         provider_title = document.title
+        provider_seed = ProviderFetchSeed(
+            ppubs_client=ppubs,
+            ppubs_document=document,
+        )
     except (FetchError, PatentParseError):
         page = await fetcher.fetch(
             patent_page_url(canonical), max_bytes=settings.fetch_max_html_bytes
@@ -87,6 +113,10 @@ async def fetch_source(
         check_url(pdf_url, allowed)  # the PDF URL must also be on the allowlist
         pdf = await fetcher.fetch(pdf_url, max_bytes=settings.fetch_max_pdf_bytes, expect_pdf=True)
         provider_title = provider.title
+        provider_seed = ProviderFetchSeed(
+            google_html=page_html,
+            ppubs_unavailable=True,
+        )
 
     key = f"sources/{owner_id}/{source_id}.pdf"
     await ctx.store.write(key, pdf.content, content_type="application/pdf")
@@ -106,6 +136,7 @@ async def fetch_source(
             if doc.title == default_title:
                 doc.title = provider_title.strip()
         await session.commit()
+    return provider_seed
 
 
 async def extraction_processor(
@@ -114,8 +145,9 @@ async def extraction_processor(
     """Full pipeline: fetch the source if needed, run the native extraction core,
     align it to the provider's clean text, and atomically publish the immutable
     artifact (DESIGN.md §9.2, §12, §13)."""
+    provider_seed: ProviderFetchSeed | None = None
     if await _needs_fetch(ctx, job):
-        await fetch_source(ctx, job, fetcher=fetcher)
+        provider_seed = await fetch_source(ctx, job, fetcher=fetcher)
 
     async with ctx.sessionmaker() as session:
         doc = await session.get(UserDocument, job.document_id) if job.document_id else None
@@ -131,23 +163,74 @@ async def extraction_processor(
 
     settings = get_settings()
     pdf_bytes = await ctx.store.read(pdf_key, limit=settings.max_upload_bytes)
+    source_sha256 = hashlib.sha256(pdf_bytes).hexdigest()
 
     from ..extraction.config import DEFAULT_CONFIG
     from .extraction import run_extraction
 
+    if source_sha256:
+        async with ctx.sessionmaker() as session:
+            reusable = await find_reusable_artifact(
+                session,
+                ctx.store,
+                owner_id=owner_id,
+                source_sha256=source_sha256,
+                config_hash=DEFAULT_CONFIG.config_hash(),
+                max_bytes=settings.max_upload_bytes,
+            )
+        if reusable is not None:
+            await ctx.heartbeat(
+                stage="persisting_artifact",
+                stage_label="Reusing completed extraction",
+                indeterminate=True,
+            )
+            async with ctx.sessionmaker() as session:
+                await publish_reused_artifact(
+                    session,
+                    ctx.store,
+                    document_id=job.document_id,
+                    source_id=source_id,
+                    owner_id=owner_id,
+                    reusable=reusable,
+                )
+            return
+
+    provider_task: asyncio.Task[ProviderPages] | None = None
+    if settings.enrichment_enabled and canonical:
+        provider_task = asyncio.create_task(
+            _fetch_provider_pages(
+                canonical,
+                fetcher=fetcher,
+                seed=provider_seed,
+            )
+        )
+
     # Resume-aware: reuse valid page_text checkpoints, recompute the rest, then
     # recompute the fast downstream pipeline fresh (§10.6–10.7).
-    artifact = await run_extraction(
-        ctx,
-        pdf_bytes=pdf_bytes,
-        source_id=source_id,
-        owner_id=owner_id,
-        config=DEFAULT_CONFIG,
-        doc_type=doc_type,
-    )
+    try:
+        artifact = await run_extraction(
+            ctx,
+            pdf_bytes=pdf_bytes,
+            source_id=source_id,
+            owner_id=owner_id,
+            config=DEFAULT_CONFIG,
+            doc_type=doc_type,
+        )
+        provider_pages = await provider_task if provider_task is not None else None
+    except BaseException:
+        if provider_task is not None:
+            provider_task.cancel()
+            await asyncio.gather(provider_task, return_exceptions=True)
+        raise
 
     artifact = await _enrich_artifact(
-        ctx, artifact, config=DEFAULT_CONFIG, canonical=canonical, title=title, fetcher=fetcher
+        ctx,
+        artifact,
+        config=DEFAULT_CONFIG,
+        canonical=canonical,
+        title=title,
+        fetcher=fetcher,
+        provider_pages=provider_pages,
     )
 
     await ctx.heartbeat(stage="persisting_artifact", stage_label="Publishing")
@@ -162,6 +245,52 @@ async def extraction_processor(
         )
 
 
+async def _fetch_provider_pages(
+    canonical: str,
+    *,
+    fetcher: RestrictedFetcher | None = None,
+    seed: ProviderFetchSeed | None = None,
+) -> ProviderPages:
+    """Fetch PPUBS text and Google metadata concurrently, without duplicate work."""
+    settings = get_settings()
+    fetcher = fetcher or RestrictedFetcher(
+        settings.fetch_allowed_hosts, max_redirects=settings.fetch_max_redirects
+    )
+
+    async def ppubs_html() -> str | None:
+        if seed is not None and seed.ppubs_unavailable:
+            return None
+        try:
+            client = (
+                seed.ppubs_client
+                if seed and seed.ppubs_client
+                else PpubsClient(fetcher, max_json_bytes=settings.fetch_max_html_bytes)
+            )
+            document = (
+                seed.ppubs_document
+                if seed and seed.ppubs_document
+                else await client.resolve(parse_patent_identifier(canonical))
+            )
+            page = await client.fetch_text(document, max_bytes=settings.fetch_max_html_bytes)
+            return page.content.decode("utf-8", "replace")
+        except (FetchError, PatentParseError):
+            return None
+
+    async def google_html() -> str | None:
+        if seed is not None and seed.google_html is not None:
+            return seed.google_html
+        try:
+            page = await fetcher.fetch(
+                patent_page_url(canonical), max_bytes=settings.fetch_max_html_bytes
+            )
+            return page.content.decode("utf-8", "replace")
+        except FetchError:
+            return None
+
+    ppubs, google = await asyncio.gather(ppubs_html(), google_html())
+    return ProviderPages(ppubs_html=ppubs, google_html=google)
+
+
 async def _enrich_artifact(
     ctx: JobContext,
     artifact: Artifact,
@@ -170,6 +299,7 @@ async def _enrich_artifact(
     canonical: str | None,
     title: str | None,
     fetcher: RestrictedFetcher | None = None,
+    provider_pages: ProviderPages | None = None,
 ) -> Artifact:
     """Clean-text alignment stage (DESIGN.md §13): fetch the provider page, verify
     identity, and align each line's ``display_text`` to the authoritative text —
@@ -178,9 +308,7 @@ async def _enrich_artifact(
     unaligned artifact, so extraction still publishes."""
     settings = get_settings()
     base_front_matter = (
-        PatentFrontMatter(title=title, patent_number=canonical)
-        if title or canonical
-        else None
+        PatentFrontMatter(title=title, patent_number=canonical) if title or canonical else None
     )
     if base_front_matter is not None:
         artifact = replace(artifact, front_matter=base_front_matter)
@@ -197,17 +325,14 @@ async def _enrich_artifact(
     await ctx.heartbeat(
         stage="aligning_text", stage_label="Aligning clean text", indeterminate=True
     )
-    fetcher = fetcher or RestrictedFetcher(
-        settings.fetch_allowed_hosts, max_redirects=settings.fetch_max_redirects
-    )
+    provider_pages = provider_pages or await _fetch_provider_pages(canonical, fetcher=fetcher)
     provider_name = "uspto_ppubs"
     selected_provider: ProviderText | None = None
-    try:
-        patent_identity = parse_patent_identifier(canonical)
-        ppubs = PpubsClient(fetcher, max_json_bytes=settings.fetch_max_html_bytes)
-        document = await ppubs.resolve(patent_identity)
-        page = await ppubs.fetch_text(document, max_bytes=settings.fetch_max_html_bytes)
-        html = page.content.decode("utf-8", "replace")
+    aligned = artifact.entries
+    identity = None
+    aligned_count = 0
+    if provider_pages.ppubs_html is not None:
+        html = provider_pages.ppubs_html
         ppubs_provider = extract_ppubs_text(html)
         # Alignment over the whole specification is CPU-bound — keep it off the loop.
         aligned, identity = await asyncio.to_thread(
@@ -225,17 +350,16 @@ async def _enrich_artifact(
             and (not artifact.entries or aligned_count > 0)
         )
         if not usable:
-            raise FetchError("ppubs_text_unusable", "PPUBS did not provide usable patent text")
-        selected_provider = ppubs_provider
-    except (FetchError, PatentParseError):
+            aligned = artifact.entries
+            aligned_count = 0
+        else:
+            selected_provider = ppubs_provider
+
+    if selected_provider is None:
         provider_name = "google_patents"
-        try:
-            page = await fetcher.fetch(
-                patent_page_url(canonical), max_bytes=settings.fetch_max_html_bytes
-            )
-        except FetchError:
+        if provider_pages.google_html is None:
             return artifact  # graceful: keep the unaligned entries
-        html = page.content.decode("utf-8", "replace")
+        html = provider_pages.google_html
         google_provider = extract_provider_text(html)
         aligned, identity = await asyncio.to_thread(
             enrich_from_page_html,
@@ -249,6 +373,8 @@ async def _enrich_artifact(
             selected_provider = google_provider
         aligned_count = _aligned_count(aligned)
 
+    assert identity is not None
+
     provider_claim_numbers = (
         list(extract_claim_numbers(selected_provider.claims))
         if selected_provider is not None
@@ -260,27 +386,23 @@ async def _enrich_artifact(
     # display-only preface from a verified Google page when available without
     # replacing the PPUBS-aligned specification.
     front_source = provider_name
-    if provider_name == "uspto_ppubs" and selected_provider is not None:
-        try:
-            google_page = await fetcher.fetch(
-                patent_page_url(canonical), max_bytes=settings.fetch_max_html_bytes
-            )
-            google_provider = extract_provider_text(
-                google_page.content.decode("utf-8", "replace")
-            )
-            google_identity = verify_identity(
-                canonical,
-                google_provider.canonical,
-                source_title=title,
-                provider_title=google_provider.title,
-            )
-            if google_identity.status == "verified" and (
-                google_provider.abstract or google_provider.metadata
-            ):
-                selected_provider = google_provider
-                front_source = "google_patents"
-        except FetchError:
-            pass
+    if (
+        provider_name == "uspto_ppubs"
+        and selected_provider is not None
+        and provider_pages.google_html is not None
+    ):
+        google_provider = extract_provider_text(provider_pages.google_html)
+        google_identity = verify_identity(
+            canonical,
+            google_provider.canonical,
+            source_title=title,
+            provider_title=google_provider.title,
+        )
+        if google_identity.status == "verified" and (
+            google_provider.abstract or google_provider.metadata
+        ):
+            selected_provider = google_provider
+            front_source = "google_patents"
 
     front_matter = _front_matter(
         selected_provider,
@@ -304,9 +426,7 @@ async def _enrich_artifact(
 
 
 def _aligned_count(entries) -> int:
-    return sum(
-        1 for entry in entries if entry.provenance.alignment_method in ("exact", "fuzzy")
-    )
+    return sum(1 for entry in entries if entry.provenance.alignment_method in ("exact", "fuzzy"))
 
 
 def _front_matter(
@@ -323,16 +443,11 @@ def _front_matter(
         clean_value = value.strip()[:500]
         if clean_label and clean_value and clean_value not in grouped.setdefault(clean_label, []):
             grouped[clean_label].append(clean_value)
-    metadata = [
-        {"label": label, "value": "; ".join(values)}
-        for label, values in grouped.items()
-    ]
+    metadata = [{"label": label, "value": "; ".join(values)} for label, values in grouped.items()]
     abstract = provider.abstract.strip()[:20_000] if provider and provider.abstract else None
     return PatentFrontMatter(
         title=(provider.title if provider and provider.title else fallback_title),
-        patent_number=(
-            provider.canonical if provider and provider.canonical else fallback_number
-        ),
+        patent_number=(provider.canonical if provider and provider.canonical else fallback_number),
         abstract=abstract,
         metadata=metadata,
         source=source,

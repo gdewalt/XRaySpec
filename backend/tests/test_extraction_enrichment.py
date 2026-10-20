@@ -9,6 +9,7 @@ to the unaligned artifact so extraction still publishes.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 from app.config import get_settings
@@ -19,7 +20,12 @@ from app.extraction.locator import GrantLocator
 from app.fetch.adapter import FetchResult
 from app.fetch.errors import FetchError
 from app.worker.engine import JobContext
-from app.worker.processors import _enrich_artifact
+from app.worker.processors import (
+    ProviderFetchSeed,
+    ProviderPages,
+    _enrich_artifact,
+    _fetch_provider_pages,
+)
 
 PAGE_HTML = b"""
 <html><head>
@@ -123,8 +129,11 @@ async def _ctx(client) -> JobContext:
         await s.commit()
         job_id = job.id
     return JobContext(
-        client.sessionmaker, client.object_store,
-        job_id=job_id, fencing_token="tok", lease_seconds=30,
+        client.sessionmaker,
+        client.object_store,
+        job_id=job_id,
+        fencing_token="tok",
+        lease_seconds=30,
     )
 
 
@@ -148,9 +157,77 @@ async def test_enrichment_aligns_display_text(client):
     assert fetcher.calls == ["https://patents.google.com/patent/US12262260B2/en"]
 
 
-async def test_unusable_ppubs_text_falls_back_to_google_paragraph_text(
-    client, monkeypatch
-):
+async def test_provider_pages_from_pdf_fetch_are_reused_without_network(client):
+    fetcher = FakeFetcher(PAGE_HTML, fail=True)
+
+    pages = await _fetch_provider_pages(
+        "US12262260B2",
+        fetcher=fetcher,
+        seed=ProviderFetchSeed(
+            google_html=PAGE_HTML.decode(),
+            ppubs_unavailable=True,
+        ),
+    )
+
+    assert pages.google_html == PAGE_HTML.decode()
+    assert pages.ppubs_html is None
+    assert fetcher.calls == []
+
+
+async def test_ppubs_and_google_provider_pages_are_fetched_concurrently(client, monkeypatch):
+    ppubs_started = asyncio.Event()
+    google_started = asyncio.Event()
+
+    class ConcurrentPpubsClient:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        async def resolve(self, _identity):
+            return object()
+
+        async def fetch_text(self, _document, *, max_bytes: int) -> FetchResult:
+            del max_bytes
+            ppubs_started.set()
+            await google_started.wait()
+            return FetchResult(PAGE_HTML, "text/html", "https://ppubs.uspto.gov/text")
+
+    class ConcurrentFetcher(FakeFetcher):
+        async def fetch(self, url: str, *, max_bytes: int, expect_pdf: bool = False) -> FetchResult:
+            del max_bytes, expect_pdf
+            google_started.set()
+            await ppubs_started.wait()
+            return FetchResult(self.page, "text/html", url)
+
+    monkeypatch.setattr("app.worker.processors.PpubsClient", ConcurrentPpubsClient)
+    pages = await asyncio.wait_for(
+        _fetch_provider_pages("US12262260B2", fetcher=ConcurrentFetcher(PAGE_HTML)),
+        timeout=1,
+    )
+
+    assert pages.ppubs_html is not None
+    assert pages.google_html is not None
+
+
+async def test_enrichment_reuses_prefetched_provider_pages(client):
+    ctx = await _ctx(client)
+    artifact = _artifact("The houslng 104 receives the shaft 108.")
+    fetcher = FakeFetcher(PAGE_HTML, fail=True)
+
+    out = await _enrich_artifact(
+        ctx,
+        artifact,
+        config=DEFAULT_CONFIG,
+        canonical="US12262260B2",
+        title="t",
+        fetcher=fetcher,
+        provider_pages=ProviderPages(google_html=PAGE_HTML.decode()),
+    )
+
+    assert "housing 104" in out.entries[0].display_text
+    assert fetcher.calls == []
+
+
+async def test_unusable_ppubs_text_falls_back_to_google_paragraph_text(client, monkeypatch):
     ctx = await _ctx(client)
     art = _artifact("The houslng 104 receives the shaft 108.")
     fetcher = FakeFetcher(PAGE_HTML)

@@ -28,9 +28,7 @@ def ocr_available() -> bool:
         return False
 
 
-def words_from_tsv(
-    data: dict, width: float, height: float, *, min_confidence: float
-) -> list[Word]:
+def words_from_tsv(data: dict, width: float, height: float, *, min_confidence: float) -> list[Word]:
     """Convert a pytesseract ``image_to_data`` DICT to normalized words (pure)."""
     words: list[Word] = []
     n = len(data.get("text", []))
@@ -118,10 +116,7 @@ def _projection_score(image) -> float:
         for y in range(margin_y, height - margin_y)
     ]
     return float(
-        sum(
-            (current - previous) ** 2
-            for previous, current in zip(rows, rows[1:], strict=False)
-        )
+        sum((current - previous) ** 2 for previous, current in zip(rows, rows[1:], strict=False))
     )
 
 
@@ -196,9 +191,7 @@ def _tesseract_words(
         config=tess_config,
         output_type=Output.DICT,
     )
-    return words_from_tsv(
-        data, image.width, image.height, min_confidence=config.ocr_min_confidence
-    )
+    return words_from_tsv(data, image.width, image.height, min_confidence=config.ocr_min_confidence)
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,8 +256,7 @@ def ocr_quality(words: Iterable[Word], *, low_confidence_cutoff: float = 50.0) -
     ]
     mean = sum(confidences) / len(confidences) if confidences else 0.0
     low = (
-        sum(confidence < low_confidence_cutoff for confidence in confidences)
-        / len(confidences)
+        sum(confidence < low_confidence_cutoff for confidence in confidences) / len(confidences)
         if confidences
         else 1.0
     )
@@ -279,9 +271,7 @@ def ocr_quality(words: Iterable[Word], *, low_confidence_cutoff: float = 50.0) -
 
 
 def _candidate_score(words: list[Word], config: ExtractionConfig) -> float:
-    quality = ocr_quality(
-        words, low_confidence_cutoff=config.ocr_retry_low_confidence_cutoff
-    )
+    quality = ocr_quality(words, low_confidence_cutoff=config.ocr_retry_low_confidence_cutoff)
     # Confidence dominates, while a logarithmic coverage bonus prevents a tiny,
     # pristine fragment from defeating a complete and nearly-as-clean page.
     coverage_bonus = 4.0 * math.log1p(quality.useful_characters)
@@ -289,12 +279,8 @@ def _candidate_score(words: list[Word], config: ExtractionConfig) -> float:
     return quality.mean_confidence + coverage_bonus - noise_penalty
 
 
-def _needs_retry(
-    words: list[Word], config: ExtractionConfig, *, minimum_words: int
-) -> bool:
-    quality = ocr_quality(
-        words, low_confidence_cutoff=config.ocr_retry_low_confidence_cutoff
-    )
+def _needs_retry(words: list[Word], config: ExtractionConfig, *, minimum_words: int) -> bool:
+    quality = ocr_quality(words, low_confidence_cutoff=config.ocr_retry_low_confidence_cutoff)
     return (
         quality.word_count < minimum_words
         or quality.mean_confidence < config.ocr_retry_mean_confidence
@@ -320,15 +306,11 @@ def _adaptive_tesseract_words(
     minimum_words: int,
 ) -> list[Word]:
     """Run extra OCR profiles only when the current best result is weak."""
-    candidates = [
-        _tesseract_words(image, config, psm=primary_psm, thresholding_method=2)
-    ]
+    candidates = [_tesseract_words(image, config, psm=primary_psm, thresholding_method=2)]
     if not _needs_retry(candidates[0], config, minimum_words=minimum_words):
         return candidates[0]
 
-    candidates.append(
-        _tesseract_words(image, config, psm=retry_psm, thresholding_method=1)
-    )
+    candidates.append(_tesseract_words(image, config, psm=retry_psm, thresholding_method=1))
     best = max(candidates, key=lambda words: _candidate_score(words, config))
     if _needs_retry(best, config, minimum_words=minimum_words):
         candidates.append(
@@ -372,9 +354,7 @@ def _transform_box(word: Word, transform) -> tuple[float, float, float, float]:
     )
 
 
-def _map_crop_words(
-    words: Iterable[Word], crop: tuple[float, float, float, float]
-) -> list[Word]:
+def _map_crop_words(words: Iterable[Word], crop: tuple[float, float, float, float]) -> list[Word]:
     x0, y0, x1, y1 = crop
     width, height = x1 - x0, y1 - y0
     return [
@@ -386,9 +366,7 @@ def _map_crop_words(
     ]
 
 
-def _unrotate_words(
-    words: Iterable[Word], angle: float, size: tuple[int, int]
-) -> list[Word]:
+def _unrotate_words(words: Iterable[Word], angle: float, size: tuple[int, int]) -> list[Word]:
     """Map boxes from a PIL-rotated, same-size image back to the source image."""
     if not angle:
         return list(words)
@@ -556,15 +534,11 @@ def ocr_specification_words(
         column_words.extend(_map_crop_words(recognized, crop))
     column_words = _unrotate_words(column_words, prepared.deskew_angle, clean.size)
     base_body = [
-        word
-        for word in base_words
-        if word.cy > 0.075 and (word.cx < 0.455 or word.cx > 0.545)
+        word for word in base_words if word.cy > 0.075 and (word.cx < 0.455 or word.cx > 0.545)
     ]
     if len(column_words) < max(10, round(len(base_body) * 0.60)):
         return base_words
-    structural = [
-        word for word in base_words if word.cy <= 0.09 or 0.455 <= word.cx <= 0.545
-    ]
+    structural = [word for word in base_words if word.cy <= 0.09 or 0.455 <= word.cx <= 0.545]
     return dedupe_words([*structural, *column_words])
 
 
@@ -590,69 +564,82 @@ def ocr_drawing_words(
     figure_chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz."
     callout_chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-    def tiled_figure_pass() -> list[Word]:
+    def credible_figure(words: list[Word]) -> bool:
+        from .callouts import detect_figure_occurrences
+
+        return any(
+            occurrence.confidence is None or occurrence.confidence >= 45.0
+            for occurrence in detect_figure_occurrences(words, page_index)
+        )
+
+    def tiled_figure_pass(rotation: int) -> list[Word]:
         """Recover small horizontal figure captions from diagram-heavy sheets.
 
         Full-page sparse segmentation can lose a caption amid connector lines and
         halftoning. Overlapping half-width bands give Tesseract a local text block
         without changing the PDF coordinate system.
         """
+        rotated = clean.rotate(rotation, expand=True, fillcolor=255)
         tiled: list[Word] = []
         for y0 in (0.10, 0.30, 0.50, 0.70):
             for x0 in (0.03, 0.47):
                 crop = (x0, y0, min(0.97, x0 + 0.53), min(0.96, y0 + 0.25))
                 pixels = (
-                    round(crop[0] * clean.width),
-                    round(crop[1] * clean.height),
-                    round(crop[2] * clean.width),
-                    round(crop[3] * clean.height),
+                    round(crop[0] * rotated.width),
+                    round(crop[1] * rotated.height),
+                    round(crop[2] * rotated.width),
+                    round(crop[3] * rotated.height),
                 )
                 recognized = _tesseract_words(
-                    clean.crop(pixels),
+                    rotated.crop(pixels),
                     config,
                     psm=6,
                     thresholding_method=2,
                     char_whitelist=figure_chars,
                 )
                 tiled.extend(_map_crop_words(recognized, crop))
-        return tiled
+        return _unrotate_right_angle_words(tiled, rotation)
 
-    def orientation_pass(thresholding_method: int) -> list[Word]:
-        recognized: list[Word] = []
-        for rotation in config.ocr_drawing_rotations:
-            rotated = clean.rotate(rotation, expand=True, fillcolor=255)
-            figures = _tesseract_words(
+    def orientation_pass(rotation: int) -> list[Word]:
+        rotated = clean.rotate(rotation, expand=True, fillcolor=255)
+        figures = _tesseract_words(
+            rotated,
+            config,
+            psm=config.ocr_drawing_figure_psm,
+            thresholding_method=2,
+            char_whitelist=figure_chars,
+        )
+        callouts = (
+            _tesseract_words(
                 rotated,
                 config,
-                psm=config.ocr_drawing_figure_psm,
-                thresholding_method=thresholding_method,
-                char_whitelist=figure_chars,
+                psm=config.ocr_drawing_callout_psm,
+                thresholding_method=2,
+                char_whitelist=callout_chars,
             )
-            callouts = (
-                _tesseract_words(
-                    rotated,
-                    config,
-                    psm=config.ocr_drawing_callout_psm,
-                    thresholding_method=thresholding_method,
-                    char_whitelist=callout_chars,
-                )
-                if config.callout_detection_enabled
-                else []
-            )
-            recognized.extend(
-                _unrotate_right_angle_words([*figures, *callouts], rotation)
-            )
-        return fuse_drawing_words(recognized)
+            if config.callout_detection_enabled
+            else []
+        )
+        return fuse_drawing_words(_unrotate_right_angle_words([*figures, *callouts], rotation))
 
-    primary = orientation_pass(2)
-    if not any("fig" in word.text.casefold() for word in primary):
-        primary = fuse_drawing_words([*primary, *tiled_figure_pass()])
-    candidates = [primary]
-    # The two known drawing orientations, each with its constrained profiles,
-    # already provide substantial coverage. Repeat them with alternate
-    # thresholding only when they found no text at all; generic prose confidence
-    # is not meaningful on line drawings.
-    if not candidates[0]:
-        candidates.append(orientation_pass(1))
-    recognized = max(candidates, key=lambda words: _candidate_score(words, config))
+    rotations = config.ocr_drawing_rotations or (0,)
+    normal_candidates: list[list[Word]] = []
+    for rotation in rotations:
+        candidate = orientation_pass(rotation)
+        normal_candidates.append(candidate)
+        if credible_figure(candidate):
+            return _unrotate_words(candidate, prepared.deskew_angle, clean.size)
+
+    # Local tiles are substantially more expensive (eight Tesseract calls per
+    # orientation), so use them only after both full-page orientations fail.
+    fallback_candidates: list[list[Word]] = []
+    for index, rotation in enumerate(rotations):
+        tiled = fuse_drawing_words(tiled_figure_pass(rotation))
+        combined = fuse_drawing_words([*normal_candidates[index], *tiled])
+        fallback_candidates.append(combined)
+        if credible_figure(combined):
+            return _unrotate_words(combined, prepared.deskew_angle, clean.size)
+
+    candidates = [*normal_candidates, *fallback_candidates]
+    recognized = max(candidates, key=lambda words: _candidate_score(words, config), default=[])
     return _unrotate_words(recognized, prepared.deskew_angle, clean.size)

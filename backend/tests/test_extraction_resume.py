@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import replace
+from threading import Lock
+from time import sleep
 
 from sqlalchemy import delete, func, select
 
@@ -68,14 +70,37 @@ class Recorder:
         return PageResult(native_page.index, "ocr", is_drawing=False, words=words)
 
 
+class ConcurrencyRecorder(Recorder):
+    def __init__(self) -> None:
+        super().__init__()
+        self.active = 0
+        self.maximum_active = 0
+        self.lock = Lock()
+
+    def __call__(self, *args) -> PageResult:
+        with self.lock:
+            self.active += 1
+            self.maximum_active = max(self.maximum_active, self.active)
+        try:
+            sleep(0.05)
+            return super().__call__(*args)
+        finally:
+            with self.lock:
+                self.active -= 1
+
+
 async def _ctx(client) -> tuple[JobContext, str, str]:
     async with client.sessionmaker() as s:
         user = User(subject=uuid.uuid4().hex, email="o@example.com")
         s.add(user)
         await s.flush()
         source = SourceDocument(
-            owner_id=user.id, source_type="fetch", doc_type="grant",
-            patent_canonical="US1B2", sha256="deadbeef", state="uploaded",
+            owner_id=user.id,
+            source_type="fetch",
+            doc_type="grant",
+            patent_canonical="US1B2",
+            sha256="deadbeef",
+            state="uploaded",
         )
         s.add(source)
         await s.flush()
@@ -83,8 +108,11 @@ async def _ctx(client) -> tuple[JobContext, str, str]:
         s.add(job)
         await s.commit()
         ctx = JobContext(
-            client.sessionmaker, client.object_store,
-            job_id=job.id, fencing_token="tok", lease_seconds=30,
+            client.sessionmaker,
+            client.object_store,
+            job_id=job.id,
+            fencing_token="tok",
+            lease_seconds=30,
         )
         return ctx, source.id, user.id
 
@@ -106,9 +134,9 @@ async def _run(client, ctx, source_id, owner_id, recorder, *, config=DEFAULT_CON
 async def _count_checkpoints(client, source_id, kind) -> int:
     async with client.sessionmaker() as s:
         return await s.scalar(
-            select(func.count()).select_from(JobCheckpoint).where(
-                JobCheckpoint.source_id == source_id, JobCheckpoint.kind == kind
-            )
+            select(func.count())
+            .select_from(JobCheckpoint)
+            .where(JobCheckpoint.source_id == source_id, JobCheckpoint.kind == kind)
         )
 
 
@@ -130,6 +158,15 @@ async def test_first_run_computes_and_checkpoints_every_page(client):
         assert job.progress_sequence == 2
 
 
+async def test_page_extraction_uses_bounded_two_worker_pool(client):
+    ctx, source_id, owner_id = await _ctx(client)
+    recorder = ConcurrencyRecorder()
+
+    await _run(client, ctx, source_id, owner_id, recorder)
+
+    assert recorder.maximum_active == 2
+
+
 async def test_resume_reuses_all_checkpoints_and_skips_pdf_parse(client):
     ctx, source_id, owner_id = await _ctx(client)
     await _run(client, ctx, source_id, owner_id, Recorder())
@@ -141,9 +178,15 @@ async def test_resume_reuses_all_checkpoints_and_skips_pdf_parse(client):
 
     rec2 = Recorder()
     art = await run_extraction(
-        ctx, pdf_bytes=b"%PDF-1.7 fake", source_id=source_id, owner_id=owner_id,
-        config=DEFAULT_CONFIG, doc_type="grant",
-        load_pages=_boom, route_page=rec2, ocr_available=lambda: True,
+        ctx,
+        pdf_bytes=b"%PDF-1.7 fake",
+        source_id=source_id,
+        owner_id=owner_id,
+        config=DEFAULT_CONFIG,
+        doc_type="grant",
+        load_pages=_boom,
+        route_page=rec2,
+        ocr_available=lambda: True,
     )
     assert rec2.pages == []  # nothing recomputed
     assert art.page_count == N_PAGES
