@@ -233,6 +233,21 @@ def align_entries(
         ratio, start, end = _best_window(
             normalized, cursor, len(src_norm), " ".join(src_norm), config.alignment_search_slack
         )
+        # OCR occasionally omits enough words (or a whole short line) that the
+        # provider cursor falls outside the deliberately small local window.
+        # Without a guarded forward resync, every later line remains unmatched
+        # and authoritative USPTO paragraph boundaries disappear with it.
+        if ratio < config.alignment_min_ratio and len(src_norm) >= 4:
+            resync_ratio, resync_start, resync_end = _best_window(
+                normalized,
+                cursor,
+                len(src_norm),
+                " ".join(src_norm),
+                config.alignment_resync_slack,
+                backtrack=0,
+            )
+            if resync_ratio >= config.alignment_resync_min_ratio:
+                ratio, start, end = resync_ratio, resync_start, resync_end
         # If the crop repeated the previous provider word with its first one or
         # two characters missing, align the rest strictly forward. This avoids
         # both keeping the fragment and pulling the complete word into two rows.

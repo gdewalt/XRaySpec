@@ -22,7 +22,7 @@ OcrPolicy = Literal["auto", "force", "disabled"]
 @dataclass(frozen=True, slots=True)
 class ExtractionConfig:
     # Engine identity
-    version: str = "0.19.0"
+    version: str = "0.20.0"
 
     # OCR
     ocr_policy: OcrPolicy = "auto"
@@ -67,6 +67,11 @@ class ExtractionConfig:
     alignment_min_ratio: float = 0.72  # below this, keep source_text (reject substitution)
     alignment_exact_ratio: float = 0.97  # at/above this, call it an exact match
     alignment_search_slack: int = 8  # forward token window when locating a line
+    # A missing/corrupt OCR span can put the monotonic provider cursor farther
+    # behind than the normal local window. Search farther only after that local
+    # match fails, and require stronger evidence before moving the cursor.
+    alignment_resync_slack: int = 256
+    alignment_resync_min_ratio: float = 0.88
 
     # Safety bounds re-enforced in the worker (§11.1, §17.6)
     max_pages: int = 2000

@@ -398,6 +398,42 @@ def test_google_alignment_uses_google_paragraphs_and_discards_layout_guesses():
     assert aligned[2].paragraph_source == "google_patents"
 
 
+def test_ppubs_alignment_resyncs_after_a_large_ocr_gap_and_restores_paragraphs():
+    omitted = " ".join(f"omitted{index}" for index in range(24))
+    html = f"""
+    <html><head><title>US-7840427-B2 - Patent Public Search | USPTO</title></head>
+    <body><h2>Shared transport system</h2><section><h3>Description</h3><p>
+      (1) The first paragraph aligns normally.<br>
+      (2) {omitted}<br>
+      (3) The recovered paragraph has a unique reliable sentence.<br>
+      (4) The following paragraph also remains synchronized.
+    </p></section></body></html>
+    """
+    entries = [
+        _entry("The first paragraph aligns normally.", 1),
+        _entry("The recovered paragraph has a unique reliable sentence.", 2),
+        _entry("The following paragraph also remains synchronized.", 3),
+    ]
+
+    aligned, identity = enrich_from_ppubs_html(
+        entries,
+        html,
+        "US7840427B2",
+        DEFAULT_CONFIG,
+    )
+
+    assert identity.status == "verified"
+    assert [entry.provenance.alignment_method for entry in aligned] == [
+        "exact",
+        "exact",
+        "exact",
+    ]
+    assert aligned[1].paragraph_start is True
+    assert aligned[1].paragraph_source == "uspto_numbered"
+    assert aligned[2].paragraph_start is True
+    assert aligned[2].paragraph_source == "uspto_numbered"
+
+
 PPUBS_HTML = """
 <html><head><title>US-7840427-B2 - Patent Public Search | USPTO</title></head><body>
 <h2>Shared transport system and service network</h2>
