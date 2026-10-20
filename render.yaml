@@ -54,7 +54,7 @@ services:
     region: oregon
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    dockerCommand: cd /app/backend && python -m app.worker.run
+    dockerCommand: python -m app.worker.run
     autoDeployTrigger: off
     numInstances: 1
     maxShutdownDelaySeconds: 300
