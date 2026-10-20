@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .applications import count_paragraph_markers, extract_application_page
 from .artifact import Artifact, CalloutOccurrence, FigureOccurrence
@@ -111,9 +111,21 @@ def route_page(
     else:
         page, method = native_page, "native"  # no text layer, no OCR
 
-    if is_drawing_page(page.words):
-        is_drawing_sheet = has_drawing_sheet_header(page.words)
+    if is_drawing_page(page.words) or has_drawing_sheet_header(native_page.words):
+        is_drawing_sheet = has_drawing_sheet_header(
+            [*native_page.words, *page.words]
+        )
+        # Preserve trustworthy embedded PDF labels before adding raster OCR.
+        # Word-level merging can interleave an OCR misread with the native title
+        # at the same coordinates (for example ``Figure 9b`` + ``Figure 10``),
+        # making neither label parse correctly.  Figure-level fusion avoids that
+        # corruption and lets native text remain authoritative when it exists.
+        native_figures = tuple(
+            replace(figure, method="native_text")
+            for figure in detect_figure_occurrences(native_page.words, page.index)
+        )
         draw_words = page.words
+        enhanced: list[Word] = []
         if can_ocr and drawing_ocr_fn is not None:
             if default_drawing_ocr:
                 assert prepare_ocr_page is not None
@@ -134,8 +146,14 @@ def route_page(
                 draw_words = enhanced
         elif method == "ocr" and can_ocr:
             draw_words = ocr_fn(pdf_bytes, page.index, config, psm=config.ocr_sparse_psm)
-        figure_id = detect_page_figure(draw_words)
-        figures = tuple(detect_figure_occurrences(draw_words, page.index))
+        ocr_figures = tuple(detect_figure_occurrences(enhanced, page.index))
+        figures = native_figures or ocr_figures
+        figure_ids = {figure.figure_id for figure in figures}
+        figure_id = (
+            next(iter(figure_ids))
+            if len(figure_ids) == 1
+            else detect_page_figure(draw_words)
+        )
         callouts = (
             tuple(
                 detect_callouts(

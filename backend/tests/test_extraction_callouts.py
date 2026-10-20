@@ -212,6 +212,17 @@ def test_spaced_and_ocr_confused_subfigure_labels_are_detected():
     assert {figure.figure_id for figure in figures} >= {"14A", "14B"}
 
 
+def test_exact_subfigure_label_does_not_also_become_a_numeric_confusion():
+    words = [
+        Word("Figure", 0.10, 0.30, 0.18, 0.33),
+        Word("14i.", 0.19, 0.30, 0.24, 0.33),
+    ]
+
+    figures = detect_figure_occurrences(words, page_index=32)
+
+    assert [figure.figure_id for figure in figures] == ["14I"]
+
+
 def test_fuzzy_figure_prefixes_are_recovered_on_drawing_sheets():
     words = [
         Word("F1G.", 0.10, 0.30, 0.16, 0.33, confidence=88.0),

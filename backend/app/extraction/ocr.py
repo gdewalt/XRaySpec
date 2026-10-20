@@ -573,31 +573,30 @@ def ocr_drawing_words(
         )
 
     def tiled_figure_pass(rotation: int) -> list[Word]:
-        """Recover small horizontal figure captions from diagram-heavy sheets.
+        """Recover horizontal captions from noisy, diagram-heavy sheets.
 
         Full-page sparse segmentation can lose a caption amid connector lines and
-        halftoning. Overlapping half-width bands give Tesseract a local text block
-        without changing the PDF coordinate system.
+        halftoning. Four overlapping, binarized horizontal bands isolate titles
+        such as ``Figure 14b`` while retaining enough width for long captions.
         """
         rotated = clean.rotate(rotation, expand=True, fillcolor=255)
         tiled: list[Word] = []
-        for y0 in (0.10, 0.30, 0.50, 0.70):
-            for x0 in (0.03, 0.47):
-                crop = (x0, y0, min(0.97, x0 + 0.53), min(0.96, y0 + 0.25))
-                pixels = (
-                    round(crop[0] * rotated.width),
-                    round(crop[1] * rotated.height),
-                    round(crop[2] * rotated.width),
-                    round(crop[3] * rotated.height),
-                )
-                recognized = _tesseract_words(
-                    rotated.crop(pixels),
-                    config,
-                    psm=6,
-                    thresholding_method=2,
-                    char_whitelist=figure_chars,
-                )
-                tiled.extend(_map_crop_words(recognized, crop))
+        for y0 in (0.08, 0.30, 0.52, 0.70):
+            crop = (0.04, y0, 0.96, min(0.97, y0 + 0.28))
+            pixels = (
+                round(crop[0] * rotated.width),
+                round(crop[1] * rotated.height),
+                round(crop[2] * rotated.width),
+                round(crop[3] * rotated.height),
+            )
+            recognized = _tesseract_words(
+                _binarize_image(rotated.crop(pixels)),
+                config,
+                psm=config.ocr_drawing_figure_psm,
+                thresholding_method=0,
+                char_whitelist=figure_chars,
+            )
+            tiled.extend(_map_crop_words(recognized, crop))
         return _unrotate_right_angle_words(tiled, rotation)
 
     def orientation_pass(rotation: int) -> list[Word]:
@@ -641,5 +640,18 @@ def ocr_drawing_words(
             return _unrotate_words(combined, prepared.deskew_angle, clean.size)
 
     candidates = [*normal_candidates, *fallback_candidates]
-    recognized = max(candidates, key=lambda words: _candidate_score(words, config), default=[])
+
+    def figure_candidate_score(words: list[Word]) -> tuple[int, float, float]:
+        from .callouts import detect_figure_occurrences
+
+        figures = detect_figure_occurrences(words, page_index)
+        figure_confidence = max(
+            (figure.confidence or 0.0 for figure in figures), default=0.0
+        )
+        # A structurally valid FIG/Figure label is more relevant than a large
+        # amount of high-confidence diagram noise. Specification evidence later
+        # decides whether a low-confidence identifier should survive.
+        return (bool(figures), figure_confidence, _candidate_score(words, config))
+
+    recognized = max(candidates, key=figure_candidate_score, default=[])
     return _unrotate_words(recognized, prepared.deskew_angle, clean.size)

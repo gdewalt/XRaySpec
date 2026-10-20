@@ -346,7 +346,8 @@ def detect_figure_occurrences(words: list[Word], page_index: int) -> list[Figure
             cursor += len(word.text)
             spans.append((start, cursor, word))
         text = " ".join(pieces)
-        for match in _FIG_REF.finditer(text):
+        exact_matches = list(_FIG_REF.finditer(text))
+        for match in exact_matches:
             matched_words = [
                 word for start, end, word in spans
                 if start < match.end() and end > match.start()
@@ -373,6 +374,11 @@ def detect_figure_occurrences(words: list[Word], page_index: int) -> list[Figure
                         confidence=(sum(confidences) / len(confidences)) if confidences else None,
                     )
                 )
+        # A clean standard label is more reliable than permissive re-parsing of
+        # the same glyphs.  Without this guard, ``Figure 14i`` also yielded the
+        # confusable numeric candidate ``141`` at the identical location.
+        if exact_matches:
+            continue
         for match in _DRAWING_FIG_REF.finditer(text):
             matched_words = [
                 word for start, end, word in spans
@@ -534,7 +540,7 @@ def filter_figure_occurrences(
             None,
         )
         canonical = exact or fuzzy or normalized
-        ocr = _ocr_strength(occurrence.confidence)
+        ocr = 1.0 if occurrence.method == "native_text" else _ocr_strength(occurrence.confidence)
         if occurrence.method == "sparse_ocr_confusable":
             ocr *= 0.92
         elif occurrence.method == "fuzzy_prefix":

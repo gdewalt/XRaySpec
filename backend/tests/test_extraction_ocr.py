@@ -8,6 +8,7 @@ import pytest
 from PIL import Image
 
 import app.extraction.ocr as ocr_module
+from app.extraction.callouts import detect_figure_occurrences
 from app.extraction.config import DEFAULT_CONFIG
 from app.extraction.core import extract_from_pages, route_page
 from app.extraction.model import Page, Word
@@ -264,7 +265,7 @@ def test_drawing_ocr_falls_back_to_local_tiles_when_full_page_misses_figure(monk
     ):
         del thresholding_method, char_whitelist
         calls.append((psm, _image.size))
-        if psm == 6:
+        if _image.height < 50:
             return [Word("Fig12a", 0.1, 0.1, 0.3, 0.2, confidence=70.0)]
         return [Word("104", 0.4, 0.4, 0.5, 0.45, confidence=90.0)]
 
@@ -277,7 +278,38 @@ def test_drawing_ocr_falls_back_to_local_tiles_when_full_page_misses_figure(monk
         (config.ocr_drawing_figure_psm, (100, 120)),
         (config.ocr_drawing_figure_psm, (120, 100)),
     ]
-    assert sum(psm == 6 for psm, _size in calls) == 8
+    assert sum(
+        psm == config.ocr_drawing_figure_psm and height < 50
+        for psm, (_width, height) in calls
+    ) == 4
+
+
+def test_drawing_ocr_prefers_low_confidence_caption_over_unrelated_noise(monkeypatch):
+    image = Image.new("L", (100, 120), 255)
+    monkeypatch.setattr(ocr_module, "render_page", lambda *_args: image)
+    monkeypatch.setattr(ocr_module, "preprocess_image", lambda value, _config: (value, 0.0))
+
+    def recognize(
+        candidate,
+        _config,
+        *,
+        psm,
+        thresholding_method,
+        char_whitelist=None,
+    ):
+        del psm, thresholding_method, char_whitelist
+        if candidate.width > candidate.height:
+            return [
+                Word("Figure", 0.10, 0.10, 0.20, 0.15, confidence=0.0),
+                Word("14b.", 0.21, 0.10, 0.28, 0.15, confidence=0.0),
+            ]
+        return [Word("diagram", 0.4, 0.4, 0.5, 0.45, confidence=99.0)]
+
+    monkeypatch.setattr(ocr_module, "_tesseract_words", recognize)
+
+    words = ocr_drawing_words(b"pdf", 0, DEFAULT_CONFIG)
+
+    assert {figure.figure_id for figure in detect_figure_occurrences(words, 0)} == {"14B"}
 
 
 def test_drawing_ocr_skips_callout_profile_while_identification_is_disabled(monkeypatch):
@@ -413,6 +445,39 @@ def test_route_page_uses_rotated_drawing_pass_for_scanned_sheet():
     assert calls == ["drawing"]
     assert result.is_drawing is True
     assert [callout.value for callout in result.callouts] == ["104"]
+
+
+def test_route_page_keeps_native_figure_label_over_overlapping_ocr_misread():
+    native_words = [
+        Word("Sheet", 0.40, 0.03, 0.46, 0.05),
+        Word("13", 0.47, 0.03, 0.49, 0.05),
+        Word("of", 0.50, 0.03, 0.53, 0.05),
+        Word("32", 0.54, 0.03, 0.58, 0.05),
+        Word("Figure", 0.20, 0.20, 0.27, 0.23),
+        Word("9b.", 0.28, 0.20, 0.32, 0.23),
+        *[
+            Word(str(700 + index), 0.10, 0.30 + index * 0.02, 0.14, 0.31 + index * 0.02)
+            for index in range(10)
+        ],
+    ]
+
+    def drawing_pass(*_args, **_kwargs):
+        return [
+            Word("Figure", 0.20, 0.20, 0.27, 0.23, confidence=91.0),
+            Word("10", 0.28, 0.20, 0.32, 0.23, confidence=89.0),
+        ]
+
+    result = route_page(
+        b"pdf",
+        Page(13, native_words),
+        DEFAULT_CONFIG,
+        True,
+        drawing_ocr_fn=drawing_pass,
+    )
+
+    assert [(figure.figure_id, figure.method) for figure in result.figures] == [
+        ("9B", "native_text")
+    ]
 
 
 def test_image_only_first_drawing_sheet_keeps_figure_one_without_callouts():
