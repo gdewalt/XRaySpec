@@ -18,10 +18,36 @@ import httpx
 from .base import ObjectStat, UploadGrant
 
 
+def _is_missing_object_response(resp: httpx.Response) -> bool:
+    """Supabase can report an absent object as either 404 or a JSON 400."""
+    if resp.status_code == 404:
+        return True
+    if resp.status_code != 400:
+        return False
+    try:
+        payload = resp.json()
+    except ValueError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    detail = " ".join(
+        str(payload.get(field, "")) for field in ("statusCode", "error", "message")
+    ).casefold()
+    return "not found" in detail or "not_found" in detail or payload.get("statusCode") == "404"
+
+
 class SupabaseObjectStore:
-    def __init__(self, project_url: str, service_key: str, bucket: str) -> None:
+    def __init__(
+        self,
+        project_url: str,
+        service_key: str,
+        bucket: str,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
         self._base = f"{project_url.rstrip('/')}/storage/v1"
         self._bucket = bucket
+        self._transport = transport
         self._auth = {
             "Authorization": f"Bearer {service_key}",
             "apikey": service_key,
@@ -36,7 +62,7 @@ class SupabaseObjectStore:
         expires_in: int,
     ) -> UploadGrant:
         # POST /object/upload/sign/{bucket}/{path} -> {"url": "/object/upload/sign/...token=..."}
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=15, transport=self._transport) as client:
             resp = await client.post(
                 f"{self._base}/object/upload/sign/{self._bucket}/{object_key}",
                 headers=self._auth,
@@ -56,7 +82,7 @@ class SupabaseObjectStore:
         self, object_key: str, data: bytes, *, content_type: str = "application/octet-stream"
     ) -> None:
         # POST /object/{bucket}/{path} with x-upsert to create-or-replace.
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=60, transport=self._transport) as client:
             resp = await client.post(
                 f"{self._base}/object/{self._bucket}/{object_key}",
                 headers={**self._auth, "Content-Type": content_type, "x-upsert": "true"},
@@ -66,11 +92,16 @@ class SupabaseObjectStore:
                 resp.raise_for_status()
 
     async def read(self, object_key: str, *, limit: int) -> bytes:
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=60, transport=self._transport) as client:
             async with client.stream(
                 "GET", f"{self._base}/object/{self._bucket}/{object_key}", headers=self._auth
             ) as resp:
-                if resp.status_code == 404:
+                # Error bodies are not loaded automatically in streaming mode;
+                # Supabase's JSON payload distinguishes a missing-object 400
+                # from other malformed requests.
+                if resp.status_code in (400, 404):
+                    await resp.aread()
+                if _is_missing_object_response(resp):
                     raise FileNotFoundError(object_key)
                 resp.raise_for_status()
                 chunks = bytearray()
@@ -81,7 +112,7 @@ class SupabaseObjectStore:
                 return bytes(chunks)
 
     async def stat(self, object_key: str) -> ObjectStat | None:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=15, transport=self._transport) as client:
             resp = await client.get(
                 f"{self._base}/object/info/{self._bucket}/{object_key}", headers=self._auth
             )
@@ -95,9 +126,13 @@ class SupabaseObjectStore:
             )
 
     async def delete(self, object_key: str) -> None:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=15, transport=self._transport) as client:
+            # Supabase's stable remove API accepts one or more object prefixes
+            # in the request body. It is idempotent when a key is already gone.
             resp = await client.delete(
-                f"{self._base}/object/{self._bucket}/{object_key}", headers=self._auth
+                f"{self._base}/object/{self._bucket}",
+                headers=self._auth,
+                json={"prefixes": [object_key]},
             )
-            if resp.status_code not in (200, 204, 404):
+            if resp.status_code not in (200, 204) and not _is_missing_object_response(resp):
                 resp.raise_for_status()
