@@ -23,4 +23,4 @@ RUN pip install --no-cache-dir .
 COPY --from=frontend /build/frontend/dist /app/frontend-dist
 
 EXPOSE 10000
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
+CMD ["sh", "-c", "python -m alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}"]

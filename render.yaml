@@ -32,7 +32,6 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /ready
-    preDeployCommand: cd /app/backend && python -m alembic upgrade head
     autoDeployTrigger: off
     numInstances: 1
     envVars:
