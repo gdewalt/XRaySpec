@@ -76,6 +76,27 @@ async def test_process_one_succeeds_and_marks_document_ready(client):
     assert await process_one(client.sessionmaker, client.object_store, stub_processor) is False
 
 
+async def test_process_one_failure_marks_job_and_document_failed(client, caplog):
+    job_id, doc_id = await _seed(client)
+
+    async def failing_processor(ctx, job):
+        await ctx.heartbeat(stage="extracting_text", stage_label="Reading pages")
+        raise RuntimeError("test processor failure")
+
+    with caplog.at_level("ERROR"):
+        assert await process_one(
+            client.sessionmaker,
+            client.object_store,
+            failing_processor,
+        ) is True
+
+    job = await _get_job(client, job_id)
+    assert job.status == "failed"
+    assert job.failure_code == "INTERNAL_ERROR"
+    assert (await _get_doc(client, doc_id)).state == "failed"
+    assert "extraction job failed" in caplog.text
+
+
 async def test_cancellation_stops_processing(client):
     job_id, doc_id = await _seed(client, cancel=True)
     assert await process_one(client.sessionmaker, client.object_store, stub_processor) is True

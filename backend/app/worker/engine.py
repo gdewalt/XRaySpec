@@ -13,14 +13,17 @@ and the restricted-egress fetch processor land in later slices behind the same
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from ..db.models import ExtractionJob
+from ..db.models import ExtractionJob, UserDocument
 from ..storage.base import ObjectStore
 from .queue import claim_next_job
+
+logger = logging.getLogger(__name__)
 
 
 class JobCancelled(Exception):
@@ -137,6 +140,10 @@ async def _finish(
         job.failure_code = failure_code
         job.finished_at = datetime.now(UTC)
         job.progress_sequence += 1  # terminal transition emits a final SSE event
+        if status == "failed" and job.document_id is not None:
+            document = await session.get(UserDocument, job.document_id)
+            if document is not None and document.state != "deleted":
+                document.state = "failed"
         await session.commit()
 
 
@@ -154,6 +161,13 @@ async def process_one(
     if job is None:
         return False
 
+    logger.info(
+        "claimed extraction job job_id=%s document_id=%s attempt=%s",
+        job.id,
+        job.document_id,
+        job.attempt,
+    )
+
     ctx = JobContext(
         sessionmaker,
         store,
@@ -165,12 +179,20 @@ async def process_one(
         await processor(ctx, job)
     except JobCancelled:
         await _finish(ctx, "cancelled")
+        logger.info("cancelled extraction job job_id=%s document_id=%s", job.id, job.document_id)
         return True
     except JobPreempted:
+        logger.warning("lost lease for extraction job job_id=%s", job.id)
         return True  # another worker owns it now
     except Exception:
+        logger.exception(
+            "extraction job failed job_id=%s document_id=%s",
+            job.id,
+            job.document_id,
+        )
         await _finish(ctx, "failed", failure_code="INTERNAL_ERROR")
         return True
 
     await _finish(ctx, "succeeded")
+    logger.info("completed extraction job job_id=%s document_id=%s", job.id, job.document_id)
     return True

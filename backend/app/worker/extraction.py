@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import time
 from collections.abc import Callable
 
@@ -33,6 +34,8 @@ from .engine import JobContext
 
 _CHECKPOINT_BATCH_SIZE = 4
 _PAGE_WORKERS = 2
+
+logger = logging.getLogger(__name__)
 
 
 async def run_extraction(
@@ -168,6 +171,12 @@ async def run_extraction(
                             )
                         await ctx.heartbeat_in_session(session, completed_units=completed)
                         await session.commit()
+                    logger.info(
+                        "extraction progress job_id=%s pages=%s/%s",
+                        ctx.job_id,
+                        completed,
+                        total_pages,
+                    )
                     pending_checkpoints.clear()
                     last_checkpoint_commit = time.monotonic()
         except BaseException:

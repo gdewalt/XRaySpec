@@ -10,12 +10,20 @@ Run with:  python -m app.worker.run
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 
 from ..config import get_settings
 from ..db.base import get_sessionmaker
 from ..storage.base import ObjectStore
 from .engine import process_one
 from .processors import extraction_processor
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 def _build_store() -> ObjectStore:
@@ -36,11 +44,25 @@ def _build_store() -> ObjectStore:
 
 
 async def main() -> None:
+    settings = get_settings()
     sessionmaker = get_sessionmaker()
     store = _build_store()
+    logger.info(
+        "extraction worker started storage_backend=%s bucket=%s",
+        settings.storage_backend,
+        settings.storage_bucket if settings.storage_backend == "supabase" else "n/a",
+    )
     idle_backoff = 1.0
+    idle_seconds = 0.0
     while True:
         did_work = await process_one(sessionmaker, store, extraction_processor)
+        if did_work:
+            idle_seconds = 0.0
+        else:
+            idle_seconds += idle_backoff
+            if idle_seconds >= 60.0:
+                logger.info("extraction worker is healthy and waiting for a queued job")
+                idle_seconds = 0.0
         await asyncio.sleep(0 if did_work else idle_backoff)
 
 
