@@ -129,7 +129,8 @@ class SupabaseObjectStore:
         async with httpx.AsyncClient(timeout=15, transport=self._transport) as client:
             # Supabase's stable remove API accepts one or more object prefixes
             # in the request body. It is idempotent when a key is already gone.
-            resp = await client.delete(
+            resp = await client.request(
+                "DELETE",
                 f"{self._base}/object/{self._bucket}",
                 headers=self._auth,
                 json={"prefixes": [object_key]},
