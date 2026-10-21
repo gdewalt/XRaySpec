@@ -230,6 +230,30 @@ def test_orientation_passes_deduplicate_the_same_label_by_confidence():
     assert result[0].confidence == 94.0
 
 
+def test_overlapping_truncated_ocr_fragments_keep_complete_word():
+    words = [
+        Word("tion,", 0.500, 0.20, 0.540, 0.23, confidence=74.0),
+        Word("on,", 0.516, 0.20, 0.540, 0.23, confidence=96.0),
+        Word("of", 0.600, 0.20, 0.620, 0.23, confidence=72.0),
+        Word("f", 0.611, 0.20, 0.620, 0.23, confidence=95.0),
+        Word("graphite", 0.680, 0.20, 0.750, 0.23, confidence=76.0),
+        Word("raphite", 0.690, 0.20, 0.750, 0.23, confidence=94.0),
+    ]
+
+    result = dedupe_words(words)
+
+    assert [word.text for word in result] == ["tion,", "of", "graphite"]
+
+
+def test_adjacent_suffix_word_is_not_deduplicated():
+    words = [
+        Word("interface", 0.10, 0.20, 0.20, 0.23, confidence=90.0),
+        Word("face", 0.21, 0.20, 0.25, 0.23, confidence=90.0),
+    ]
+
+    assert [word.text for word in dedupe_words(words)] == ["interface", "face"]
+
+
 def test_drawing_fusion_rewards_agreement_between_specialized_passes():
     words = [
         Word("104", 0.10, 0.20, 0.15, 0.23, confidence=82.0),
@@ -398,6 +422,40 @@ def test_route_page_uses_separate_column_ocr_for_scanned_specification():
     )
     assert calls == ["columns"]
     assert [word.text for word in result.words] == ["enhanced"]
+
+
+def test_grant_column_header_wins_over_sparse_drawing_heuristic():
+    full_words = [
+        Word("5", 0.30, 0.08, 0.32, 0.10, confidence=90.0),
+        Word("6", 0.70, 0.08, 0.72, 0.10, confidence=90.0),
+        Word("10", 0.48, 0.20, 0.50, 0.22, confidence=90.0),
+        Word("20", 0.48, 0.30, 0.50, 0.32, confidence=90.0),
+    ]
+    calls: list[str] = []
+
+    def full_pass(*_args, **_kwargs):
+        return full_words
+
+    def column_pass(_pdf, _index, _config, base_words):
+        calls.append("columns")
+        return [*base_words, Word("specification", 0.1, 0.2, 0.2, 0.22)]
+
+    def drawing_pass(*_args, **_kwargs):
+        pytest.fail("a grant column page must not be sent to drawing OCR")
+
+    result = route_page(
+        b"pdf",
+        Page(27, []),
+        DEFAULT_CONFIG,
+        True,
+        ocr_fn=full_pass,
+        specification_ocr_fn=column_pass,
+        drawing_ocr_fn=drawing_pass,
+    )
+
+    assert result.is_drawing is False
+    assert calls == ["columns"]
+    assert any(word.text == "specification" for word in result.words)
 
 
 def test_route_page_reuses_one_render_for_full_and_column_ocr(monkeypatch):

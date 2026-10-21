@@ -18,6 +18,7 @@ from app.extraction.callouts import (
     detect_page_figure,
     filter_callouts_by_values,
     filter_figure_occurrences,
+    has_drawing_sheet_header,
     infer_missing_figure_occurrences,
     is_drawing_page,
     specification_callout_values,
@@ -96,6 +97,22 @@ def test_entire_drawing_header_band_is_ignored():
         Word("104", 0.40, 0.40, 0.45, 0.42),
     ]
     assert [callout.value for callout in detect_callouts(words, 3, "1")] == ["104"]
+
+
+def test_specification_prose_below_masthead_is_not_a_sheet_header():
+    words = [
+        Word("5", 0.30, 0.09, 0.32, 0.10),
+        Word("6", 0.70, 0.09, 0.72, 0.10),
+        Word("material", 0.12, 0.13, 0.18, 0.15),
+        Word("forming", 0.19, 0.13, 0.24, 0.15),
+        Word("the", 0.25, 0.13, 0.28, 0.15),
+        Word("carbon", 0.29, 0.13, 0.34, 0.15),
+        Word("fiber", 0.35, 0.13, 0.39, 0.15),
+        Word("sheet", 0.40, 0.13, 0.44, 0.15),
+        Word("of", 0.60, 0.14, 0.62, 0.16),
+    ]
+
+    assert has_drawing_sheet_header(words) is False
 
 
 def test_specification_callouts_are_bold_numbers_in_column_body():

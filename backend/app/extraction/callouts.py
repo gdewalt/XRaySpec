@@ -68,9 +68,12 @@ def _is_year(token: str) -> bool:
 def _sheet_header_word_ids(words: list[Word]) -> set[int]:
     """Return words belonging to a top-of-page ``Sheet X of Y`` header."""
     excluded: set[int] = set()
-    top_words = [word for word in words if word.cy <= 0.18]
+    # Drawing-sheet mastheads sit above the document body. Looking as deep as
+    # 18% of the page caused ordinary specification prose such as "carbon fiber
+    # sheet" plus an unrelated "of" to masquerade as a drawing header.
+    top_words = [word for word in words if word.cy <= 0.12]
     for line in group_lines(words):
-        if line.cy > 0.18:
+        if line.cy > 0.12:
             continue
         text = " ".join(word.text.strip() for word in line.words).strip()
         if _SHEET_HEADER.search(text):

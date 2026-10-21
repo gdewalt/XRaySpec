@@ -35,7 +35,7 @@ from .callouts import (
 from .config import ExtractionConfig
 from .figures import detect_figure_references, detect_reference_numerals
 from .model import Page, Word
-from .native import extract_page
+from .native import _detect_columns, extract_page
 
 _MARKER_THRESHOLD = 3  # a document with this many paragraph markers is an application
 
@@ -111,10 +111,16 @@ def route_page(
     else:
         page, method = native_page, "native"  # no text layer, no OCR
 
-    if is_drawing_page(page.words) or has_drawing_sheet_header(native_page.words):
-        is_drawing_sheet = has_drawing_sheet_header(
-            [*native_page.words, *page.words]
-        )
+    combined_words = [*native_page.words, *page.words]
+    is_drawing_sheet = has_drawing_sheet_header(combined_words)
+    has_specification_header = _detect_columns(page.words) is not None
+    # Sparse, degraded specification OCR can look numeric enough to satisfy the
+    # drawing heuristic. A printed N / N+1 grant-column header is stronger
+    # evidence of specification text; only an explicit ``Sheet X of Y`` header
+    # is allowed to override it.
+    if is_drawing_sheet or (
+        not has_specification_header and is_drawing_page(page.words)
+    ):
         # Preserve trustworthy embedded PDF labels before adding raster OCR.
         # Word-level merging can interleave an OCR misread with the native title
         # at the same coordinates (for example ``Figure 9b`` + ``Figure 10``),

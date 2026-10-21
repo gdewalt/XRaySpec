@@ -406,25 +406,62 @@ def _box_iou(left: Word, right: Word) -> float:
     return intersection / union if union else 0.0
 
 
+def _box_containment(left: Word, right: Word) -> float:
+    """Return how much of the smaller word box is covered by the larger one."""
+    ix0, iy0 = max(left.x0, right.x0), max(left.y0, right.y0)
+    ix1, iy1 = min(left.x1, right.x1), min(left.y1, right.y1)
+    intersection = max(0.0, ix1 - ix0) * max(0.0, iy1 - iy0)
+    left_area = max(0.0, left.x1 - left.x0) * max(0.0, left.y1 - left.y0)
+    right_area = max(0.0, right.x1 - right.x0) * max(0.0, right.y1 - right.y0)
+    smaller_area = min(left_area, right_area)
+    return intersection / smaller_area if smaller_area else 0.0
+
+
+def _word_completeness(word: Word) -> tuple[int, float, float]:
+    """Rank competing OCR tokens by content, coverage, then confidence."""
+    useful_characters = sum(character.isalnum() for character in word.text)
+    return (
+        useful_characters,
+        max(0.0, word.x1 - word.x0),
+        word.confidence or 0.0,
+    )
+
+
 def dedupe_words(words: Iterable[Word]) -> list[Word]:
-    """Merge equivalent tokens emitted by overlapping/orientation OCR passes."""
+    """Merge equivalent or nested tokens from overlapping OCR passes.
+
+    Separate full-page and column passes occasionally recognize the same word as
+    both a complete token and a suffix (for example ``interface``/``terface``).
+    Their boxes substantially overlap and share a right edge, so keep the more
+    complete reading instead of emitting both fragments into the line.
+    """
     kept: list[Word] = []
     for word in sorted(words, key=lambda item: (-(item.confidence or 0.0), item.cy, item.x0)):
         token = word.text.strip().casefold()
-        duplicate = next(
+        duplicate_index = next(
             (
-                existing
-                for existing in kept
-                if existing.text.strip().casefold() == token
-                and (
-                    _box_iou(existing, word) >= 0.25
-                    or math.hypot(existing.cx - word.cx, existing.cy - word.cy) <= 0.008
+                index
+                for index, existing in enumerate(kept)
+                if (
+                    existing.text.strip().casefold() == token
+                    and (
+                        _box_iou(existing, word) >= 0.25
+                        or math.hypot(existing.cx - word.cx, existing.cy - word.cy)
+                        <= 0.008
+                    )
+                )
+                or (
+                    abs(existing.cy - word.cy) <= 0.008
+                    and _box_containment(existing, word) >= 0.82
+                    and abs(existing.x1 - word.x1) <= 0.008
                 )
             ),
             None,
         )
-        if duplicate is None:
+        if duplicate_index is None:
             kept.append(word)
+        elif _word_completeness(word) > _word_completeness(kept[duplicate_index]):
+            kept[duplicate_index] = word
     return sorted(kept, key=lambda item: (item.cy, item.x0))
 
 
@@ -513,8 +550,13 @@ def ocr_specification_words(
     )
     clean = prepared.text_image
     crops = (
-        (0.055, 0.075, 0.485, 0.955),
-        (0.515, 0.075, 0.945, 0.955),
+        (0.055, 0.102, 0.500, 0.955),
+        # The right column on scanned grants commonly begins around x=.508.
+        # Starting at .515 clipped the first character, producing suffixes such
+        # as ``onfigurations`` and overlapping ``interface``/``terface`` reads.
+        # Include a narrow gutter margin; reconstruction already identifies and
+        # removes printed centre line numbers geometrically.
+        (0.500, 0.102, 0.945, 0.955),
     )
     column_words: list[Word] = []
     for crop in crops:
@@ -538,7 +580,7 @@ def ocr_specification_words(
     ]
     if len(column_words) < max(10, round(len(base_body) * 0.60)):
         return base_words
-    structural = [word for word in base_words if word.cy <= 0.09 or 0.455 <= word.cx <= 0.545]
+    structural = [word for word in base_words if word.cy <= 0.10 or 0.455 <= word.cx <= 0.545]
     return dedupe_words([*structural, *column_words])
 
 

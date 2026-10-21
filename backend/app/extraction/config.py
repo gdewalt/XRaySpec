@@ -22,7 +22,7 @@ OcrPolicy = Literal["auto", "force", "disabled"]
 @dataclass(frozen=True, slots=True)
 class ExtractionConfig:
     # Engine identity
-    version: str = "0.21.0"
+    version: str = "0.22.0"
 
     # OCR
     ocr_policy: OcrPolicy = "auto"
