@@ -3467,9 +3467,45 @@ button:active:not(:disabled) { transform: translateY(1px); }
 }
 .resizing-panes, .resizing-panes * { cursor: col-resize !important; user-select: none !important; }
 .resizing-panes .panes, .resizing-panes .spec, .resizing-panes .pdf-pane { transition: none !important; }
-.outline-claim-row { grid-template-columns: 32px minmax(0, 1fr); }
+.outline-claim-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: stretch;
+}
 .outline-asserted-toggle { grid-column: 1; }
 .outline-claim-jump { grid-column: 2; }
+.pdf-controls {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  overflow: visible;
+}
+.pdf-view-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: .2rem;
+}
+.pdf-view-controls > .icon-button,
+.pdf-annotation-tools > button {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+}
+.pdf-annotation-tools {
+  display: flex;
+  flex: 1 1 260px;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+  overflow: visible;
+}
+.pdf-color-control { flex: 0 0 auto; }
 .spec-line.pdf-text-highlight .line-text {
   border-radius: 2px;
   background: color-mix(in srgb, #ffe066 52%, transparent);

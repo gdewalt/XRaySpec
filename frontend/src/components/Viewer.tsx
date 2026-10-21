@@ -961,10 +961,16 @@ export function Viewer({ documentId }: { documentId: string }) {
     });
   }, []);
 
-  const finishResizeSplit = useCallback(() => {
+  const finishResizeSplit = useCallback((clientX?: number) => {
     if (resizeFrameRef.current !== null) {
       window.cancelAnimationFrame(resizeFrameRef.current);
       resizeFrameRef.current = null;
+    }
+    const bounds = resizeBoundsRef.current;
+    if (bounds && clientX !== undefined) {
+      const next = Math.max(18, Math.min(82, ((clientX - bounds.left) / bounds.width) * 100));
+      resizePercentRef.current = next;
+      panesRef.current?.style.setProperty("--split-percent", `${next}%`);
     }
     resizeBoundsRef.current = null;
     document.body.classList.remove("resizing-panes");
@@ -1562,9 +1568,9 @@ export function Viewer({ documentId }: { documentId: string }) {
               }}
               onPointerUp={(event) => {
                 event.currentTarget.releasePointerCapture(event.pointerId);
-                finishResizeSplit();
+                finishResizeSplit(event.clientX);
               }}
-              onPointerCancel={finishResizeSplit}
+              onPointerCancel={() => finishResizeSplit()}
               onDoubleClick={() => {
                 resizePercentRef.current = 50;
                 setSplitPercent(50);

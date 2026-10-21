@@ -113,34 +113,55 @@ function highlightedEntryIds(annotations: PdfAnnotationRead[]): Set<string> {
 }
 
 function lineHighlightGeometry(start: Point, end: Point, entries: EntryDto[]) {
-  const [first, last] =
-    start[1] < end[1] || (start[1] === end[1] && start[0] <= end[0])
-      ? [start, end]
-      : [end, start];
-  const y0 = Math.min(first[1], last[1]);
-  const y1 = Math.max(first[1], last[1]);
   const lines = entries
-    .filter((entry) => {
-      const box = entry.box;
-      return !!box && box.length === 4 && box[3] >= y0 && box[1] <= y1;
-    })
-    .sort((a, b) => (a.box?.[1] ?? 0) - (b.box?.[1] ?? 0));
-  const rects = lines.flatMap((entry, index) => {
+    .filter((entry) => entry.box?.length === 4)
+    .sort((a, b) => a.ordinal - b.ordinal);
+  const distanceToEntry = (point: Point, entry: EntryDto) => {
+    const box = entry.box!;
+    const dx = Math.max(box[0] - point[0], 0, point[0] - box[2]);
+    const dy = Math.max(box[1] - point[1], 0, point[1] - box[3]);
+    return Math.hypot(dx, dy);
+  };
+  const nearestIndex = (point: Point) => {
+    let bestIndex = -1;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    lines.forEach((entry, index) => {
+      const distance = distanceToEntry(point, entry);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    });
+    return bestIndex;
+  };
+  const startIndex = nearestIndex(start);
+  const endIndex = nearestIndex(end);
+  if (startIndex < 0 || endIndex < 0) return { rects: [], entryIds: [] };
+  const forward = startIndex <= endIndex;
+  const firstIndex = Math.min(startIndex, endIndex);
+  const lastIndex = Math.max(startIndex, endIndex);
+  const first = forward ? start : end;
+  const last = forward ? end : start;
+  const selectedLines = lines.slice(firstIndex, lastIndex + 1);
+  const rects = selectedLines.flatMap((entry, index) => {
     const box = entry.box;
     if (!box) return [];
     let left = box[0];
     let right = box[2];
-    if (lines.length === 1) {
+    if (selectedLines.length === 1) {
       left = Math.max(left, Math.min(first[0], last[0]));
       right = Math.min(right, Math.max(first[0], last[0]));
     } else if (index === 0) {
       left = Math.max(left, first[0]);
-    } else if (index === lines.length - 1) {
+    } else if (index === selectedLines.length - 1) {
       right = Math.min(right, last[0]);
     }
-    return right - left > 0.002 ? [[left, box[1], right, box[3]]] : [];
+    const verticalInset = Math.min((box[3] - box[1]) * 0.1, 0.003);
+    return right - left > 0.002
+      ? [[left, box[1] + verticalInset, right, box[3] - verticalInset]]
+      : [];
   });
-  return { rects, entryIds: lines.map((entry) => entry.entry_id) };
+  return { rects, entryIds: selectedLines.map((entry) => entry.entry_id) };
 }
 
 /** Rotate a normalized [x0,y0,x1,y1] box by 0/90/180/270° to match the viewport. */
@@ -843,36 +864,38 @@ export function PdfPane({
   return (
     <div className="pdf-pane" onPointerDown={onActivate}>
       <div className="pdf-controls">
-        <span className="pdf-pageno">
-          Page {page} of {pageCount || "…"}
-        </span>
-        <button
-          type="button"
-          className="icon-button"
-          onClick={() => setScale((value) => Math.max(0.5, value - 0.15))}
-          aria-label="Zoom out"
-          title="Zoom out"
-        >
-          <Icon name="zoom-out" size={17} />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          onClick={() => setScale((value) => Math.min(3, value + 0.15))}
-          aria-label="Zoom in"
-          title="Zoom in"
-        >
-          <Icon name="zoom-in" size={17} />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          onClick={() => setRotation((value) => (value + 90) % 360)}
-          title="Rotate 90°"
-          aria-label="Rotate PDF 90 degrees"
-        >
-          <Icon name="rotate-cw" size={17} />
-        </button>
+        <div className="pdf-view-controls">
+          <span className="pdf-pageno">
+            Page {page} of {pageCount || "…"}
+          </span>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => setScale((value) => Math.max(0.5, value - 0.15))}
+            aria-label="Zoom out"
+            title="Zoom out"
+          >
+            <Icon name="zoom-out" size={17} />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => setScale((value) => Math.min(3, value + 0.15))}
+            aria-label="Zoom in"
+            title="Zoom in"
+          >
+            <Icon name="zoom-in" size={17} />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => setRotation((value) => (value + 90) % 360)}
+            title="Rotate 90°"
+            aria-label="Rotate PDF 90 degrees"
+          >
+            <Icon name="rotate-cw" size={17} />
+          </button>
+        </div>
         <div className="pdf-annotation-tools" role="toolbar" aria-label="PDF annotation tools">
           {PDF_TOOLS.map((item) => (
             <button
