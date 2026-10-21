@@ -78,7 +78,7 @@ function loadViewerPreferences(): {
       ? (saved.layout as Layout)
       : "text";
     const splitPercent = Number.isFinite(saved.splitPercent)
-      ? Math.max(24, Math.min(76, saved.splitPercent))
+      ? Math.max(18, Math.min(82, saved.splitPercent))
       : 42;
     return { layout, splitPercent, outlineOpen: saved.outlineOpen === true };
   } catch {
@@ -325,6 +325,9 @@ export function Viewer({ documentId }: { documentId: string }) {
   const [selectionSource, setSelectionSource] = useState<"text" | "pdf">("text");
   const [textSelection, setTextSelection] = useState("");
   const [pdfSelection, setPdfSelection] = useState("");
+  const [pdfHighlightedEntryIds, setPdfHighlightedEntryIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [splitPercent, setSplitPercent] = useState(
     () => loadViewerPreferences().splitPercent,
   );
@@ -355,6 +358,14 @@ export function Viewer({ documentId }: { documentId: string }) {
   const searchRef = useRef<HTMLInputElement>(null);
   const panesRef = useRef<HTMLDivElement>(null);
   const specRef = useRef<HTMLElement>(null);
+  const resizeBoundsRef = useRef<{ left: number; width: number } | null>(null);
+  const resizeFrameRef = useRef<number | null>(null);
+  const resizePercentRef = useRef(splitPercent);
+
+  useEffect(() => () => {
+    if (resizeFrameRef.current !== null) window.cancelAnimationFrame(resizeFrameRef.current);
+    document.body.classList.remove("resizing-panes");
+  }, []);
 
   useEffect(() => {
     try {
@@ -668,7 +679,8 @@ export function Viewer({ documentId }: { documentId: string }) {
       setSelectionSource("pdf");
       setPdfPage(targetPage + 1);
       const directlyDetected = figures.find(
-        (figure) => figure.method !== "sequence_inferred",
+        (figure) =>
+          figure.page_index === targetPage && figure.method !== "sequence_inferred",
       );
       setFocusedFigure(directlyDetected ? { ...directlyDetected } : null);
       setHighlightCallouts(new Set());
@@ -920,15 +932,43 @@ export function Viewer({ documentId }: { documentId: string }) {
     setPdfPage(1);
   }, [showPdf]);
 
-  const resizeSplit = useCallback((clientX: number) => {
+  const beginResizeSplit = useCallback((clientX: number) => {
     const container = panesRef.current;
     const textPane = specRef.current;
     const pdfPane = container?.querySelector<HTMLElement>(".pdf-pane");
-    if (!textPane || !pdfPane) return;
+    if (!container || !textPane || !pdfPane) return;
     const left = textPane.getBoundingClientRect().left;
     const right = pdfPane.getBoundingClientRect().right;
     if (right <= left) return;
-    setSplitPercent(Math.max(24, Math.min(76, ((clientX - left) / (right - left)) * 100)));
+    resizeBoundsRef.current = { left, width: right - left };
+    document.body.classList.add("resizing-panes");
+    const percent = ((clientX - left) / (right - left)) * 100;
+    const next = Math.max(18, Math.min(82, percent));
+    resizePercentRef.current = next;
+    container.style.setProperty("--split-percent", `${next}%`);
+  }, []);
+
+  const resizeSplit = useCallback((clientX: number) => {
+    const bounds = resizeBoundsRef.current;
+    if (!bounds) return;
+    if (resizeFrameRef.current !== null) window.cancelAnimationFrame(resizeFrameRef.current);
+    resizeFrameRef.current = window.requestAnimationFrame(() => {
+      const percent = ((clientX - bounds.left) / bounds.width) * 100;
+      const next = Math.max(18, Math.min(82, percent));
+      resizePercentRef.current = next;
+      panesRef.current?.style.setProperty("--split-percent", `${next}%`);
+      resizeFrameRef.current = null;
+    });
+  }, []);
+
+  const finishResizeSplit = useCallback(() => {
+    if (resizeFrameRef.current !== null) {
+      window.cancelAnimationFrame(resizeFrameRef.current);
+      resizeFrameRef.current = null;
+    }
+    resizeBoundsRef.current = null;
+    document.body.classList.remove("resizing-panes");
+    setSplitPercent(resizePercentRef.current);
   }, []);
 
   const patentNumber = doc?.patent_number?.trim();
@@ -1165,11 +1205,7 @@ export function Viewer({ documentId }: { documentId: string }) {
       )}
 
       {artifact && layout !== "details" && (
-        <div
-          ref={panesRef}
-          className={`panes ${layout}`}
-          style={{ "--split-percent": `${splitPercent}%` } as CSSProperties}
-        >
+        <div className={`panes ${layout}`}>
           {showText && outlineOpen && (
             <nav className="outline" aria-label="Outline">
               <button
@@ -1394,16 +1430,6 @@ export function Viewer({ documentId }: { documentId: string }) {
                         >
                           <button
                             type="button"
-                            className="outline-item claim outline-claim-jump"
-                            onClick={() =>
-                              selectRange(item.ordinal, item.ordinal, { scroll: true })
-                            }
-                          >
-                            <span className="outline-label">{item.label}</span>
-                            <span className="outline-ref">{item.ref}</span>
-                          </button>
-                          <button
-                            type="button"
                             className="outline-asserted-toggle"
                             aria-label={
                               isAsserted
@@ -1416,6 +1442,16 @@ export function Viewer({ documentId }: { documentId: string }) {
                             title={isAsserted ? "Remove asserted status" : "Mark as asserted"}
                           >
                             <Icon name="flag" size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            className="outline-item claim outline-claim-jump"
+                            onClick={() =>
+                              selectRange(item.ordinal, item.ordinal, { scroll: true })
+                            }
+                          >
+                            <span className="outline-label">{item.label}</span>
+                            <span className="outline-ref">{item.ref}</span>
                           </button>
                         </div>
                       );
@@ -1430,6 +1466,11 @@ export function Viewer({ documentId }: { documentId: string }) {
               )}
             </nav>
           )}
+          <div
+            ref={panesRef}
+            className="viewer-document-panes"
+            style={{ "--split-percent": `${splitPercent}%` } as CSSProperties}
+          >
           {showText && (
             <section
               ref={specRef}
@@ -1470,7 +1511,7 @@ export function Viewer({ documentId }: { documentId: string }) {
                     key={e.entry_id}
                     id={`spec-L${e.ordinal}`}
                     data-ordinal={e.ordinal}
-                    className={`spec-line${sel ? " selected" : ""}${paragraphStart ? " paragraph-start" : ""}`}
+                    className={`spec-line${sel ? " selected" : ""}${pdfHighlightedEntryIds.has(e.entry_id) ? " pdf-text-highlight" : ""}${paragraphStart ? " paragraph-start" : ""}`}
                     role="option"
                     aria-selected={!!sel}
                     onClick={() => {
@@ -1506,27 +1547,43 @@ export function Viewer({ documentId }: { documentId: string }) {
               role="separator"
               aria-label="Resize text and PDF panes"
               aria-orientation="vertical"
-              aria-valuemin={24}
-              aria-valuemax={76}
+              aria-valuemin={18}
+              aria-valuemax={82}
               aria-valuenow={Math.round(splitPercent)}
               tabIndex={0}
               onPointerDown={(event) => {
                 event.currentTarget.setPointerCapture(event.pointerId);
-                resizeSplit(event.clientX);
+                beginResizeSplit(event.clientX);
               }}
               onPointerMove={(event) => {
                 if (event.currentTarget.hasPointerCapture(event.pointerId)) {
                   resizeSplit(event.clientX);
                 }
               }}
-              onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
+              onPointerUp={(event) => {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+                finishResizeSplit();
+              }}
+              onPointerCancel={finishResizeSplit}
+              onDoubleClick={() => {
+                resizePercentRef.current = 50;
+                setSplitPercent(50);
+              }}
               onKeyDown={(event) => {
                 if (event.key === "ArrowLeft") {
                   event.preventDefault();
-                  setSplitPercent((value) => Math.max(24, value - 2));
+                  setSplitPercent((value) => {
+                    const next = Math.max(18, value - 2);
+                    resizePercentRef.current = next;
+                    return next;
+                  });
                 } else if (event.key === "ArrowRight") {
                   event.preventDefault();
-                  setSplitPercent((value) => Math.min(76, value + 2));
+                  setSplitPercent((value) => {
+                    const next = Math.min(82, value + 2);
+                    resizePercentRef.current = next;
+                    return next;
+                  });
                 }
               }}
             >
@@ -1555,9 +1612,11 @@ export function Viewer({ documentId }: { documentId: string }) {
                 setSelectionSource("pdf");
                 setPdfSelection(text);
               }}
+              onTextHighlightsChange={setPdfHighlightedEntryIds}
               copyCitation={citation}
             />
           )}
+          </div>
         </div>
       )}
 

@@ -46,6 +46,9 @@ on both services:
 - `XRAY_SUPABASE_PROJECT_URL`
 - `XRAY_SUPABASE_ANON_KEY` (or publishable key)
 - `XRAY_SUPABASE_SERVICE_KEY` (or secret key)
+- `XRAY_CREDENTIAL_ENCRYPTION_KEY` (the same random value of at least 32
+  characters on both the web and worker services; changing it makes stored
+  user USPTO API keys unreadable)
 - `XRAY_ALLOWED_EMAILS` as JSON, for example
   `["owner@example.com","reviewer@example.com"]`
 

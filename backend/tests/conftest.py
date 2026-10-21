@@ -11,6 +11,10 @@ import os
 
 os.environ.setdefault("XRAY_SUPABASE_JWT_SECRET", "test-secret-0123456789-abcdefghij-XYZ")
 os.environ.setdefault("XRAY_ALLOWED_EMAILS", "[]")
+os.environ.setdefault(
+    "XRAY_CREDENTIAL_ENCRYPTION_KEY",
+    "test-credential-key-0123456789-abcdefgh",
+)
 
 from datetime import UTC, datetime, timedelta  # noqa: E402
 

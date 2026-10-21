@@ -18,6 +18,11 @@ export interface DocumentList {
   items: DocumentRead[];
 }
 
+export interface AccountRead {
+  email: string | null;
+  uspto_api_key_configured: boolean;
+}
+
 export interface WorkspaceRead {
   id: string;
   name: string;

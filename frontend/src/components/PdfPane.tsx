@@ -89,6 +89,60 @@ function drawingPoints(annotation: PdfAnnotationRead): Point[] {
   );
 }
 
+function storedHighlightRects(annotation: PdfAnnotationRead): number[][] {
+  const rects = annotation.geometry.rects;
+  if (Array.isArray(rects)) {
+    return rects.filter(
+      (rect): rect is number[] =>
+        Array.isArray(rect) && rect.length === 4 && rect.every((value) => typeof value === "number"),
+    );
+  }
+  const box = ["x0", "y0", "x1", "y1"].map((key) => geometryNumber(annotation, key));
+  return box.some((value) => value === null) ? [] : [box as number[]];
+}
+
+function highlightedEntryIds(annotations: PdfAnnotationRead[]): Set<string> {
+  const ids = new Set<string>();
+  for (const annotation of annotations) {
+    if (annotation.kind !== "highlight") continue;
+    const raw = annotation.geometry.entry_ids;
+    if (!Array.isArray(raw)) continue;
+    for (const value of raw) if (typeof value === "string") ids.add(value);
+  }
+  return ids;
+}
+
+function lineHighlightGeometry(start: Point, end: Point, entries: EntryDto[]) {
+  const [first, last] =
+    start[1] < end[1] || (start[1] === end[1] && start[0] <= end[0])
+      ? [start, end]
+      : [end, start];
+  const y0 = Math.min(first[1], last[1]);
+  const y1 = Math.max(first[1], last[1]);
+  const lines = entries
+    .filter((entry) => {
+      const box = entry.box;
+      return !!box && box.length === 4 && box[3] >= y0 && box[1] <= y1;
+    })
+    .sort((a, b) => (a.box?.[1] ?? 0) - (b.box?.[1] ?? 0));
+  const rects = lines.flatMap((entry, index) => {
+    const box = entry.box;
+    if (!box) return [];
+    let left = box[0];
+    let right = box[2];
+    if (lines.length === 1) {
+      left = Math.max(left, Math.min(first[0], last[0]));
+      right = Math.min(right, Math.max(first[0], last[0]));
+    } else if (index === 0) {
+      left = Math.max(left, first[0]);
+    } else if (index === lines.length - 1) {
+      right = Math.min(right, last[0]);
+    }
+    return right - left > 0.002 ? [[left, box[1], right, box[3]]] : [];
+  });
+  return { rects, entryIds: lines.map((entry) => entry.entry_id) };
+}
+
 /** Rotate a normalized [x0,y0,x1,y1] box by 0/90/180/270° to match the viewport. */
 function rotateBox(box: number[], rotation: number): [number, number, number, number] {
   const rot = ([x, y]: number[]): [number, number] =>
@@ -291,15 +345,16 @@ function ContinuousPdfPage({
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     if (draft.kind === "highlight") {
-      const x0 = Math.min(draft.start[0], draft.end[0]);
-      const y0 = Math.min(draft.start[1], draft.end[1]);
-      const x1 = Math.max(draft.start[0], draft.end[0]);
-      const y1 = Math.max(draft.start[1], draft.end[1]);
-      if (x1 - x0 > 0.004 && y1 - y0 > 0.004) {
+      const { rects, entryIds } = lineHighlightGeometry(draft.start, draft.end, entries);
+      if (rects.length > 0) {
+        const x0 = Math.min(...rects.map((rect) => rect[0]));
+        const y0 = Math.min(...rects.map((rect) => rect[1]));
+        const x1 = Math.max(...rects.map((rect) => rect[2]));
+        const y1 = Math.max(...rects.map((rect) => rect[3]));
         onCreateAnnotation({
           kind: "highlight",
           page_index: pageNumber - 1,
-          geometry: { x0, y0, x1, y1 },
+          geometry: { x0, y0, x1, y1, rects, entry_ids: entryIds },
           color: annotationColor,
         });
       }
@@ -413,26 +468,32 @@ function ContinuousPdfPage({
               }
             };
             if (annotation.kind === "highlight") {
-              const box = ["x0", "y0", "x1", "y1"].map((key) =>
-                geometryNumber(annotation, key),
-              );
-              if (box.some((value) => value === null)) return null;
-              const [x0, y0, x1, y1] = rotateBox(box as number[], rotation);
+              const rects = storedHighlightRects(annotation);
+              if (rects.length === 0) return null;
               return (
-                <rect
+                <g
                   key={annotation.id}
                   className="pdf-saved-annotation pdf-highlight-mark"
-                  x={x0}
-                  y={y0}
-                  width={x1 - x0}
-                  height={y1 - y0}
-                  fill={annotation.color ?? "#ffe066"}
                   onPointerDown={activate}
                   onKeyDown={onAnnotationKeyDown}
                   tabIndex={interactive ? 0 : undefined}
                   role={interactive ? "button" : undefined}
                   aria-label={interactive ? `${tool} highlight` : undefined}
-                />
+                >
+                  {rects.map((box, index) => {
+                    const [x0, y0, x1, y1] = rotateBox(box, rotation);
+                    return (
+                      <rect
+                        key={index}
+                        x={x0}
+                        y={y0}
+                        width={x1 - x0}
+                        height={y1 - y0}
+                        fill={annotation.color ?? "#ffe066"}
+                      />
+                    );
+                  })}
+                </g>
               );
             }
             if (annotation.kind === "drawing") {
@@ -487,24 +548,23 @@ function ContinuousPdfPage({
             );
           })}
           {draft?.kind === "highlight" && (() => {
-            const [x0, y0, x1, y1] = rotateBox(
-              [
-                Math.min(draft.start[0], draft.end[0]),
-                Math.min(draft.start[1], draft.end[1]),
-                Math.max(draft.start[0], draft.end[0]),
-                Math.max(draft.start[1], draft.end[1]),
-              ],
-              rotation,
-            );
+            const { rects } = lineHighlightGeometry(draft.start, draft.end, entries);
             return (
-              <rect
-                className="pdf-highlight-mark draft"
-                x={x0}
-                y={y0}
-                width={x1 - x0}
-                height={y1 - y0}
-                fill={annotationColor}
-              />
+              <g className="pdf-highlight-mark draft">
+                {rects.map((box, index) => {
+                  const [x0, y0, x1, y1] = rotateBox(box, rotation);
+                  return (
+                    <rect
+                      key={index}
+                      x={x0}
+                      y={y0}
+                      width={x1 - x0}
+                      height={y1 - y0}
+                      fill={annotationColor}
+                    />
+                  );
+                })}
+              </g>
             );
           })()}
           {draft?.kind === "drawing" && (
@@ -545,6 +605,7 @@ export function PdfPane({
   onSelectCallout,
   onActivate,
   onSelectionText,
+  onTextHighlightsChange,
   copyCitation,
 }: {
   documentId: string;
@@ -561,6 +622,7 @@ export function PdfPane({
   onSelectCallout?: (callout: CalloutDto) => void;
   onActivate?: () => void;
   onSelectionText?: (text: string) => void;
+  onTextHighlightsChange?: (entryIds: Set<string>) => void;
   copyCitation?: string;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -610,7 +672,10 @@ export function PdfPane({
     let cancelled = false;
     void api.listPdfAnnotations(documentId).then(
       (items) => {
-        if (!cancelled) setAnnotations(items);
+        if (!cancelled) {
+          setAnnotations(items);
+          onTextHighlightsChange?.(highlightedEntryIds(items));
+        }
       },
       (reason) => {
         if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
@@ -619,7 +684,7 @@ export function PdfPane({
     return () => {
       cancelled = true;
     };
-  }, [documentId]);
+  }, [documentId, onTextHighlightsChange]);
 
   // Only explicit page navigation moves the scroll position. During ordinary
   // scrolling, handleScroll updates visiblePageRef before notifying the parent,
@@ -729,7 +794,11 @@ export function PdfPane({
   async function createAnnotation(annotation: PdfAnnotationCreate) {
     try {
       const created = await api.createPdfAnnotation(documentId, annotation);
-      setAnnotations((items) => [...items, created]);
+      setAnnotations((items) => {
+        const next = [...items, created];
+        onTextHighlightsChange?.(highlightedEntryIds(next));
+        return next;
+      });
       if (annotation.kind === "bookmark" || annotation.kind === "note") setTool("select");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -739,7 +808,11 @@ export function PdfPane({
   async function deleteAnnotation(annotation: PdfAnnotationRead) {
     try {
       await api.deletePdfAnnotation(annotation.id);
-      setAnnotations((items) => items.filter((item) => item.id !== annotation.id));
+      setAnnotations((items) => {
+        const next = items.filter((item) => item.id !== annotation.id);
+        onTextHighlightsChange?.(highlightedEntryIds(next));
+        return next;
+      });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }

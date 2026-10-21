@@ -86,3 +86,8 @@ export async function signOut(): Promise<void> {
   if (client) await client.auth.signOut();
   setToken(null);
 }
+
+export async function updatePassword(password: string): Promise<void> {
+  const { error } = await getClient().auth.updateUser({ password });
+  if (error) throw error;
+}

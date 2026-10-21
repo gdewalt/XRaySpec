@@ -27,10 +27,23 @@ class PpubsDocument:
 
 
 class PpubsClient:
-    def __init__(self, fetcher: RestrictedFetcher, *, max_json_bytes: int) -> None:
+    def __init__(
+        self,
+        fetcher: RestrictedFetcher,
+        *,
+        max_json_bytes: int,
+        api_key: str | None = None,
+    ) -> None:
         self._fetcher = fetcher
         self._max_json_bytes = max_json_bytes
+        self._api_key = api_key
         self._token: str | None = None
+
+    def _headers(self, **headers: str) -> dict[str, str]:
+        headers = {name.replace("_", "-"): value for name, value in headers.items()}
+        if self._api_key:
+            headers["x-api-key"] = self._api_key
+        return headers
 
     async def _session_token(self) -> str:
         if self._token:
@@ -38,7 +51,7 @@ class PpubsClient:
         response = await self._fetcher.request(
             f"{_BASE}/users/me/session",
             method="POST",
-            headers={"content-type": "application/json; charset=utf-8"},
+            headers=self._headers(content_type="application/json; charset=utf-8"),
             content=b"-1",
             max_bytes=self._max_json_bytes,
         )
@@ -77,11 +90,11 @@ class PpubsClient:
         response = await self._fetcher.request(
             f"{_BASE}/searches/generic",
             method="POST",
-            headers={
-                "accept": "application/json",
-                "content-type": "application/json",
-                "x-access-token": token,
-            },
+            headers=self._headers(
+                accept="application/json",
+                content_type="application/json",
+                x_access_token=token,
+            ),
             content=payload,
             max_bytes=self._max_json_bytes,
         )
@@ -130,7 +143,7 @@ class PpubsClient:
         token = await self._session_token()
         return await self._fetcher.request(
             self._document_url("patents/html", document, token),
-            headers={"x-access-token": token},
+            headers=self._headers(x_access_token=token),
             max_bytes=max_bytes,
         )
 
@@ -138,7 +151,7 @@ class PpubsClient:
         token = await self._session_token()
         return await self._fetcher.request(
             self._document_url("pdf/downloadPdf", document, token),
-            headers={"x-access-token": token},
+            headers=self._headers(x_access_token=token),
             max_bytes=max_bytes,
             expect_pdf=True,
         )

@@ -15,7 +15,7 @@ import hashlib
 from dataclasses import dataclass, replace
 
 from ..config import get_settings
-from ..db.models import ExtractionJob, SourceDocument, UserDocument
+from ..db.models import ExtractionJob, SourceDocument, User, UserDocument
 from ..enrichment.google_text import ProviderText, extract_claim_numbers, extract_provider_text
 from ..extraction.artifact import Artifact, PatentFrontMatter
 from ..extraction.config import ExtractionConfig
@@ -25,6 +25,7 @@ from ..fetch.google_patents import extract_pdf_url, patent_page_url
 from ..fetch.guard import check_url
 from ..fetch.ppubs import PpubsClient, PpubsDocument
 from ..patents import PatentParseError, parse_patent_identifier
+from ..services.credentials import CredentialEncryptionError, decrypt_credential
 from ..services.publication import (
     find_reusable_artifact,
     publish_artifact,
@@ -89,13 +90,20 @@ async def fetch_source(
         canonical = source.patent_canonical if source else None
         source_id = source.id if source else None
         owner_id = source.owner_id if source else None
+        owner = await session.get(User, owner_id) if owner_id else None
+        encrypted_api_key = owner.uspto_api_key_encrypted if owner else None
+    api_key = _decrypt_uspto_api_key(encrypted_api_key, settings.credential_encryption_key)
     if not canonical or source_id is None:
         raise FetchError("no_source", "fetch job has no patent identity")
 
     provider_title: str | None = None
     try:
         identity = parse_patent_identifier(canonical)
-        ppubs = PpubsClient(fetcher, max_json_bytes=settings.fetch_max_html_bytes)
+        ppubs = PpubsClient(
+            fetcher,
+            max_json_bytes=settings.fetch_max_html_bytes,
+            api_key=api_key,
+        )
         document = await ppubs.resolve(identity)
         pdf = await ppubs.fetch_pdf(document, max_bytes=settings.fetch_max_pdf_bytes)
         provider_title = document.title
@@ -155,9 +163,15 @@ async def extraction_processor(
         pdf_key = source.pdf_object_key if source else None
         source_id = source.id if source else None
         owner_id = source.owner_id if source else None
+        owner = await session.get(User, owner_id) if owner_id else None
+        encrypted_api_key = owner.uspto_api_key_encrypted if owner else None
         doc_type = (source.doc_type if source else None) or "auto"
         canonical = source.patent_canonical if source else None
         title = doc.title if doc else None
+    api_key = _decrypt_uspto_api_key(
+        encrypted_api_key,
+        get_settings().credential_encryption_key,
+    )
     if not pdf_key or source_id is None or job.document_id is None:
         raise FetchError("no_source_pdf", "job has no source PDF to extract")
 
@@ -202,6 +216,7 @@ async def extraction_processor(
                 canonical,
                 fetcher=fetcher,
                 seed=provider_seed,
+                api_key=api_key,
             )
         )
 
@@ -250,6 +265,7 @@ async def _fetch_provider_pages(
     *,
     fetcher: RestrictedFetcher | None = None,
     seed: ProviderFetchSeed | None = None,
+    api_key: str | None = None,
 ) -> ProviderPages:
     """Fetch PPUBS text and Google metadata concurrently, without duplicate work."""
     settings = get_settings()
@@ -264,7 +280,11 @@ async def _fetch_provider_pages(
             client = (
                 seed.ppubs_client
                 if seed and seed.ppubs_client
-                else PpubsClient(fetcher, max_json_bytes=settings.fetch_max_html_bytes)
+                else PpubsClient(
+                    fetcher,
+                    max_json_bytes=settings.fetch_max_html_bytes,
+                    api_key=api_key,
+                )
             )
             document = (
                 seed.ppubs_document
@@ -289,6 +309,15 @@ async def _fetch_provider_pages(
 
     ppubs, google = await asyncio.gather(ppubs_html(), google_html())
     return ProviderPages(ppubs_html=ppubs, google_html=google)
+
+
+def _decrypt_uspto_api_key(encrypted: str | None, encryption_key: str) -> str | None:
+    if not encrypted:
+        return None
+    try:
+        return decrypt_credential(encrypted, encryption_key)
+    except CredentialEncryptionError as exc:
+        raise FetchError("provider_credential", "USPTO API key could not be opened") from exc
 
 
 async def _enrich_artifact(

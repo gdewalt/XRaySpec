@@ -22,6 +22,7 @@ async def test_ppubs_resolves_and_fetches_text_and_pdf():
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
+        assert request.headers["x-api-key"] == "personal-uspto-key"
         if request.url.path.endswith("/users/me/session"):
             assert request.method == "POST" and request.content == b"-1"
             return httpx.Response(200, json={}, headers={"x-access-token": "session-token"})
@@ -54,7 +55,7 @@ async def test_ppubs_resolves_and_fetches_text_and_pdf():
     fetcher = RestrictedFetcher(
         ALLOWED, resolve=_public, transport=httpx.MockTransport(handler)
     )
-    client = PpubsClient(fetcher, max_json_bytes=100_000)
+    client = PpubsClient(fetcher, max_json_bytes=100_000, api_key="personal-uspto-key")
     document = await client.resolve(parse_patent_identifier("US7840427B2"))
     text = await client.fetch_text(document, max_bytes=100_000)
     pdf = await client.fetch_pdf(document, max_bytes=100_000)

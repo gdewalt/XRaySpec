@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from "react";
 
-import { getToken, initializeAuth, signOut, subscribe } from "./auth/session";
+import { getToken, initializeAuth, subscribe } from "./auth/session";
+import { AccountMenu } from "./components/AccountMenu";
 import { DocumentsView } from "./components/DocumentsView";
 import { Icon } from "./components/Icon";
 import { Login } from "./components/Login";
@@ -104,12 +105,7 @@ export function App() {
               <span>Library</span>
             </button>
           )}
-          {token && (
-            <button type="button" className="quiet-button sign-out" onClick={() => void signOut()} aria-label="Sign out" title="Sign out">
-              <Icon name="log-out" size={17} />
-              <span>Sign out</span>
-            </button>
-          )}
+          {token && <AccountMenu />}
         </div>
       </header>
       <main className={`container${view.mode === "viewer" && token ? " viewer-container" : ""}`}>

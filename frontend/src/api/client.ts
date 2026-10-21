@@ -3,6 +3,7 @@
 
 import { getToken } from "../auth/session";
 import type {
+  AccountRead,
   AnnotationRead,
   ArtifactEntries,
   AssertedClaimRead,
@@ -86,6 +87,12 @@ const jsonInit = (method: string, body: unknown): RequestInit => ({
 });
 
 export const api = {
+  getAccount: () => request<AccountRead>("/api/v1/account"),
+  setUsptoApiKey: (api_key: string) =>
+    request<AccountRead>("/api/v1/account/uspto-api-key", jsonInit("PUT", { api_key })),
+  deleteUsptoApiKey: () =>
+    request<void>("/api/v1/account/uspto-api-key", { method: "DELETE" }),
+
   listDocuments: () => request<DocumentList>("/api/v1/documents"),
 
   listWorkspaces: () => request<WorkspaceList>("/api/v1/workspaces"),

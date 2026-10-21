@@ -44,6 +44,8 @@ services:
         sync: false
       - key: XRAY_SUPABASE_SERVICE_KEY
         sync: false
+      - key: XRAY_CREDENTIAL_ENCRYPTION_KEY
+        sync: false
       - key: XRAY_ALLOWED_EMAILS
         sync: false
 
@@ -67,6 +69,8 @@ services:
       - key: XRAY_SUPABASE_ANON_KEY
         sync: false
       - key: XRAY_SUPABASE_SERVICE_KEY
+        sync: false
+      - key: XRAY_CREDENTIAL_ENCRYPTION_KEY
         sync: false
       - key: XRAY_ALLOWED_EMAILS
         sync: false

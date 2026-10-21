@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     storage_bucket: str = "xray-sources"
     local_storage_dir: str = "./devstorage"
     supabase_service_key: str = Field(default="", description="Supabase service-role key")
+    credential_encryption_key: str = Field(
+        default="",
+        description="Application secret used to encrypt user-supplied provider credentials",
+    )
 
     # Ingestion safety bounds (§11.1, §11.3, §17.6)
     max_upload_bytes: int = 100 * 1024 * 1024  # 100 MiB

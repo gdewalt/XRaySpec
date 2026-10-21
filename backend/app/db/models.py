@@ -17,7 +17,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
@@ -37,6 +37,7 @@ class User(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("usr"))
     subject: Mapped[str] = mapped_column(String, unique=True, index=True)  # Supabase auth sub
     email: Mapped[str | None] = mapped_column(String, index=True, default=None)
+    uspto_api_key_encrypted: Mapped[str | None] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = _ts()
 
 

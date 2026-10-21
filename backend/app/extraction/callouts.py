@@ -583,6 +583,193 @@ def _sequence_score_figures(
     ]
 
 
+def _recover_sequence_boxes(
+    raw_occurrences: list[FigureOccurrence],
+    occurrences: list[FigureOccurrence],
+    expected_ids: set[str],
+) -> list[FigureOccurrence]:
+    """Relabel low-confidence caption boxes that fit a bounded figure gap.
+
+    Drawing OCR often locates a caption accurately while reading its digits
+    badly (for example ``FIGURE 11`` as ``FIGURE 20``).  Throwing that box away
+    forces later page-only inference and leaves the viewer nothing to
+    highlight.  Reuse only weak, otherwise-unrepresented boxes, and only for
+    specification-backed identifiers between reliable neighboring pages.
+    """
+    result = list(occurrences)
+    expected_keys = {
+        key: re.sub(r"\s+", "", figure_id).upper()
+        for figure_id in expected_ids
+        if (key := _figure_order_key(figure_id)) is not None
+    }
+    subfigure_bases = {key[0] for key in expected_keys if key[1] > 0}
+    expected_by_key = {
+        key: value
+        for key, value in expected_keys.items()
+        # A prose reference to FIG. 9 can introduce FIGS. 9A and 9B without
+        # there being a separate drawing caption for a base FIG. 9.
+        if key[1] > 0 or key[0] not in subfigure_bases
+    }
+    if not expected_by_key or not result:
+        return result
+
+    def represented(raw: FigureOccurrence) -> bool:
+        raw_center = ((raw.box[0] + raw.box[2]) / 2, (raw.box[1] + raw.box[3]) / 2)
+        raw_label = re.sub(r"[^0-9A-Z]", "", raw.figure_id.upper())
+        raw_area = max(0.0, raw.box[2] - raw.box[0]) * max(0.0, raw.box[3] - raw.box[1])
+        for item in result:
+            if item.page_index != raw.page_index:
+                continue
+            if math.hypot(
+                raw_center[0] - (item.box[0] + item.box[2]) / 2,
+                raw_center[1] - (item.box[1] + item.box[3]) / 2,
+            ) <= 0.015:
+                return True
+
+            # Tiled OCR often returns both the complete caption and a fragment
+            # of it ("57A" plus an inner "7", or "39" plus "39Y").  A
+            # contained fragment is not an unused caption for the next missing
+            # figure, even when its center differs from the larger box.
+            item_label = re.sub(r"[^0-9A-Z]", "", item.figure_id.upper())
+            item_area = max(0.0, item.box[2] - item.box[0]) * max(
+                0.0, item.box[3] - item.box[1]
+            )
+            intersection_width = max(
+                0.0, min(raw.box[2], item.box[2]) - max(raw.box[0], item.box[0])
+            )
+            intersection_height = max(
+                0.0, min(raw.box[3], item.box[3]) - max(raw.box[1], item.box[1])
+            )
+            smaller_area = min(raw_area, item_area)
+            containment = (
+                intersection_width * intersection_height / smaller_area
+                if smaller_area > 0
+                else 0.0
+            )
+            if (
+                containment >= 0.8
+                and raw_label
+                and item_label
+                and (raw_label in item_label or item_label in raw_label)
+            ):
+                return True
+        return False
+
+    orphan_by_page: dict[int, list[FigureOccurrence]] = {}
+    for raw in raw_occurrences:
+        raw_forms = _drawing_figure_candidates(raw.figure_id) or {
+            re.sub(r"\s+", "", raw.figure_id).upper()
+        }
+        matches_expected = any(form in expected_by_key.values() for form in raw_forms)
+        # A confident but impossible identifier (for example "80A" in a
+        # patent whose drawings end at 63) can still be a cleanly located,
+        # badly recognized caption. Let the bounded sequence repair it while
+        # retaining the stricter threshold for plausible identifiers.
+        confidence = raw.confidence or 0.0
+        if (confidence > 65.0 and (matches_expected or confidence > 85.0)) or represented(raw):
+            continue
+        orphan_by_page.setdefault(raw.page_index, []).append(raw)
+
+    for page_index in sorted(orphan_by_page):
+        detected = {
+            key
+            for item in result
+            if (key := _figure_order_key(item.figure_id)) is not None
+        }
+        previous_keys = [
+            key
+            for item in result
+            if item.page_index < page_index
+            and (key := _figure_order_key(item.figure_id)) is not None
+        ]
+        following_keys = [
+            key
+            for item in result
+            if item.page_index > page_index
+            and (key := _figure_order_key(item.figure_id)) is not None
+        ]
+        same_page_keys = [
+            key
+            for item in result
+            if item.page_index == page_index
+            and (key := _figure_order_key(item.figure_id)) is not None
+        ]
+        lower = max(previous_keys, default=min(expected_by_key))
+        upper = min(following_keys, default=max(expected_by_key))
+        candidates = [
+            key
+            for key in sorted(expected_by_key)
+            if lower < key < upper and key not in detected
+        ]
+        if not candidates:
+            continue
+
+        # Same-sheet anchors narrow the side of the gap.  Keep both sides when
+        # the sheet itself spans a hole (for example 29-34, [35,36]).
+        if same_page_keys:
+            below = [key for key in candidates if key < min(same_page_keys)]
+            above = [key for key in candidates if key > max(same_page_keys)]
+            internal = [
+                key for key in candidates if min(same_page_keys) < key < max(same_page_keys)
+            ]
+            narrowed = [*below, *internal, *above]
+            if narrowed:
+                candidates = narrowed
+
+        orphans = orphan_by_page[page_index]
+        pairs: list[tuple[int, int, int]] = []
+        for raw_index, raw in enumerate(orphans):
+            raw_forms = _drawing_figure_candidates(raw.figure_id) or {
+                re.sub(r"\s+", "", raw.figure_id).upper()
+            }
+            candidate_indexes = list(range(len(candidates)))
+            raw_key = _figure_order_key(raw.figure_id)
+            if raw_key is not None and same_page_keys:
+                if raw_key < min(same_page_keys):
+                    preferred = [
+                        index
+                        for index, key in enumerate(candidates)
+                        if key < min(same_page_keys)
+                    ]
+                    candidate_indexes = preferred or candidate_indexes
+                elif raw_key > max(same_page_keys):
+                    preferred = [
+                        index
+                        for index, key in enumerate(candidates)
+                        if key > max(same_page_keys)
+                    ]
+                    candidate_indexes = preferred or candidate_indexes
+            for candidate_index in candidate_indexes:
+                key = candidates[candidate_index]
+                label = expected_by_key[key]
+                distance = min(_edit_distance(form, label) for form in raw_forms)
+                pairs.append((distance, raw_index, candidate_index))
+
+        used_raw: set[int] = set()
+        used_candidates: set[int] = set()
+        for distance, raw_index, candidate_index in sorted(pairs):
+            if raw_index in used_raw or candidate_index in used_candidates:
+                continue
+            # A distant OCR token is not evidence for a caption; the sequence
+            # may resolve confusion, but must not manufacture unrelated labels.
+            label = expected_by_key[candidates[candidate_index]]
+            if distance > max(3, len(label) // 2):
+                continue
+            raw = orphans[raw_index]
+            result.append(
+                replace(
+                    raw,
+                    figure_id=label,
+                    detection_score=0.52,
+                    method="spec_sequence_corrected",
+                )
+            )
+            used_raw.add(raw_index)
+            used_candidates.add(candidate_index)
+
+    return result
+
+
 def filter_figure_occurrences(
     occurrences: Iterable[FigureOccurrence], expected_ids: set[str]
 ) -> list[FigureOccurrence]:
@@ -592,9 +779,10 @@ def filter_figure_occurrences(
     allow-list. A clear label can therefore survive when the specification OCR
     missed its textual reference.
     """
+    raw_occurrences = list(occurrences)
     expected = {re.sub(r"\s+", "", value).upper(): value.upper() for value in expected_ids}
     strongest: dict[tuple[int, str], FigureOccurrence] = {}
-    for occurrence in occurrences:
+    for occurrence in raw_occurrences:
         normalized = re.sub(r"\s+", "", occurrence.figure_id).upper()
         exact = expected.get(normalized)
         fuzzy_candidates = _drawing_figure_candidates(normalized)
@@ -667,8 +855,10 @@ def filter_figure_occurrences(
                     figure_id=canonical_first,
                     method="spec_sequence_corrected",
                 )
+    sequenced = _sequence_score_figures(ordered)
+    recovered = _recover_sequence_boxes(raw_occurrences, sequenced, expected_ids)
     return sorted(
-        _sequence_score_figures(ordered),
+        recovered,
         key=lambda item: (item.page_index, _figure_order_key(item.figure_id) or (0, 0)),
     )
 
@@ -691,10 +881,18 @@ def infer_missing_figure_occurrences(
     if not sheet_pages:
         return result
 
-    expected_by_key = {
+    expected_keys = {
         key: re.sub(r"\s+", "", figure_id).upper()
         for figure_id in expected_ids
         if (key := _figure_order_key(figure_id)) is not None
+    }
+    subfigure_bases = {key[0] for key in expected_keys if key[1] > 0}
+    expected_by_key = {
+        key: value
+        for key, value in expected_keys.items()
+        # A textual reference to "FIG. 9" often introduces FIGS. 9A/9B; it
+        # does not prove that a separate base FIG. 9 drawing exists.
+        if key[1] > 0 or key[0] not in subfigure_bases
     }
 
     def state() -> tuple[dict[int, list[FigureOccurrence]], set[tuple[int, int]]]:
@@ -924,6 +1122,29 @@ def infer_missing_figure_occurrences(
             for key in holes:
                 add(page, key, score)
 
+    # Subfigures of one base number normally share a drawing sheet. If OCR
+    # reads one of the labels but misses its sibling (for example a faint 9B
+    # beside 9A), keep the sibling navigable on that same sheet. The sentinel
+    # deliberately does not create a false highlight box.
+    by_page, detected_keys = state()
+    for page_index, items in by_page.items():
+        page_keys = {
+            key
+            for item in items
+            if (key := _figure_order_key(item.figure_id)) is not None
+        }
+        page_subfigure_bases = {key[0] for key in page_keys if key[1] > 0}
+        if not page_subfigure_bases:
+            continue
+        score = score_from(items)
+        for key in sorted(expected_by_key):
+            if (
+                key[1] > 0
+                and key[0] in page_subfigure_bases
+                and key not in detected_keys
+            ):
+                add(page_index, key, score)
+
     # Finally fill internal holes on a multi-figure sheet, except when that ID
     # was already recovered elsewhere (important for interleaved 2/4 and 3/5
     # layouts on adjacent sheets).
@@ -969,26 +1190,6 @@ def infer_missing_figure_occurrences(
                 and key not in detected_keys
             ):
                 add(current_page, key, score)
-
-    # If the specification refers to a base figure as well as its subfigures,
-    # let the base navigate to the first detected subfigure sheet.
-    by_page, detected_keys = state()
-    for key in sorted(expected_by_key):
-        if key[1] != 0 or key in detected_keys:
-            continue
-        subfigures = [
-            item
-            for items in by_page.values()
-            for item in items
-            if (
-                (item_key := _figure_order_key(item.figure_id)) is not None
-                and item_key[0] == key[0]
-                and item_key[1] > 0
-            )
-        ]
-        if subfigures:
-            first = min(subfigures, key=lambda item: item.page_index)
-            add(first.page_index, key, score_from([first]))
 
     return sorted(
         result,

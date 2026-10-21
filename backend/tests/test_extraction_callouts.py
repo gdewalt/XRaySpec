@@ -322,13 +322,53 @@ def test_multiple_figure_groups_are_distributed_across_blank_sheets():
 
     assert pages == {
         "8": 8,
-        "9": 9,
         "9A": 9,
         "9B": 9,
         "10": 10,
         "11": 10,
         "12A": 11,
     }
+
+
+def test_low_confidence_caption_box_is_sequence_corrected_instead_of_discarded():
+    raw = [
+        FigureOccurrence("10", 10, (0.1, 0.2, 0.2, 0.3), confidence=95.0),
+        # The FIGURE 11 caption is spatially correct but its thin digits were
+        # read as 20 by drawing OCR.
+        FigureOccurrence("20", 10, (0.5, 0.6, 0.6, 0.7), confidence=0.0),
+        FigureOccurrence("12A", 11, (0.1, 0.2, 0.2, 0.3), confidence=95.0),
+    ]
+
+    filtered = filter_figure_occurrences(raw, {"10", "11", "12A"})
+    recovered = next(figure for figure in filtered if figure.figure_id == "11")
+
+    assert recovered.page_index == 10
+    assert recovered.box == (0.5, 0.6, 0.6, 0.7)
+    assert recovered.method == "spec_sequence_corrected"
+
+
+def test_two_weak_boxes_fill_two_consecutive_sheet_gaps_by_ocr_similarity():
+    raw = [
+        *[
+            FigureOccurrence(
+                str(value), 19, (value / 100, 0.2, value / 100 + 0.02, 0.3), confidence=95.0
+            )
+            for value in range(29, 35)
+        ],
+        FigureOccurrence("95", 19, (0.5, 0.5, 0.6, 0.6), confidence=0.0),
+        FigureOccurrence("7", 19, (0.7, 0.2, 0.8, 0.3), confidence=48.0),
+        FigureOccurrence("37", 20, (0.1, 0.2, 0.2, 0.3), confidence=95.0),
+    ]
+
+    filtered = filter_figure_occurrences(raw, {str(value) for value in range(29, 38)})
+    recovered = {
+        figure.figure_id: figure
+        for figure in filtered
+        if figure.figure_id in {"35", "36"}
+    }
+
+    assert recovered["35"].box == (0.5, 0.5, 0.6, 0.6)
+    assert recovered["36"].box == (0.7, 0.2, 0.8, 0.3)
 
 
 def test_internal_multifigure_hole_is_assigned_to_that_sheet():
@@ -436,7 +476,7 @@ def test_leading_gap_spans_populated_sheet_and_following_blank_sheet():
     assert pages["51"] == 23
 
 
-def test_short_gap_between_populated_sheets_is_assigned_to_preceding_sheet():
+def test_short_gap_does_not_invent_base_figure_when_subfigures_exist():
     detected = [
         FigureOccurrence("10", 10, (0.1, 0.2, 0.2, 0.3), detection_score=0.9, method="spec_exact"),
         FigureOccurrence("12A", 11, (0.1, 0.2, 0.2, 0.3), detection_score=0.9, method="spec_exact"),
@@ -448,7 +488,7 @@ def test_short_gap_between_populated_sheets_is_assigned_to_preceding_sheet():
     pages = {figure.figure_id: figure.page_index for figure in inferred}
 
     assert pages["11"] == 10
-    assert pages["12"] == 11
+    assert "12" not in pages
 
 
 def test_multiple_missing_captions_before_next_sheet_stay_on_dense_sheet():
@@ -473,6 +513,63 @@ def test_multiple_missing_captions_before_next_sheet_stay_on_dense_sheet():
 
     assert pages["35"] == 19
     assert pages["36"] == 19
+
+
+def test_sequence_recovery_does_not_create_base_figure_for_subfigures():
+    figures = [
+        FigureOccurrence("8", 8, (0.1, 0.2, 0.2, 0.3), confidence=90.0),
+        FigureOccurrence("0E", 9, (0.1, 0.2, 0.2, 0.3), confidence=12.0),
+        FigureOccurrence("10", 10, (0.1, 0.2, 0.2, 0.3), confidence=90.0),
+    ]
+
+    filtered = filter_figure_occurrences(figures, {"8", "9", "9A", "9B", "10"})
+    completed = infer_missing_figure_occurrences(
+        filtered, [8, 9, 10], {"8", "9", "9A", "9B", "10"}
+    )
+    by_id = {figure.figure_id: figure for figure in completed}
+
+    assert "9" not in by_id
+    assert by_id["9A"].page_index == 9
+    assert by_id["9B"].page_index == 9
+
+
+def test_sequence_recovery_ignores_fragments_inside_detected_labels():
+    figures = [
+        FigureOccurrence("57A", 24, (0.13, 0.68, 0.23, 0.84), confidence=92.0),
+        FigureOccurrence("7", 24, (0.14, 0.69, 0.18, 0.83), confidence=4.0),
+        FigureOccurrence("0E", 24, (0.43, 0.71, 0.51, 0.86), confidence=5.0),
+        FigureOccurrence("58", 24, (0.3, 0.2, 0.4, 0.3), confidence=92.0),
+        FigureOccurrence("60", 24, (0.6, 0.2, 0.7, 0.3), confidence=92.0),
+        FigureOccurrence("61", 24, (0.7, 0.2, 0.8, 0.3), confidence=92.0),
+        FigureOccurrence("62", 25, (0.1, 0.2, 0.2, 0.3), confidence=92.0),
+    ]
+
+    filtered = filter_figure_occurrences(
+        figures, {"57", "58", "59", "60", "61", "62"}
+    )
+    figure_59 = next(figure for figure in filtered if figure.figure_id == "59")
+
+    assert figure_59.box == (0.43, 0.71, 0.51, 0.86)
+    assert figure_59.method == "spec_sequence_corrected"
+
+
+def test_sequence_recovery_can_repair_confident_impossible_identifier():
+    figures = [
+        FigureOccurrence("37", 20, (0.1, 0.7, 0.2, 0.8), confidence=92.0),
+        FigureOccurrence("80A", 20, (0.3, 0.1, 0.5, 0.2), confidence=74.0),
+        FigureOccurrence("39", 20, (0.6, 0.1, 0.7, 0.2), confidence=92.0),
+        FigureOccurrence("40", 20, (0.4, 0.7, 0.5, 0.8), confidence=92.0),
+        FigureOccurrence("41", 20, (0.7, 0.7, 0.8, 0.8), confidence=92.0),
+        FigureOccurrence("42", 21, (0.1, 0.2, 0.2, 0.3), confidence=92.0),
+    ]
+
+    filtered = filter_figure_occurrences(
+        figures, {str(value) for value in range(37, 43)}
+    )
+    figure_38 = next(figure for figure in filtered if figure.figure_id == "38")
+
+    assert figure_38.box == (0.3, 0.1, 0.5, 0.2)
+    assert figure_38.method == "spec_sequence_corrected"
 
 
 def test_drawing_figures_prefer_specification_ids_without_hard_filtering_clear_labels():

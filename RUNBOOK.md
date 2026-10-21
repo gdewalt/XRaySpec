@@ -136,6 +136,9 @@ Rotate on a schedule and immediately on suspected exposure.
 - **`XRAY_SUPABASE_SERVICE_KEY` / storage credentials** — rotate in the provider,
   update the secret store, restart the replicas and the workers that hold a
   cached client.
+- **`XRAY_CREDENTIAL_ENCRYPTION_KEY`** — keep the identical value on the web and
+  worker services. Do not rotate it without first replacing or migrating every
+  stored user provider key; old ciphertext cannot be opened with a new value.
 - **Database credentials** — rotate in the managed instance, update the secret
   store, roll replicas/workers.
 - After any rotation, verify with `GET /ready` and one end-to-end document open.
