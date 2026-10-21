@@ -3478,7 +3478,6 @@ button:active:not(:disabled) { transform: translateY(1px); }
   position: relative;
   z-index: 5;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   overflow: visible;
 }
@@ -3488,8 +3487,7 @@ button:active:not(:disabled) { transform: translateY(1px); }
   align-items: center;
   gap: .2rem;
 }
-.pdf-view-controls > .icon-button,
-.pdf-annotation-tools > button {
+.pdf-view-controls > .icon-button {
   display: inline-grid;
   place-items: center;
   width: 34px;
@@ -3497,15 +3495,63 @@ button:active:not(:disabled) { transform: translateY(1px); }
   min-height: 34px;
   padding: 0;
 }
+.pdf-annotation-bar {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  gap: .45rem;
+  width: 100%;
+  min-width: 0;
+  padding: .35rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(23,32,51,.04);
+}
+.pdf-annotation-title {
+  flex: 0 0 auto;
+  padding: .5rem .2rem .4rem .25rem;
+  color: var(--muted);
+  font-size: .7rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
 .pdf-annotation-tools {
   display: flex;
-  flex: 1 1 260px;
+  flex: 1 1 auto;
   flex-wrap: wrap;
+  gap: .2rem;
   min-width: 0;
   max-width: 100%;
   overflow: visible;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
+.pdf-annotation-tools > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .3rem;
+  width: auto;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0 .5rem;
+}
+.pdf-tool-label { font-size: .68rem; }
 .pdf-color-control { flex: 0 0 auto; }
+:root[data-theme="dark"] .pdf-annotation-bar {
+  border-color: var(--border);
+  background: var(--surface);
+}
+@media (max-width: 980px) {
+  .pdf-annotation-bar { display: block; overflow-x: auto; }
+  .pdf-annotation-title { display: block; padding: .1rem .2rem .3rem; }
+  .pdf-annotation-tools { flex-wrap: nowrap; width: max-content; }
+}
 .spec-line.pdf-text-highlight .line-text {
   border-radius: 2px;
   background: color-mix(in srgb, #ffe066 52%, transparent);

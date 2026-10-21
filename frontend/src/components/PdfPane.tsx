@@ -896,6 +896,9 @@ export function PdfPane({
             <Icon name="rotate-cw" size={17} />
           </button>
         </div>
+      </div>
+      <div className="pdf-annotation-bar">
+        <span className="pdf-annotation-title">Annotations</span>
         <div className="pdf-annotation-tools" role="toolbar" aria-label="PDF annotation tools">
           {PDF_TOOLS.map((item) => (
             <button
@@ -908,6 +911,7 @@ export function PdfPane({
               onClick={() => setTool(item.id)}
             >
               <Icon name={item.icon} size={16} />
+              <span className="pdf-tool-label">{item.label}</span>
             </button>
           ))}
           {(tool === "highlight" || tool === "drawing") && (
