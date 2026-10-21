@@ -73,16 +73,23 @@ function loadViewerPreferences(): {
   outlineOpen: boolean;
 } {
   try {
-    const saved = JSON.parse(localStorage.getItem(VIEWER_PREFERENCES_KEY) ?? "{}");
+    const stored = localStorage.getItem(VIEWER_PREFERENCES_KEY);
+    if (!stored) return { layout: "split", splitPercent: 42, outlineOpen: true };
+    const saved = JSON.parse(stored);
     const layout = ["text", "pdf", "split", "details"].includes(saved.layout)
       ? (saved.layout as Layout)
-      : "text";
+      : "split";
     const splitPercent = Number.isFinite(saved.splitPercent)
       ? Math.max(18, Math.min(82, saved.splitPercent))
       : 42;
-    return { layout, splitPercent, outlineOpen: saved.outlineOpen === true };
+    return {
+      layout,
+      splitPercent,
+      outlineOpen:
+        typeof saved.outlineOpen === "boolean" ? saved.outlineOpen : true,
+    };
   } catch {
-    return { layout: "text", splitPercent: 42, outlineOpen: false };
+    return { layout: "split", splitPercent: 42, outlineOpen: true };
   }
 }
 
@@ -325,8 +332,8 @@ export function Viewer({ documentId }: { documentId: string }) {
   const [selectionSource, setSelectionSource] = useState<"text" | "pdf">("text");
   const [textSelection, setTextSelection] = useState("");
   const [pdfSelection, setPdfSelection] = useState("");
-  const [pdfHighlightedEntryIds, setPdfHighlightedEntryIds] = useState<Set<string>>(
-    () => new Set(),
+  const [pdfTextHighlightColors, setPdfTextHighlightColors] = useState<Map<string, string>>(
+    () => new Map(),
   );
   const [splitPercent, setSplitPercent] = useState(
     () => loadViewerPreferences().splitPercent,
@@ -1512,12 +1519,18 @@ export function Viewer({ documentId }: { documentId: string }) {
                 const noteCount = notesByEntry.get(e.entry_id)?.length ?? 0;
                 const paragraphStart = paragraphStarts.has(e.entry_id);
                 const indentLevel = indentLevels.get(e.entry_id) ?? e.indent_level ?? 0;
+                const pdfHighlightColor = pdfTextHighlightColors.get(e.entry_id);
                 return (
                   <div
                     key={e.entry_id}
                     id={`spec-L${e.ordinal}`}
                     data-ordinal={e.ordinal}
-                    className={`spec-line${sel ? " selected" : ""}${pdfHighlightedEntryIds.has(e.entry_id) ? " pdf-text-highlight" : ""}${paragraphStart ? " paragraph-start" : ""}`}
+                    className={`spec-line${sel ? " selected" : ""}${pdfHighlightColor ? " pdf-text-highlight" : ""}${paragraphStart ? " paragraph-start" : ""}`}
+                    style={
+                      pdfHighlightColor
+                        ? ({ "--pdf-highlight-color": pdfHighlightColor } as CSSProperties)
+                        : undefined
+                    }
                     role="option"
                     aria-selected={!!sel}
                     onClick={() => {
@@ -1618,7 +1631,7 @@ export function Viewer({ documentId }: { documentId: string }) {
                 setSelectionSource("pdf");
                 setPdfSelection(text);
               }}
-              onTextHighlightsChange={setPdfHighlightedEntryIds}
+              onTextHighlightsChange={setPdfTextHighlightColors}
               copyCitation={citation}
             />
           )}

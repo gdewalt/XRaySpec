@@ -101,15 +101,18 @@ function storedHighlightRects(annotation: PdfAnnotationRead): number[][] {
   return box.some((value) => value === null) ? [] : [box as number[]];
 }
 
-function highlightedEntryIds(annotations: PdfAnnotationRead[]): Set<string> {
-  const ids = new Set<string>();
+function textHighlightColors(annotations: PdfAnnotationRead[]): Map<string, string> {
+  const colors = new Map<string, string>();
   for (const annotation of annotations) {
     if (annotation.kind !== "highlight") continue;
     const raw = annotation.geometry.entry_ids;
     if (!Array.isArray(raw)) continue;
-    for (const value of raw) if (typeof value === "string") ids.add(value);
+    const color = annotation.color ?? "#ffe066";
+    for (const value of raw) {
+      if (typeof value === "string") colors.set(value, color);
+    }
   }
-  return ids;
+  return colors;
 }
 
 function lineHighlightGeometry(start: Point, end: Point, entries: EntryDto[]) {
@@ -681,7 +684,7 @@ export function PdfPane({
   onSelectCallout?: (callout: CalloutDto) => void;
   onActivate?: () => void;
   onSelectionText?: (text: string) => void;
-  onTextHighlightsChange?: (entryIds: Set<string>) => void;
+  onTextHighlightsChange?: (highlights: Map<string, string>) => void;
   copyCitation?: string;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -733,7 +736,7 @@ export function PdfPane({
       (items) => {
         if (!cancelled) {
           setAnnotations(items);
-          onTextHighlightsChange?.(highlightedEntryIds(items));
+          onTextHighlightsChange?.(textHighlightColors(items));
         }
       },
       (reason) => {
@@ -855,7 +858,7 @@ export function PdfPane({
       const created = await api.createPdfAnnotation(documentId, annotation);
       setAnnotations((items) => {
         const next = [...items, created];
-        onTextHighlightsChange?.(highlightedEntryIds(next));
+        onTextHighlightsChange?.(textHighlightColors(next));
         return next;
       });
       if (annotation.kind === "bookmark" || annotation.kind === "note") setTool("select");
@@ -869,7 +872,7 @@ export function PdfPane({
       await api.deletePdfAnnotation(annotation.id);
       setAnnotations((items) => {
         const next = items.filter((item) => item.id !== annotation.id);
-        onTextHighlightsChange?.(highlightedEntryIds(next));
+        onTextHighlightsChange?.(textHighlightColors(next));
         return next;
       });
     } catch (reason) {

@@ -3554,14 +3554,14 @@ button:active:not(:disabled) { transform: translateY(1px); }
 }
 .spec-line.pdf-text-highlight .line-text {
   border-radius: 2px;
-  background: color-mix(in srgb, #ffe066 52%, transparent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, #ffe066 52%, transparent);
+  background: color-mix(in srgb, var(--pdf-highlight-color, #ffe066) 52%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--pdf-highlight-color, #ffe066) 52%, transparent);
 }
 :root[data-theme="dark"] .account-popover { background: var(--surface-raised); }
 :root[data-theme="dark"] .spec-line.pdf-text-highlight .line-text {
   color: #f8fafc;
-  background: color-mix(in srgb, #9a7410 60%, transparent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, #9a7410 60%, transparent);
+  background: color-mix(in srgb, var(--pdf-highlight-color, #ffe066) 45%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--pdf-highlight-color, #ffe066) 45%, transparent);
 }
 @media (max-width: 760px) {
   .viewer-document-panes { flex-direction: column; gap: .75rem; }
