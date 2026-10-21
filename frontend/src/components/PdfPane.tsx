@@ -113,6 +113,23 @@ function highlightedEntryIds(annotations: PdfAnnotationRead[]): Set<string> {
 }
 
 function lineHighlightGeometry(start: Point, end: Point, entries: EntryDto[]) {
+  const fallbackGeometry = () => {
+    let x0 = Math.min(start[0], end[0]);
+    let x1 = Math.max(start[0], end[0]);
+    let y0 = Math.min(start[1], end[1]);
+    let y1 = Math.max(start[1], end[1]);
+    if (x1 - x0 < 0.006) {
+      x0 = Math.max(0, x0 - 0.006);
+      x1 = Math.min(1, x1 + 0.006);
+    }
+    if (y1 - y0 < 0.008) {
+      y0 = Math.max(0, y0 - 0.009);
+      y1 = Math.min(1, y1 + 0.009);
+    }
+    return x1 - x0 > 0.002
+      ? { rects: [[x0, y0, x1, y1]], entryIds: [] as string[] }
+      : { rects: [] as number[][], entryIds: [] as string[] };
+  };
   const lines = entries
     .filter((entry) => entry.box?.length === 4)
     .sort((a, b) => a.ordinal - b.ordinal);
@@ -122,7 +139,7 @@ function lineHighlightGeometry(start: Point, end: Point, entries: EntryDto[]) {
     const dy = Math.max(box[1] - point[1], 0, point[1] - box[3]);
     return Math.hypot(dx, dy);
   };
-  const nearestIndex = (point: Point) => {
+  const nearestEntry = (point: Point) => {
     let bestIndex = -1;
     let bestDistance = Number.POSITIVE_INFINITY;
     lines.forEach((entry, index) => {
@@ -132,11 +149,20 @@ function lineHighlightGeometry(start: Point, end: Point, entries: EntryDto[]) {
         bestIndex = index;
       }
     });
-    return bestIndex;
+    return { index: bestIndex, distance: bestDistance };
   };
-  const startIndex = nearestIndex(start);
-  const endIndex = nearestIndex(end);
-  if (startIndex < 0 || endIndex < 0) return { rects: [], entryIds: [] };
+  const startEntry = nearestEntry(start);
+  const endEntry = nearestEntry(end);
+  if (
+    startEntry.index < 0 ||
+    endEntry.index < 0 ||
+    startEntry.distance > 0.05 ||
+    endEntry.distance > 0.05
+  ) {
+    return fallbackGeometry();
+  }
+  const startIndex = startEntry.index;
+  const endIndex = endEntry.index;
   const forward = startIndex <= endIndex;
   const firstIndex = Math.min(startIndex, endIndex);
   const lastIndex = Math.max(startIndex, endIndex);
@@ -279,8 +305,14 @@ function ContinuousPdfPage({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const renderRef = useRef<RenderTask | null>(null);
+  const draftRef = useRef<AnnotationDraft | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [draft, setDraft] = useState<AnnotationDraft | null>(null);
+
+  function updateDraft(next: AnnotationDraft | null) {
+    draftRef.current = next;
+    setDraft(next);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -341,7 +373,7 @@ function ContinuousPdfPage({
       return;
     }
     event.currentTarget.setPointerCapture(event.pointerId);
-    setDraft(
+    updateDraft(
       tool === "highlight"
         ? { kind: "highlight", start: point, end: point }
         : { kind: "drawing", points: [point] },
@@ -349,24 +381,30 @@ function ContinuousPdfPage({
   }
 
   function handleAnnotationPointerMove(event: ReactPointerEvent<SVGSVGElement>) {
-    if (!draft || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    const current = draftRef.current;
+    if (!current || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
     const point = pointFromPointer(event);
-    setDraft((current) => {
-      if (!current) return null;
-      if (current.kind === "highlight") return { ...current, end: point };
-      const last = current.points[current.points.length - 1];
-      if (Math.hypot(point[0] - last[0], point[1] - last[1]) < 0.002) return current;
-      return { ...current, points: [...current.points, point].slice(0, 2000) };
-    });
+    if (current.kind === "highlight") {
+      updateDraft({ ...current, end: point });
+      return;
+    }
+    const last = current.points[current.points.length - 1];
+    if (Math.hypot(point[0] - last[0], point[1] - last[1]) < 0.002) return;
+    updateDraft({ ...current, points: [...current.points, point].slice(0, 2000) });
   }
 
   function handleAnnotationPointerUp(event: ReactPointerEvent<SVGSVGElement>) {
-    if (!draft) return;
+    const completedDraft = draftRef.current;
+    if (!completedDraft) return;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    if (draft.kind === "highlight") {
-      const { rects, entryIds } = lineHighlightGeometry(draft.start, draft.end, entries);
+    if (completedDraft.kind === "highlight") {
+      const { rects, entryIds } = lineHighlightGeometry(
+        completedDraft.start,
+        completedDraft.end,
+        entries,
+      );
       if (rects.length > 0) {
         const x0 = Math.min(...rects.map((rect) => rect[0]));
         const y0 = Math.min(...rects.map((rect) => rect[1]));
@@ -379,15 +417,15 @@ function ContinuousPdfPage({
           color: annotationColor,
         });
       }
-    } else if (draft.points.length > 1) {
+    } else if (completedDraft.points.length > 1) {
       onCreateAnnotation({
         kind: "drawing",
         page_index: pageNumber - 1,
-        geometry: { points: draft.points },
+        geometry: { points: completedDraft.points },
         color: annotationColor,
       });
     }
-    setDraft(null);
+    updateDraft(null);
   }
 
   return (
@@ -468,7 +506,7 @@ function ContinuousPdfPage({
           onPointerDown={handleAnnotationPointerDown}
           onPointerMove={handleAnnotationPointerMove}
           onPointerUp={handleAnnotationPointerUp}
-          onPointerCancel={() => setDraft(null)}
+          onPointerCancel={() => updateDraft(null)}
         >
           {annotations.map((annotation) => {
             const interactive =
