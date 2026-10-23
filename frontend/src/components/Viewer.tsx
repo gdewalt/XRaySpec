@@ -40,6 +40,7 @@ import {
   buildViewHash,
   detectClaims,
   detectOutline,
+  findEntryByGrantRef,
   highlightSegments,
   parseViewHash,
   refShort,
@@ -350,6 +351,8 @@ export function Viewer({ documentId }: { documentId: string }) {
   const [pdfPage, setPdfPage] = useState(1);
   const [copied, setCopied] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [jumpRef, setJumpRef] = useState("");
+  const [jumpError, setJumpError] = useState(false);
   const [scope, setScope] = useState<SearchScope>("all");
   const [matchIdx, setMatchIdx] = useState(0);
   const [outlineOpen, setOutlineOpen] = useState(
@@ -840,6 +843,21 @@ export function Viewer({ documentId }: { documentId: string }) {
     [matches, selectRange],
   );
 
+  const gotoGrantLine = useCallback(() => {
+    const entry = findEntryByGrantRef(entries, jumpRef);
+    if (!entry) {
+      setJumpError(true);
+      return;
+    }
+    setJumpError(false);
+    setLayout("split");
+    setSelectionSource("text");
+    selectRange(entry.ordinal, entry.ordinal);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => scrollToOrdinal(entry.ordinal));
+    });
+  }, [entries, jumpRef, scrollToOrdinal, selectRange]);
+
   const selectedEntries = useMemo(
     () =>
       selection
@@ -1129,7 +1147,7 @@ export function Viewer({ documentId }: { documentId: string }) {
               <input
                 ref={searchRef}
                 type="search"
-                placeholder="Search text  (/)"
+                placeholder="Search text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => {
@@ -1173,6 +1191,32 @@ export function Viewer({ documentId }: { documentId: string }) {
                   </button>
                 </>
               )}
+            </div>
+            <div className="line-jump">
+              <input
+                type="text"
+                value={jumpRef}
+                placeholder="Jump to line (3:22)"
+                aria-label="Jump to line number using column:line"
+                aria-invalid={jumpError}
+                title={jumpError ? "That column and line was not found" : "Enter column:line"}
+                onChange={(event) => {
+                  setJumpRef(event.target.value);
+                  setJumpError(false);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") gotoGrantLine();
+                }}
+              />
+              <button
+                type="button"
+                className="secondary icon-button"
+                onClick={gotoGrantLine}
+                aria-label="Jump to column and line"
+                title="Jump to column and line"
+              >
+                <Icon name="arrow-up-right" size={16} />
+              </button>
             </div>
           </>
         )}

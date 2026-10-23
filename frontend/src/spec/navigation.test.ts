@@ -7,6 +7,7 @@ import {
   claimsStartOrdinal,
   detectClaims,
   detectOutline,
+  findEntryByGrantRef,
   resolveFigurePage,
   highlightSegments,
   parseViewHash,
@@ -68,6 +69,19 @@ describe("search", () => {
       { text: "X", hit: true },
       { text: "c", hit: false },
     ]);
+  });
+});
+
+describe("column and line navigation", () => {
+  const entries = [grant(0, 15, "first column"), grant(1, 22, "third column", 3)];
+
+  it("finds an exact column:line reference and permits surrounding whitespace", () => {
+    expect(findEntryByGrantRef(entries, " 3 : 22 ")?.ordinal).toBe(1);
+  });
+
+  it("rejects malformed or unavailable references", () => {
+    expect(findEntryByGrantRef(entries, "3-22")).toBeNull();
+    expect(findEntryByGrantRef(entries, "3:23")).toBeNull();
   });
 });
 

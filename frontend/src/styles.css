@@ -627,6 +627,31 @@ table.docs th {
 .search button {
   padding: 0.3rem 0.5rem;
 }
+.line-jump {
+  display: flex;
+  align-items: center;
+  gap: .25rem;
+}
+.line-jump input {
+  width: 9.4rem;
+  min-height: 36px;
+  padding: .35rem .55rem;
+  border-radius: 7px;
+  font-size: .75rem;
+  font-variant-numeric: tabular-nums;
+}
+.line-jump input[aria-invalid="true"] {
+  border-color: var(--danger, #b42318);
+  box-shadow: 0 0 0 2px color-mix(in srgb, #b42318 18%, transparent);
+}
+.line-jump .icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+}
 .outline-toggle.active,
 .tab.active {
   color: var(--text);

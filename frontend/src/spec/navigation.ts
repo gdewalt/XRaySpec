@@ -185,6 +185,21 @@ export function searchEntries(entries: EntryDto[], query: string): number[] {
   return entries.filter((e) => e.display_text.toLowerCase().includes(q)).map((e) => e.ordinal);
 }
 
+/** Find an exact printed grant location entered as `column:line`. */
+export function findEntryByGrantRef(entries: EntryDto[], value: string): EntryDto | null {
+  const match = /^\s*(\d+)\s*:\s*(\d+)\s*$/.exec(value);
+  if (!match) return null;
+  const column = Number(match[1]);
+  const line = Number(match[2]);
+  if (column < 1 || line < 1) return null;
+  return entries.find(
+    (entry) =>
+      entry.locator.kind === "grant" &&
+      entry.locator.column === column &&
+      entry.locator.printed_line === line,
+  ) ?? null;
+}
+
 export type SearchScope = "all" | "claims" | "figures";
 
 function explicitClaimsStartOrdinal(entries: EntryDto[]): number | null {
