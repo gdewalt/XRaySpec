@@ -3601,7 +3601,8 @@ button:active:not(:disabled) { transform: translateY(1px); }
   z-index: 5;
   display: flex;
   flex: 0 0 auto;
-  align-items: flex-start;
+  align-items: center;
+  flex-wrap: nowrap;
   gap: .45rem;
   width: 100%;
   min-width: 0;
@@ -3610,6 +3611,9 @@ button:active:not(:disabled) { transform: translateY(1px); }
   border-radius: 10px;
   background: var(--surface);
   box-shadow: 0 1px 3px rgba(23,32,51,.04);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
 }
 .pdf-annotation-heading {
   display: inline-flex;
@@ -3629,7 +3633,7 @@ button:active:not(:disabled) { transform: translateY(1px); }
 .pdf-annotation-tools {
   display: flex;
   flex: 1 1 auto;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: .2rem;
   min-width: 0;
   max-width: 100%;
@@ -3655,9 +3659,7 @@ button:active:not(:disabled) { transform: translateY(1px); }
   background: var(--surface);
 }
 @media (max-width: 980px) {
-  .pdf-annotation-bar { display: block; overflow-x: auto; }
-  .pdf-annotation-title { display: block; padding: .1rem .2rem .3rem; }
-  .pdf-annotation-tools { flex-wrap: nowrap; width: max-content; }
+  .pdf-annotation-tools { flex: 0 0 auto; width: max-content; }
 }
 .spec-line.pdf-text-highlight .line-text {
   border-radius: 2px;

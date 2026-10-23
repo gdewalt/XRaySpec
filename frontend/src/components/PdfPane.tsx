@@ -1133,7 +1133,7 @@ export function PdfPane({
 
   return (
     <div className="pdf-pane" onPointerDown={onActivate}>
-      <div className="pdf-controls">
+      <div className="pdf-annotation-bar">
         <div className="pdf-view-controls">
           <span className="pdf-pageno">
             Page {page} of {pageCount || "…"}
@@ -1148,36 +1148,32 @@ export function PdfPane({
             <Icon name="rotate-cw" size={17} />
           </button>
         </div>
-      </div>
-      <div className="pdf-annotation-bar">
-        <div className="pdf-annotation-heading">
-          <div className="pdf-zoom-controls" role="group" aria-label="PDF magnification">
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => setScale((value) => adjustedPdfScale(value, -1))}
-              disabled={scale <= PDF_SCALE_MIN}
-              aria-label="Decrease PDF magnification"
-              title="Decrease magnification"
-            >
-              <Icon name="zoom-out" size={17} />
-            </button>
-            <output className="pdf-zoom-level" aria-live="polite" aria-label="PDF magnification">
-              {Math.round(scale * 100)}%
-            </output>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => setScale((value) => adjustedPdfScale(value, 1))}
-              disabled={scale >= PDF_SCALE_MAX}
-              aria-label="Increase PDF magnification"
-              title="Increase magnification"
-            >
-              <Icon name="zoom-in" size={17} />
-            </button>
-          </div>
-          <span className="pdf-annotation-title">Annotations</span>
+        <div className="pdf-zoom-controls" role="group" aria-label="PDF magnification">
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => setScale((value) => adjustedPdfScale(value, -1))}
+            disabled={scale <= PDF_SCALE_MIN}
+            aria-label="Decrease PDF magnification"
+            title="Decrease magnification"
+          >
+            <Icon name="zoom-out" size={17} />
+          </button>
+          <output className="pdf-zoom-level" aria-live="polite" aria-label="PDF magnification">
+            {Math.round(scale * 100)}%
+          </output>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => setScale((value) => adjustedPdfScale(value, 1))}
+            disabled={scale >= PDF_SCALE_MAX}
+            aria-label="Increase PDF magnification"
+            title="Increase magnification"
+          >
+            <Icon name="zoom-in" size={17} />
+          </button>
         </div>
+        <span className="pdf-annotation-title">Annotations</span>
         <div className="pdf-annotation-tools" role="toolbar" aria-label="PDF annotation tools">
           {PDF_TOOLS.map((item) => (
             <button
