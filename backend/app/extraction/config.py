@@ -22,7 +22,9 @@ OcrPolicy = Literal["auto", "force", "disabled"]
 @dataclass(frozen=True, slots=True)
 class ExtractionConfig:
     # Engine identity
-    version: str = "0.22.0"
+    # 0.23 invalidates artifacts/checkpoints created before reliable spaced and
+    # low-confidence subfigure caption handling (notably US 7,840,427).
+    version: str = "0.23.0"
 
     # OCR
     ocr_policy: OcrPolicy = "auto"

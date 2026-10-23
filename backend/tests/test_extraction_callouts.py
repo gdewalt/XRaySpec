@@ -240,6 +240,29 @@ def test_exact_subfigure_label_does_not_also_become_a_numeric_confusion():
     assert [figure.figure_id for figure in figures] == ["14I"]
 
 
+def test_7840427_subfigure_captions_survive_confidence_scoring():
+    expected = {"5B", "6B", "9B", "10B", "11B", "12B", "14B", "14I"}
+    figures = [
+        FigureOccurrence(
+            figure_id,
+            page_index,
+            (0.15, 0.20, 0.35, 0.24),
+            # FIG. 14B is cleanly located in the drawing but Tesseract reports
+            # very low confidence because of the screened scan background.
+            confidence=2.0 if figure_id == "14B" else 90.0,
+        )
+        for page_index, figure_id in enumerate(
+            ["5B", "6B", "9B", "10B", "11B", "12B", "14B", "14I"],
+            start=6,
+        )
+    ]
+
+    filtered = filter_figure_occurrences(figures, expected)
+
+    assert {figure.figure_id for figure in filtered} == expected
+    assert next(figure for figure in filtered if figure.figure_id == "14B").method == "spec_exact"
+
+
 def test_fuzzy_figure_prefixes_are_recovered_on_drawing_sheets():
     words = [
         Word("F1G.", 0.10, 0.30, 0.16, 0.33, confidence=88.0),
