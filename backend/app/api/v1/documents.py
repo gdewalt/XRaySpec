@@ -35,7 +35,7 @@ from ...schemas.bookmarks import BookmarkCreate, BookmarkRead
 from ...schemas.documents import DocumentCreate, DocumentList, DocumentRead
 from ...schemas.jobs import JobRead
 from ...schemas.overrides import OverrideRead, OverrideUpsert
-from ...schemas.pdf_annotations import PdfAnnotationCreate, PdfAnnotationRead
+from ...schemas.pdf_annotations import PdfAnnotationCreate, PdfAnnotationRead, PdfNoteUpdate
 from ...services.audit import record_audit
 from ...services.deletion import purge_document
 from ...services.publication import find_reusable_artifact
@@ -528,6 +528,28 @@ async def delete_pdf_annotation(annotation_id: str, user: CurrentUser, session: 
         raise HTTPException(status.HTTP_404_NOT_FOUND, "PDF annotation not found")
     await session.delete(annotation)
     await session.commit()
+
+
+@router.patch("/pdf-annotations/{annotation_id}", response_model=PdfAnnotationRead)
+async def update_pdf_note(
+    annotation_id: str, body: PdfNoteUpdate, user: CurrentUser, session: DbSession
+) -> PdfAnnotationRead:
+    annotation = await session.scalar(
+        select(PdfAnnotation).where(
+            PdfAnnotation.id == annotation_id, PdfAnnotation.owner_id == user.id
+        )
+    )
+    if annotation is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "PDF annotation not found")
+    if annotation.kind != "note":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Only PDF notes can be edited")
+    if body.geometry is not None:
+        annotation.geometry = body.geometry
+    if body.note is not None:
+        annotation.note = body.note
+    await session.commit()
+    await session.refresh(annotation)
+    return PdfAnnotationRead.model_validate(annotation)
 
 
 @router.get("/documents/{document_id}/overrides", response_model=list[OverrideRead])

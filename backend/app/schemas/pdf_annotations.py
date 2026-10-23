@@ -45,8 +45,22 @@ class PdfAnnotationCreate(BaseModel):
                 for point in points
             ):
                 raise ValueError("drawing points must be normalized coordinate pairs")
-        if self.kind == "note" and not (self.note or "").strip():
-            raise ValueError("notes require text")
+        return self
+
+
+class PdfNoteUpdate(BaseModel):
+    geometry: dict[str, Any] | None = None
+    note: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def validate_geometry(self):
+        if self.geometry is None:
+            return self
+        if not (_unit(self.geometry.get("x")) and _unit(self.geometry.get("y"))):
+            raise ValueError("notes require normalized x and y")
+        collapsed = self.geometry.get("collapsed")
+        if collapsed is not None and not isinstance(collapsed, bool):
+            raise ValueError("collapsed must be a boolean")
         return self
 
 

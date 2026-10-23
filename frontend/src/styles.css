@@ -2879,25 +2879,6 @@ mark.search-hit { background: #ffdf8a; color: #422600; }
   outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent);
   outline-offset: 2px;
 }
-.pdf-note-editor {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto auto;
-  align-items: end;
-  gap: .5rem;
-  margin: .45rem 0;
-  padding: .65rem;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
-}
-.pdf-note-editor label {
-  grid-column: 1 / -1;
-}
-.pdf-note-editor textarea {
-  min-height: 72px;
-  resize: vertical;
-}
 .pdf-annotation-layer {
   position: absolute;
   z-index: 3;
@@ -2928,6 +2909,89 @@ mark.search-hit { background: #ffdf8a; color: #422600; }
 .pdf-note-mark, .pdf-bookmark-mark {
   filter: drop-shadow(0 1px 2px rgba(0,0,0,.35));
 }
+.pdf-sticky-layer {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.pdf-sticky-note {
+  position: absolute;
+  width: clamp(170px, 28%, 230px);
+  min-width: 170px;
+  overflow: hidden;
+  transform: translate(-8px, -8px);
+  border: 1px solid #a66f00;
+  border-radius: 4px 4px 8px 4px;
+  background: #fff3a3;
+  color: #332800;
+  box-shadow: 0 7px 20px rgba(24, 18, 0, .26);
+  pointer-events: auto;
+}
+.pdf-sticky-note.active {
+  outline: 3px solid rgba(36, 86, 211, .52);
+  outline-offset: 2px;
+}
+.pdf-sticky-note.collapsed {
+  width: 112px;
+  min-width: 112px;
+}
+.pdf-sticky-note-head {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: .35rem;
+  min-height: 36px;
+  padding: .3rem .35rem .3rem .5rem;
+  background: #f6cf48;
+  border-bottom: 1px solid rgba(89, 61, 0, .28);
+  color: #332800;
+  font-size: .75rem;
+  font-weight: 750;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.pdf-sticky-note-head:active { cursor: grabbing; }
+.pdf-sticky-collapse {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #332800;
+}
+.pdf-sticky-collapse:hover { background: rgba(72, 51, 0, .12); }
+.pdf-sticky-collapse:focus-visible {
+  outline: 2px solid #173d9d;
+  outline-offset: 1px;
+}
+.pdf-sticky-note textarea {
+  display: block;
+  width: 100%;
+  min-height: 112px;
+  max-height: 260px;
+  padding: .65rem;
+  resize: vertical;
+  border: 0;
+  border-radius: 0;
+  background: #fff9c9;
+  color: #2c2400;
+  font-family: inherit;
+  font-size: .82rem;
+  font-weight: 500;
+  line-height: 1.4;
+  box-shadow: none;
+}
+.pdf-sticky-note textarea:focus {
+  outline: 0;
+  background: #fffbe0;
+}
 
 @media (max-width: 760px) {
   .pdf-annotation-tools {
@@ -2938,8 +3002,7 @@ mark.search-hit { background: #ffdf8a; color: #422600; }
     border-left: 0;
     border-top: 1px solid var(--border);
   }
-  .pdf-note-editor { grid-template-columns: 1fr 1fr; }
-  .pdf-note-editor textarea { grid-column: 1 / -1; }
+  .pdf-sticky-note { width: 180px; min-width: 180px; }
 }
 
 @media (max-width: 700px) {
@@ -3367,8 +3430,7 @@ button:active:not(:disabled) { transform: translateY(1px); }
 :root[data-theme="dark"] .document-open-button,
 :root[data-theme="dark"] .export-menu > .icon-button,
 :root[data-theme="dark"] .search,
-:root[data-theme="dark"] .pdf-controls,
-:root[data-theme="dark"] .pdf-note-editor {
+:root[data-theme="dark"] .pdf-controls {
   border-color: var(--border);
   background: var(--surface);
 }

@@ -19,6 +19,7 @@ import type {
   PdfAnnotationCreate,
   PdfAnnotationKind,
   PdfAnnotationRead,
+  PdfNoteUpdate,
 } from "../api/types";
 import { getToken } from "../auth/session";
 import { formatSelectionWithCitation, normalizeCopiedText } from "../spec/text";
@@ -34,7 +35,6 @@ type AnnotationDraft =
 
 const PDF_TOOLS: { id: PdfTool; label: string; icon: IconName }[] = [
   { id: "select", label: "Select text", icon: "mouse-pointer" },
-  { id: "bookmark", label: "Add bookmark", icon: "bookmark" },
   { id: "note", label: "Add note", icon: "message-square" },
   { id: "highlight", label: "Highlight", icon: "highlighter" },
   { id: "drawing", label: "Draw", icon: "pencil" },
@@ -122,6 +122,176 @@ function textHighlightColors(annotations: PdfAnnotationRead[]): Map<string, stri
     }
   }
   return colors;
+}
+
+function StickyPdfNote({
+  annotation,
+  rotation,
+  pageElement,
+  active,
+  tool,
+  onActivate,
+  onUpdate,
+  onDelete,
+}: {
+  annotation: PdfAnnotationRead;
+  rotation: number;
+  pageElement: HTMLDivElement | null;
+  active: boolean;
+  tool: PdfTool;
+  onActivate: () => void;
+  onUpdate: (annotation: PdfAnnotationRead, update: PdfNoteUpdate) => void;
+  onDelete: (annotation: PdfAnnotationRead) => void;
+}) {
+  const savedX = geometryNumber(annotation, "x") ?? 0;
+  const savedY = geometryNumber(annotation, "y") ?? 0;
+  const [position, setPosition] = useState<Point>([savedX, savedY]);
+  const [draft, setDraft] = useState(annotation.note ?? "");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const saveTimerRef = useRef<number | null>(null);
+  const dragRef = useRef<{
+    pointerId: number;
+    offset: Point;
+    current: Point;
+  } | null>(null);
+  const collapsed = annotation.geometry.collapsed === true;
+
+  useEffect(() => setDraft(annotation.note ?? ""), [annotation.note]);
+  useEffect(() => setPosition([savedX, savedY]), [savedX, savedY]);
+  useEffect(() => {
+    if (active && !collapsed) textareaRef.current?.focus();
+  }, [active, collapsed]);
+  useEffect(
+    () => () => {
+      if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+    },
+    [],
+  );
+
+  function pointFromPage(event: ReactPointerEvent<HTMLElement>): Point | null {
+    if (!pageElement) return null;
+    const rect = pageElement.getBoundingClientRect();
+    const displayed: Point = [
+      Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
+      Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
+    ];
+    return unrotatePoint(displayed, rotation);
+  }
+
+  function beginDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    event.stopPropagation();
+    if (tool === "delete") {
+      onDelete(annotation);
+      return;
+    }
+    if (tool !== "select") return;
+    onActivate();
+    const point = pointFromPage(event);
+    if (!point) return;
+    dragRef.current = {
+      pointerId: event.pointerId,
+      offset: [point[0] - position[0], point[1] - position[1]],
+      current: position,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const point = pointFromPage(event);
+    if (!point) return;
+    const next: Point = [
+      Math.max(0.01, Math.min(0.78, point[0] - drag.offset[0])),
+      Math.max(0.01, Math.min(collapsed ? 0.95 : 0.82, point[1] - drag.offset[1])),
+    ];
+    drag.current = next;
+    setPosition(next);
+  }
+
+  function finishDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const finalPosition = drag.current;
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    onUpdate(annotation, {
+      geometry: {
+        ...annotation.geometry,
+        x: finalPosition[0],
+        y: finalPosition[1],
+      },
+    });
+  }
+
+  function updateText(value: string) {
+    setDraft(value);
+    if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => {
+      saveTimerRef.current = null;
+      onUpdate(annotation, { note: value });
+    }, 500);
+  }
+
+  function flushText() {
+    if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = null;
+    if (draft !== (annotation.note ?? "")) onUpdate(annotation, { note: draft });
+  }
+
+  const displayed = rotatePoint(position, rotation);
+  return (
+    <section
+      className={`pdf-sticky-note${collapsed ? " collapsed" : ""}${active ? " active" : ""}`}
+      style={{ left: `${displayed[0] * 100}%`, top: `${displayed[1] * 100}%` }}
+      aria-label="PDF note"
+      onPointerDown={(event) => {
+        event.stopPropagation();
+        if (tool === "delete") onDelete(annotation);
+        else onActivate();
+      }}
+    >
+      <div
+        className="pdf-sticky-note-head"
+        onPointerDown={beginDrag}
+        onPointerMove={moveDrag}
+        onPointerUp={finishDrag}
+        onPointerCancel={finishDrag}
+      >
+        <Icon name="message-square" size={15} />
+        <span>Note</span>
+        <button
+          type="button"
+          className="pdf-sticky-collapse"
+          aria-label={collapsed ? "Expand note" : "Collapse note"}
+          title={collapsed ? "Expand note" : "Collapse note"}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onUpdate(annotation, {
+              geometry: { ...annotation.geometry, collapsed: !collapsed },
+            });
+          }}
+        >
+          <Icon name={collapsed ? "chevron-down" : "chevron-up"} size={14} />
+        </button>
+      </div>
+      {!collapsed && (
+        <textarea
+          ref={textareaRef}
+          value={draft}
+          onChange={(event) => updateText(event.target.value)}
+          onBlur={flushText}
+          onPointerDown={(event) => event.stopPropagation()}
+          maxLength={4000}
+          placeholder="Type a note…"
+          aria-label="Note text"
+        />
+      )}
+    </section>
+  );
 }
 
 function lineHighlightGeometry(start: Point, end: Point, entries: EntryDto[]) {
@@ -291,8 +461,10 @@ function ContinuousPdfPage({
   onSelectLine,
   onSelectCallout,
   onCreateAnnotation,
-  onPlaceNote,
+  onUpdateAnnotation,
   onDeleteAnnotation,
+  activeNoteId,
+  onActivateNote,
   registerPage,
 }: {
   pdf: PDFDocumentProxy;
@@ -311,11 +483,14 @@ function ContinuousPdfPage({
   onSelectLine: (entry: EntryDto) => void;
   onSelectCallout?: (callout: CalloutDto) => void;
   onCreateAnnotation: (annotation: PdfAnnotationCreate) => void;
-  onPlaceNote: (pageIndex: number, point: Point) => void;
+  onUpdateAnnotation: (annotation: PdfAnnotationRead, update: PdfNoteUpdate) => void;
   onDeleteAnnotation: (annotation: PdfAnnotationRead) => void;
+  activeNoteId: string | null;
+  onActivateNote: (annotationId: string) => void;
   registerPage: (page: number, element: HTMLDivElement | null) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const pageElementRef = useRef<HTMLDivElement>(null);
   const renderRef = useRef<RenderTask | null>(null);
   const draftRef = useRef<AnnotationDraft | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -371,17 +546,18 @@ function ContinuousPdfPage({
     if (tool === "select" || tool === "delete") return;
     event.preventDefault();
     const point = pointFromPointer(event);
-    if (tool === "bookmark") {
-      onCreateAnnotation({
-        kind: "bookmark",
-        page_index: pageNumber - 1,
-        geometry: { x: point[0], y: point[1] },
-        color: "#2456d3",
-      });
-      return;
-    }
     if (tool === "note") {
-      onPlaceNote(pageNumber - 1, point);
+      onCreateAnnotation({
+        kind: "note",
+        page_index: pageNumber - 1,
+        geometry: {
+          x: Math.max(0.01, Math.min(0.78, point[0])),
+          y: Math.max(0.01, Math.min(0.82, point[1])),
+          collapsed: false,
+        },
+        color: "#facc15",
+        note: "",
+      });
       return;
     }
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -448,6 +624,7 @@ function ContinuousPdfPage({
       aria-label={`PDF page ${pageNumber}`}
     >
       <div
+        ref={pageElementRef}
         className="pdf-page"
         style={{ width: size.width || undefined, height: size.height || undefined }}
       >
@@ -520,10 +697,10 @@ function ContinuousPdfPage({
           onPointerUp={handleAnnotationPointerUp}
           onPointerCancel={() => updateDraft(null)}
         >
-          {annotations.map((annotation) => {
+          {annotations.filter((annotation) => annotation.kind !== "note").map((annotation) => {
             const interactive =
               tool === "delete" ||
-              (tool === "select" && (annotation.kind === "note" || annotation.kind === "bookmark"));
+              (tool === "select" && annotation.kind === "bookmark");
             const performAction = () => {
               if (tool === "delete") onDeleteAnnotation(annotation);
               else if (annotation.note) window.alert(annotation.note);
@@ -652,6 +829,23 @@ function ContinuousPdfPage({
             />
           )}
         </svg>
+        <div className="pdf-sticky-layer" aria-label="PDF notes">
+          {annotations
+            .filter((annotation) => annotation.kind === "note")
+            .map((annotation) => (
+              <StickyPdfNote
+                key={annotation.id}
+                annotation={annotation}
+                rotation={rotation}
+                pageElement={pageElementRef.current}
+                active={activeNoteId === annotation.id}
+                tool={tool}
+                onActivate={() => onActivateNote(annotation.id)}
+                onUpdate={onUpdateAnnotation}
+                onDelete={onDeleteAnnotation}
+              />
+            ))}
+        </div>
       </div>
     </div>
   );
@@ -708,8 +902,7 @@ export function PdfPane({
   const [highlightColor, setHighlightColor] = useState("#ffe066");
   const [drawingColor, setDrawingColor] = useState("#2456d3");
   const [annotations, setAnnotations] = useState<PdfAnnotationRead[]>([]);
-  const [pendingNote, setPendingNote] = useState<{ pageIndex: number; point: Point } | null>(null);
-  const [noteDraft, setNoteDraft] = useState("");
+  const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
 
   useEffect(() => {
     let loadedDocument: PDFDocumentProxy | null = null;
@@ -870,7 +1063,10 @@ export function PdfPane({
         onTextHighlightsChange?.(textHighlightColors(next));
         return next;
       });
-      if (annotation.kind === "bookmark" || annotation.kind === "note") setTool("select");
+      if (annotation.kind === "note") {
+        setActiveNoteId(created.id);
+        setTool("select");
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
@@ -879,6 +1075,7 @@ export function PdfPane({
   async function deleteAnnotation(annotation: PdfAnnotationRead) {
     try {
       await api.deletePdfAnnotation(annotation.id);
+      if (activeNoteId === annotation.id) setActiveNoteId(null);
       setAnnotations((items) => {
         const next = items.filter((item) => item.id !== annotation.id);
         onTextHighlightsChange?.(textHighlightColors(next));
@@ -889,23 +1086,46 @@ export function PdfPane({
     }
   }
 
-  function placeNote(pageIndex: number, point: Point) {
-    setPendingNote({ pageIndex, point });
-    setNoteDraft("");
-  }
-
-  function saveNote() {
-    const note = noteDraft.trim();
-    if (!pendingNote || !note) return;
-    void createAnnotation({
-      kind: "note",
-      page_index: pendingNote.pageIndex,
-      geometry: { x: pendingNote.point[0], y: pendingNote.point[1] },
-      color: "#b45309",
-      note,
-    });
-    setPendingNote(null);
-    setNoteDraft("");
+  async function updateNote(annotation: PdfAnnotationRead, update: PdfNoteUpdate) {
+    setAnnotations((items) =>
+      items.map((item) =>
+        item.id === annotation.id
+          ? {
+              ...item,
+              note: update.note ?? item.note,
+              geometry: update.geometry ?? item.geometry,
+            }
+          : item,
+      ),
+    );
+    try {
+      const updated = await api.updatePdfNote(annotation.id, update);
+      setAnnotations((items) =>
+        items.map((item) =>
+          item.id === updated.id
+            ? {
+                ...item,
+                note: update.note !== undefined ? updated.note : item.note,
+                geometry: update.geometry !== undefined ? updated.geometry : item.geometry,
+              }
+            : item,
+        ),
+      );
+    } catch (reason) {
+      setAnnotations((items) =>
+        items.map((item) =>
+          item.id === annotation.id
+            ? {
+                ...item,
+                note: update.note !== undefined ? annotation.note : item.note,
+                geometry:
+                  update.geometry !== undefined ? annotation.geometry : item.geometry,
+              }
+            : item,
+        ),
+      );
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
   }
 
   const pageCount = pdf?.numPages ?? 0;
@@ -995,30 +1215,6 @@ export function PdfPane({
         </div>
       </div>
 
-      {pendingNote && (
-        <div className="pdf-note-editor" role="dialog" aria-label="Add PDF note">
-          <label htmlFor="pdf-note-text">Note</label>
-          <textarea
-            id="pdf-note-text"
-            value={noteDraft}
-            onChange={(event) => setNoteDraft(event.target.value)}
-            rows={3}
-            maxLength={4000}
-            autoFocus
-          />
-          <button type="button" onClick={saveNote} disabled={!noteDraft.trim()}>
-            Save note
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => setPendingNote(null)}
-          >
-            Cancel
-          </button>
-        </div>
-      )}
-
       {error && (
         <p className="status err" role="alert">
           {error}
@@ -1063,8 +1259,10 @@ export function PdfPane({
                   onSelectLine={onSelectLine}
                   onSelectCallout={onSelectCallout}
                   onCreateAnnotation={(annotation) => void createAnnotation(annotation)}
-                  onPlaceNote={placeNote}
+                  onUpdateAnnotation={(annotation, update) => void updateNote(annotation, update)}
                   onDeleteAnnotation={(annotation) => void deleteAnnotation(annotation)}
+                  activeNoteId={activeNoteId}
+                  onActivateNote={setActiveNoteId}
                   registerPage={registerPage}
                 />
               );

@@ -237,6 +237,45 @@ async def test_pdf_annotation_persistence_and_authorization(client, make_token, 
     ).status_code == 204
 
 
+async def test_pdf_sticky_note_can_be_edited_moved_and_collapsed(client, make_token, auth):
+    owner = make_token("owner", "o@example.com")
+    intruder = make_token("intruder", "x@example.com")
+    doc_id = await _create_doc(client, auth, owner)
+    created = await client.post(
+        f"/api/v1/documents/{doc_id}/pdf-annotations",
+        headers=auth(owner),
+        json={
+            "kind": "note",
+            "page_index": 0,
+            "geometry": {"x": 0.1, "y": 0.2, "collapsed": False},
+            "color": "#facc15",
+            "note": "",
+        },
+    )
+    assert created.status_code == 201, created.text
+    annotation_id = created.json()["id"]
+
+    update = {
+        "note": "Directly edited note",
+        "geometry": {"x": 0.4, "y": 0.3, "collapsed": True},
+    }
+    denied = await client.patch(
+        f"/api/v1/pdf-annotations/{annotation_id}",
+        headers=auth(intruder),
+        json=update,
+    )
+    assert denied.status_code == 404
+
+    edited = await client.patch(
+        f"/api/v1/pdf-annotations/{annotation_id}",
+        headers=auth(owner),
+        json=update,
+    )
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["note"] == "Directly edited note"
+    assert edited.json()["geometry"] == update["geometry"]
+
+
 async def test_override_authorization(client, make_token, auth):
     owner = make_token("owner", "o@example.com")
     intruder = make_token("intruder", "x@example.com")

@@ -79,6 +79,11 @@ export interface PdfAnnotationCreate {
   note?: string | null;
 }
 
+export interface PdfNoteUpdate {
+  geometry?: Record<string, unknown>;
+  note?: string;
+}
+
 export interface OverrideRead {
   id: string;
   document_id: string;
