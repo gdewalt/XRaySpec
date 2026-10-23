@@ -3732,6 +3732,40 @@ main.viewer-container {
   overflow: auto;
 }
 
+/* Keep copy/citation controls in the viewer's layout so they reduce the pane
+   height instead of obscuring the final lines and the bottom of the PDF. */
+.viewer-container .cite-bar {
+  position: relative;
+  right: auto;
+  bottom: auto;
+  left: auto;
+  z-index: 8;
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: 44px;
+  padding: .35rem .5rem;
+  overflow: visible;
+}
+.viewer-container .cite-bar.collapsed {
+  min-height: 40px;
+  flex-wrap: nowrap;
+  box-shadow: 0 -4px 14px rgba(23,32,51,.08);
+}
+.cite-bar-toggle {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  margin-left: auto;
+  padding: 0;
+}
+.cite-empty {
+  color: var(--muted);
+  font-size: .82rem;
+}
+
 @media (max-width: 760px) {
   main.viewer-container { height: calc(100dvh - 58px); }
   .viewer-container .outline { height: auto; max-height: 16rem; }

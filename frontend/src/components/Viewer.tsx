@@ -371,6 +371,7 @@ export function Viewer({ documentId }: { documentId: string }) {
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const [citeStyle, setCiteStyle] = useState<CiteStyle>(loadStyle);
   const [citeSettingsOpen, setCiteSettingsOpen] = useState(false);
+  const [citeBarExpanded, setCiteBarExpanded] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const panesRef = useRef<HTMLDivElement>(null);
   const specRef = useRef<HTMLElement>(null);
@@ -383,6 +384,10 @@ export function Viewer({ documentId }: { documentId: string }) {
     if (resizeFrameRef.current !== null) window.cancelAnimationFrame(resizeFrameRef.current);
     document.body.classList.remove("resizing-panes");
   }, []);
+
+  useEffect(() => {
+    setCiteBarExpanded(selection !== null);
+  }, [selection]);
 
   useEffect(() => {
     try {
@@ -1786,9 +1791,20 @@ export function Viewer({ documentId }: { documentId: string }) {
         </div>
       )}
 
-      {selectedEntries.length > 0 && (
-        <div className="cite-bar" role="region" aria-label="Copy and cite">
-          <span className="cite-ref">{citation}</span>
+      {artifact && (
+        <div
+          className={`cite-bar ${citeBarExpanded ? "expanded" : "collapsed"}`}
+          role="region"
+          aria-label="Copy and cite"
+        >
+          <span className="cite-ref">
+            {selectedEntries.length > 0 ? citation : "Copy and cite"}
+          </span>
+          {citeBarExpanded && selectedEntries.length === 0 && (
+            <span className="cite-empty">Select a line or text to enable citation actions.</span>
+          )}
+          {citeBarExpanded && selectedEntries.length > 0 && (
+            <>
           {selectedStartEntry && (notesByEntry.get(selectedStartEntry.entry_id)?.length ?? 0) > 0 && (
             <ul className="cite-notes">
               {notesByEntry.get(selectedStartEntry.entry_id)?.map((a) => (
@@ -1972,6 +1988,18 @@ export function Viewer({ documentId }: { documentId: string }) {
             </button>
             {copied && <span className="copied">Copied {copied}</span>}
           </div>
+            </>
+          )}
+          <button
+            type="button"
+            className="icon-button cite-bar-toggle"
+            onClick={() => setCiteBarExpanded((current) => !current)}
+            aria-expanded={citeBarExpanded}
+            aria-label={citeBarExpanded ? "Collapse copy and cite panel" : "Expand copy and cite panel"}
+            title={citeBarExpanded ? "Collapse copy and cite panel" : "Expand copy and cite panel"}
+          >
+            <Icon name={citeBarExpanded ? "chevron-down" : "chevron-up"} size={17} />
+          </button>
         </div>
       )}
     </div>
