@@ -65,6 +65,7 @@ async def find_reusable_artifact(
             ExtractionArtifact.manifest_object_key.is_not(None),
             ExtractionArtifact.ready_at.is_not(None),
             ExtractionArtifact.is_active.is_(True),
+            ExtractionArtifact.disposition.in_(tuple(_DISPOSITION_TO_STATE)),
         )
         .order_by(ExtractionArtifact.ready_at.desc())
     )
@@ -105,6 +106,7 @@ async def _activate_artifact(
     source_id: str,
     schema_version: int,
     disposition: str,
+    document_state: str | None = None,
 ) -> None:
     # Demote the current active artifact for this source to rollback.
     prior = await session.scalars(
@@ -131,7 +133,7 @@ async def _activate_artifact(
     doc = await session.get(UserDocument, document_id)
     if doc is not None and doc.state != "deleted":
         doc.active_artifact_id = artifact_id
-        doc.state = _DISPOSITION_TO_STATE.get(disposition, "ready")
+        doc.state = document_state or _DISPOSITION_TO_STATE.get(disposition, "ready")
 
 
 async def publish_reused_artifact(
@@ -168,6 +170,8 @@ async def publish_artifact(
     source_id: str,
     owner_id: str,
     artifact: Artifact,
+    document_state: str | None = None,
+    record_disposition: str | None = None,
 ) -> str:
     artifact_id = new_id("art")
     key = f"artifacts/{owner_id}/{artifact_id}.json.gz"
@@ -181,7 +185,8 @@ async def publish_artifact(
         document_id=document_id,
         source_id=source_id,
         schema_version=artifact.schema_version,
-        disposition=artifact.disposition,
+        disposition=record_disposition or artifact.disposition,
+        document_state=document_state,
     )
 
     await session.commit()

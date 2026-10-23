@@ -140,10 +140,13 @@ async def _finish(
         job.failure_code = failure_code
         job.finished_at = datetime.now(UTC)
         job.progress_sequence += 1  # terminal transition emits a final SSE event
-        if status == "failed" and job.document_id is not None:
+        if status in ("failed", "cancelled") and job.document_id is not None:
             document = await session.get(UserDocument, job.document_id)
             if document is not None and document.state != "deleted":
-                document.state = "failed"
+                if document.active_artifact_id:
+                    document.state = "ready_with_warnings"
+                elif status == "failed":
+                    document.state = "failed"
         await session.commit()
 
 

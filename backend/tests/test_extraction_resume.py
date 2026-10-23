@@ -16,6 +16,7 @@ from time import sleep
 from sqlalchemy import delete, func, select
 
 from app.db.models import ExtractionJob, JobCheckpoint, SourceDocument, User
+from app.extraction.artifact import FigureOccurrence
 from app.extraction.config import DEFAULT_CONFIG
 from app.extraction.core import PageResult
 from app.extraction.model import Page, Word
@@ -165,6 +166,54 @@ async def test_page_extraction_uses_bounded_two_worker_pool(client):
     await _run(client, ctx, source_id, owner_id, recorder)
 
     assert recorder.maximum_active == 2
+
+
+async def test_staged_run_publishes_text_before_finishing_drawings(client, monkeypatch):
+    ctx, source_id, owner_id = await _ctx(client)
+    pages = _fake_load_pages(b"")[:2]
+
+    def staged_route(_pdf, native_page, _config, _can_ocr, *, defer_drawing_details=False):
+        assert defer_drawing_details is True
+        if native_page.index == 1:
+            return PageResult(
+                1,
+                "ocr",
+                is_drawing=True,
+                words=(Word("FIG.", 0.1, 0.1, 0.2, 0.12),),
+                is_drawing_sheet=True,
+            )
+        return Recorder()(_pdf, native_page, _config, _can_ocr)
+
+    def complete_drawing(_pdf, _native_page, provisional, _config, _can_ocr):
+        return replace(
+            provisional,
+            words=(),
+            figures=(FigureOccurrence("1", 1, (0.1, 0.1, 0.2, 0.2)),),
+        )
+
+    monkeypatch.setattr("app.extraction.core.route_page", staged_route)
+    monkeypatch.setattr("app.extraction.core.complete_drawing_page", complete_drawing)
+    preliminary = []
+
+    async def text_ready(artifact):
+        preliminary.append(artifact)
+
+    final = await run_extraction(
+        ctx,
+        pdf_bytes=b"%PDF-1.7 staged",
+        source_id=source_id,
+        owner_id=owner_id,
+        config=DEFAULT_CONFIG,
+        doc_type="grant",
+        load_pages=lambda _pdf: pages,
+        ocr_available=lambda: True,
+        on_text_ready=text_ready,
+    )
+
+    assert len(preliminary) == 1
+    assert preliminary[0].entries
+    assert preliminary[0].figure_occurrences == []
+    assert [figure.figure_id for figure in final.figure_occurrences] == ["1"]
 
 
 async def test_resume_reuses_all_checkpoints_and_skips_pdf_parse(client):

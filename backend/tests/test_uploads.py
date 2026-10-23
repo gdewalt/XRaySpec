@@ -27,7 +27,7 @@ async def test_grant_then_complete_creates_document_and_job(client, make_token, 
     body = r.json()
     assert body["job_status"] == "queued"
     assert body["document"]["title"] == "My Patent"
-    assert body["document"]["state"] == "processing"
+    assert body["document"]["state"] == "pdf_ready"
 
     # The document now appears in the owner's list.
     listed = await client.get("/api/v1/documents", headers=auth(tok))

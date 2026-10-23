@@ -385,6 +385,7 @@ table.docs th {
 }
 
 .badge.state-ready,
+.badge.state-ready_with_warnings,
 .badge.state-text_only {
   background: var(--ok-bg);
   color: var(--ok-text);
@@ -2564,8 +2565,9 @@ input:focus, textarea:focus, select:focus {
   font-size: .68rem;
   font-weight: 700;
 }
-.badge.state-ready, .badge.state-text_only { background: var(--ok-bg); color: var(--ok-text); }
-.badge.state-processing, .badge.state-preparing, .badge.state-pending_fetch, .badge.state-reprocessing {
+.badge.state-ready, .badge.state-ready_with_warnings, .badge.state-text_only { background: var(--ok-bg); color: var(--ok-text); }
+.badge.state-processing, .badge.state-preparing, .badge.state-pending_fetch, .badge.state-reprocessing,
+.badge.state-pdf_ready, .badge.state-text_ready {
   background: var(--accent-soft);
   color: #173d9d;
 }

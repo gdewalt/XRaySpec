@@ -58,6 +58,7 @@ import {
 } from "../spec/text";
 import { PdfPane } from "./PdfPane";
 import { Icon, type IconName } from "./Icon";
+import { JobProgress } from "./JobProgress";
 
 type Layout = "text" | "pdf" | "split" | "details";
 type Selection = { start: number; end: number } | null;
@@ -66,6 +67,14 @@ const VIEWER_PREFERENCES_KEY = "xray.viewer.preferences.v1";
 // Keep the dormant callout code and artifact fields available for a later,
 // measured reintroduction, but do not expose unreliable numeral associations.
 const CALLOUT_IDENTIFICATION_ENABLED = false;
+const PROCESSING_STATES = new Set([
+  "preparing",
+  "processing",
+  "pending_fetch",
+  "reprocessing",
+  "pdf_ready",
+  "text_ready",
+]);
 
 function loadViewerPreferences(): {
   layout: Layout;
@@ -368,6 +377,7 @@ export function Viewer({ documentId }: { documentId: string }) {
   const resizeBoundsRef = useRef<{ left: number; width: number } | null>(null);
   const resizeFrameRef = useRef<number | null>(null);
   const resizePercentRef = useRef(splitPercent);
+  const artifactIdRef = useRef<string | null>(null);
 
   useEffect(() => () => {
     if (resizeFrameRef.current !== null) window.cancelAnimationFrame(resizeFrameRef.current);
@@ -402,7 +412,10 @@ export function Viewer({ documentId }: { documentId: string }) {
         setDoc(d);
         if (d.active_artifact_id) {
           const a = await api.getArtifactEntries(d.active_artifact_id);
-          if (!cancelled) setArtifact(a);
+          if (!cancelled) {
+            artifactIdRef.current = d.active_artifact_id;
+            setArtifact(a);
+          }
         }
         const [bm, asserted, an, ov] = await Promise.all([
           api.listBookmarks(documentId),
@@ -426,6 +439,42 @@ export function Viewer({ documentId }: { documentId: string }) {
       cancelled = true;
     };
   }, [documentId]);
+
+  useEffect(() => {
+    if (!doc || !PROCESSING_STATES.has(doc.state)) return;
+    let cancelled = false;
+    let refreshing = false;
+
+    const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const next = await api.getDocument(documentId);
+        if (cancelled) return;
+        setDoc(next);
+        if (
+          next.active_artifact_id &&
+          next.active_artifact_id !== artifactIdRef.current
+        ) {
+          const nextArtifact = await api.getArtifactEntries(next.active_artifact_id);
+          if (!cancelled) {
+            artifactIdRef.current = next.active_artifact_id;
+            setArtifact(nextArtifact);
+          }
+        }
+      } catch {
+        // A brief polling failure should not replace already usable PDF/text.
+      } finally {
+        refreshing = false;
+      }
+    };
+
+    const timer = window.setInterval(() => void refresh(), 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [doc?.state, documentId]);
 
   const entries = artifact?.entries ?? [];
   const indentLevels = useMemo(() => deriveIndentLevels(entries), [entries]);
@@ -1123,7 +1172,7 @@ export function Viewer({ documentId }: { documentId: string }) {
           </>
         )}
 
-        {artifact && (
+        {doc && (artifact || doc.state === "pdf_ready") && (
           <div className="export-menu">
             <button
               type="button"
@@ -1138,15 +1187,19 @@ export function Viewer({ documentId }: { documentId: string }) {
               <button type="button" onClick={() => void handlePdfExport()}>
                 Patent PDF (.pdf)
               </button>
-              <button
-                type="button"
-                onClick={() => doc && exportPortable(doc, artifact, bookmarks, annotations)}
-              >
-                Portable save (.json)
-              </button>
-              <button type="button" onClick={() => doc && exportText(doc, artifact)}>
-                Plain text (.txt)
-              </button>
+              {artifact && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => exportPortable(doc, artifact, bookmarks, annotations)}
+                  >
+                    Portable save (.json)
+                  </button>
+                  <button type="button" onClick={() => exportText(doc, artifact)}>
+                    Plain text (.txt)
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -1159,10 +1212,58 @@ export function Viewer({ documentId }: { documentId: string }) {
         </p>
       )}
 
-      {!artifact && !error && (
+      {!artifact && !error && doc?.state !== "pdf_ready" && (
         <p className="muted viewer-empty">
           {doc && !doc.active_artifact_id ? "No extracted artifact yet." : "Loading…"}
         </p>
+      )}
+
+      {doc && PROCESSING_STATES.has(doc.state) && (
+        <div className="quality-banner processing-banner" role="status">
+          <strong>
+            {doc.state === "pdf_ready"
+              ? "PDF ready"
+              : doc.state === "text_ready"
+                ? "Text and PDF ready"
+                : "Preparing patent"}
+          </strong>
+          <span>
+            {doc.state === "text_ready"
+              ? " — Figure detection is continuing in the background."
+              : doc.state === "pdf_ready"
+                ? " — Text extraction is continuing in the background."
+                : " — The viewer will open each part as it becomes available."}
+          </span>
+          <JobProgress documentId={documentId} onComplete={() => undefined} />
+        </div>
+      )}
+
+      {!artifact && doc?.state === "pdf_ready" && (
+        <div className="panes pdf staged-pdf-viewer">
+          <div className="viewer-document-panes">
+            <PdfPane
+              documentId={documentId}
+              entries={[]}
+              callouts={[]}
+              figures={[]}
+              focusedFigure={null}
+              page={pdfPage}
+              onPageChange={setPdfPage}
+              highlightOrdinal={null}
+              highlightCallouts={new Set()}
+              onSelectLine={() => undefined}
+              onSelectRange={() => undefined}
+              onSelectCallout={() => undefined}
+              onActivate={() => setSelectionSource("pdf")}
+              onSelectionText={(text) => {
+                setSelectionSource("pdf");
+                setPdfSelection(text);
+              }}
+              onTextHighlightsChange={setPdfTextHighlightColors}
+              copyCitation=""
+            />
+          </div>
+        </div>
       )}
 
       {artifact && hasWarnings && (

@@ -128,7 +128,7 @@ async def complete_upload(
     await session.flush()
 
     title = body.title or upload.original_filename or "Untitled document"
-    doc = UserDocument(owner_id=user.id, source_id=source.id, title=title, state="processing")
+    doc = UserDocument(owner_id=user.id, source_id=source.id, title=title, state="pdf_ready")
     session.add(doc)
     await session.flush()
 

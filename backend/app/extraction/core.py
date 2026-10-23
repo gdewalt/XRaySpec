@@ -70,6 +70,7 @@ def route_page(
     ocr_fn: Callable[..., list[Word]] | None = None,
     specification_ocr_fn: Callable[..., list[Word]] | None = None,
     drawing_ocr_fn: Callable[..., list[Word]] | None = None,
+    defer_drawing_details: bool = False,
 ) -> PageResult:
     """Route one page to native words or OCR, and classify spec-vs-drawing (§12.3–12.7).
 
@@ -121,65 +122,28 @@ def route_page(
     if is_drawing_sheet or (
         not has_specification_header and is_drawing_page(page.words)
     ):
-        # Preserve trustworthy embedded PDF labels before adding raster OCR.
-        # Word-level merging can interleave an OCR misread with the native title
-        # at the same coordinates (for example ``Figure 9b`` + ``Figure 10``),
-        # making neither label parse correctly.  Figure-level fusion avoids that
-        # corruption and lets native text remain authoritative when it exists.
-        native_figures = tuple(
-            replace(figure, method="native_text")
-            for figure in detect_figure_occurrences(native_page.words, page.index)
-        )
-        draw_words = page.words
-        enhanced: list[Word] = []
-        if can_ocr and drawing_ocr_fn is not None:
-            if default_drawing_ocr:
-                assert prepare_ocr_page is not None
-                prepared = prepared or prepare_ocr_page(pdf_bytes, page.index, config)
-                enhanced = drawing_ocr_fn(
-                    pdf_bytes,
-                    page.index,
-                    config,
-                    prepared=prepared,
-                )
-            else:
-                enhanced = drawing_ocr_fn(pdf_bytes, page.index, config)
-            if method == "native":
-                from .ocr import dedupe_words
-
-                draw_words = dedupe_words([*draw_words, *enhanced])
-            else:
-                draw_words = enhanced
-        elif method == "ocr" and can_ocr:
-            draw_words = ocr_fn(pdf_bytes, page.index, config, psm=config.ocr_sparse_psm)
-        ocr_figures = tuple(detect_figure_occurrences(enhanced, page.index))
-        figures = native_figures or ocr_figures
-        figure_ids = {figure.figure_id for figure in figures}
-        figure_id = (
-            next(iter(figure_ids))
-            if len(figure_ids) == 1
-            else detect_page_figure(draw_words)
-        )
-        callouts = (
-            tuple(
-                detect_callouts(
-                    draw_words,
-                    page.index,
-                    figure_id,
-                    figure_occurrences=figures,
-                )
-            )
-            if config.callout_detection_enabled
-            else ()
-        )
-        is_drawing_sheet = is_drawing_sheet or has_drawing_sheet_header(draw_words)
-        return PageResult(
+        provisional = PageResult(
             page.index,
             method,
             True,
-            figures=figures,
-            callouts=callouts,
+            # Retain the classification pass only in memory so the deferred
+            # drawing stage can avoid repeating full-page OCR.
+            words=tuple(page.words),
             is_drawing_sheet=is_drawing_sheet,
+        )
+        if defer_drawing_details:
+            return provisional
+        return _complete_drawing_result(
+            pdf_bytes,
+            native_page,
+            provisional,
+            config,
+            can_ocr,
+            ocr_fn=ocr_fn,
+            drawing_ocr_fn=drawing_ocr_fn,
+            default_drawing_ocr=default_drawing_ocr,
+            prepare_ocr_page=prepare_ocr_page,
+            prepared=prepared,
         )
     if method == "ocr" and specification_ocr_fn is not None:
         if default_specification_ocr:
@@ -196,6 +160,104 @@ def route_page(
             )
         page = Page(index=page.index, words=words)
     return PageResult(page.index, method, False, words=tuple(page.words))
+
+
+def complete_drawing_page(
+    pdf_bytes: bytes,
+    native_page: Page,
+    provisional: PageResult,
+    config: ExtractionConfig,
+    can_ocr: bool,
+) -> PageResult:
+    """Finish figure/callout OCR for a page already classified as a drawing."""
+    if not provisional.is_drawing or provisional.page_index != native_page.index:
+        raise ValueError("drawing completion requires a matching provisional drawing page")
+    from .ocr import ocr_drawing_words, ocr_page_words, prepare_ocr_page
+
+    return _complete_drawing_result(
+        pdf_bytes,
+        native_page,
+        provisional,
+        config,
+        can_ocr,
+        ocr_fn=ocr_page_words,
+        drawing_ocr_fn=ocr_drawing_words,
+        default_drawing_ocr=True,
+        prepare_ocr_page=prepare_ocr_page,
+    )
+
+
+def _complete_drawing_result(
+    pdf_bytes: bytes,
+    native_page: Page,
+    provisional: PageResult,
+    config: ExtractionConfig,
+    can_ocr: bool,
+    *,
+    ocr_fn,
+    drawing_ocr_fn,
+    default_drawing_ocr: bool,
+    prepare_ocr_page,
+    prepared=None,
+) -> PageResult:
+    """Shared drawing-detail pass used inline and after early text publication."""
+    page = Page(index=provisional.page_index, words=list(provisional.words))
+    method = provisional.method
+    # Preserve trustworthy embedded PDF labels before adding raster OCR.
+    # Word-level merging can interleave an OCR misread with the native title;
+    # figure-level fusion lets native text remain authoritative when it exists.
+    native_figures = tuple(
+        replace(figure, method="native_text")
+        for figure in detect_figure_occurrences(native_page.words, page.index)
+    )
+    draw_words = page.words
+    enhanced: list[Word] = []
+    if can_ocr and drawing_ocr_fn is not None:
+        if default_drawing_ocr:
+            prepared = prepared or prepare_ocr_page(pdf_bytes, page.index, config)
+            enhanced = drawing_ocr_fn(
+                pdf_bytes,
+                page.index,
+                config,
+                prepared=prepared,
+            )
+        else:
+            enhanced = drawing_ocr_fn(pdf_bytes, page.index, config)
+        if method == "native":
+            from .ocr import dedupe_words
+
+            draw_words = dedupe_words([*draw_words, *enhanced])
+        else:
+            draw_words = enhanced
+    elif method == "ocr" and can_ocr:
+        draw_words = ocr_fn(pdf_bytes, page.index, config, psm=config.ocr_sparse_psm)
+    ocr_figures = tuple(detect_figure_occurrences(enhanced, page.index))
+    figures = native_figures or ocr_figures
+    figure_ids = {figure.figure_id for figure in figures}
+    figure_id = (
+        next(iter(figure_ids)) if len(figure_ids) == 1 else detect_page_figure(draw_words)
+    )
+    callouts = (
+        tuple(
+            detect_callouts(
+                draw_words,
+                page.index,
+                figure_id,
+                figure_occurrences=figures,
+            )
+        )
+        if config.callout_detection_enabled
+        else ()
+    )
+    is_drawing_sheet = provisional.is_drawing_sheet or has_drawing_sheet_header(draw_words)
+    return PageResult(
+        page.index,
+        method,
+        True,
+        figures=figures,
+        callouts=callouts,
+        is_drawing_sheet=is_drawing_sheet,
+    )
 
 
 def assemble_from_results(

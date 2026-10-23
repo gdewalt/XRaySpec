@@ -136,13 +136,15 @@ async def fetch_source(
         src.sha256 = hashlib.sha256(pdf.content).hexdigest()
         src.byte_size = len(pdf.content)
         src.state = "uploaded"
-        if doc is not None and provider_title:
-            try:
-                default_title = parse_patent_identifier(canonical).display
-            except PatentParseError:
-                default_title = canonical
-            if doc.title == default_title:
-                doc.title = provider_title.strip()
+        if doc is not None:
+            doc.state = "pdf_ready"
+            if provider_title:
+                try:
+                    default_title = parse_patent_identifier(canonical).display
+                except PatentParseError:
+                    default_title = canonical
+                if doc.title == default_title:
+                    doc.title = provider_title.strip()
         await session.commit()
     return provider_seed
 
@@ -220,6 +222,41 @@ async def extraction_processor(
             )
         )
 
+    provider_pages: ProviderPages | None = None
+    published_text_artifact: Artifact | None = None
+
+    async def publish_text_ready(preliminary: Artifact) -> None:
+        """Publish usable text while the slower drawing analysis continues."""
+        nonlocal provider_pages, published_text_artifact
+        if provider_pages is None and provider_task is not None:
+            provider_pages = await provider_task
+        enriched = await _enrich_artifact(
+            ctx,
+            preliminary,
+            config=DEFAULT_CONFIG,
+            canonical=canonical,
+            title=title,
+            fetcher=fetcher,
+            provider_pages=provider_pages,
+        )
+        await ctx.heartbeat(
+            stage="persisting_text",
+            stage_label="Opening text and PDF",
+            indeterminate=True,
+        )
+        async with ctx.sessionmaker() as session:
+            await publish_artifact(
+                session,
+                ctx.store,
+                document_id=job.document_id,
+                source_id=source_id,
+                owner_id=owner_id,
+                artifact=enriched,
+                document_state="text_ready",
+                record_disposition="text_ready",
+            )
+        published_text_artifact = enriched
+
     # Resume-aware: reuse valid page_text checkpoints, recompute the rest, then
     # recompute the fast downstream pipeline fresh (§10.6–10.7).
     try:
@@ -230,23 +267,28 @@ async def extraction_processor(
             owner_id=owner_id,
             config=DEFAULT_CONFIG,
             doc_type=doc_type,
+            on_text_ready=publish_text_ready,
         )
-        provider_pages = await provider_task if provider_task is not None else None
+        if provider_pages is None and provider_task is not None:
+            provider_pages = await provider_task
     except BaseException:
         if provider_task is not None:
             provider_task.cancel()
             await asyncio.gather(provider_task, return_exceptions=True)
         raise
 
-    artifact = await _enrich_artifact(
-        ctx,
-        artifact,
-        config=DEFAULT_CONFIG,
-        canonical=canonical,
-        title=title,
-        fetcher=fetcher,
-        provider_pages=provider_pages,
-    )
+    if published_text_artifact is not None:
+        artifact = _carry_text_enrichment(artifact, published_text_artifact)
+    else:
+        artifact = await _enrich_artifact(
+            ctx,
+            artifact,
+            config=DEFAULT_CONFIG,
+            canonical=canonical,
+            title=title,
+            fetcher=fetcher,
+            provider_pages=provider_pages,
+        )
 
     await ctx.heartbeat(stage="persisting_artifact", stage_label="Publishing")
     async with ctx.sessionmaker() as session:
@@ -450,6 +492,30 @@ async def _enrich_artifact(
         artifact,
         entries=aligned,
         front_matter=front_matter,
+        quality=quality,
+    )
+
+
+def _carry_text_enrichment(final: Artifact, preliminary: Artifact) -> Artifact:
+    """Keep the early text alignment while adding final drawing results."""
+    enrichment_keys = {
+        "identity_status",
+        "aligned_lines",
+        "text_provider",
+        "provider_claim_numbers",
+    }
+    quality = {
+        **final.quality,
+        **{
+            key: preliminary.quality[key]
+            for key in enrichment_keys
+            if key in preliminary.quality
+        },
+    }
+    return replace(
+        final,
+        entries=preliminary.entries,
+        front_matter=preliminary.front_matter,
         quality=quality,
     )
 

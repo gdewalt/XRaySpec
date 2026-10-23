@@ -112,6 +112,37 @@ async def test_reprocess_demotes_prior_active(client):
     assert doc.active_artifact_id == second
 
 
+async def test_text_ready_artifact_is_openable_but_not_reused_as_final(client):
+    doc_id, source_id, owner_id = await _seed(client)
+    async with client.sessionmaker() as session:
+        artifact_id = await publish_artifact(
+            session,
+            client.object_store,
+            document_id=doc_id,
+            source_id=source_id,
+            owner_id=owner_id,
+            artifact=_artifact(),
+            document_state="text_ready",
+            record_disposition="text_ready",
+        )
+
+    async with client.sessionmaker() as session:
+        record = await session.get(ExtractionArtifact, artifact_id)
+        document = await session.get(UserDocument, doc_id)
+        reusable = await find_reusable_artifact(
+            session,
+            client.object_store,
+            owner_id=owner_id,
+            source_sha256="abc",
+            config_hash=DEFAULT_CONFIG.config_hash(),
+            max_bytes=10_000_000,
+        )
+
+    assert record is not None and record.disposition == "text_ready"
+    assert document is not None and document.state == "text_ready"
+    assert reusable is None
+
+
 async def test_matching_pdf_and_config_reuse_completed_artifact(client):
     first_doc, first_source, owner_id = await _seed(client)
     artifact = _artifact()

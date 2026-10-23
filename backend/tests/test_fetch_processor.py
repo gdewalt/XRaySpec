@@ -78,9 +78,13 @@ async def test_fetch_source_downloads_and_records(client):
 
     async with client.sessionmaker() as s:
         source = await s.get(SourceDocument, source_id)
+        document = await s.scalar(
+            select(UserDocument).where(UserDocument.source_id == source_id)
+        )
     assert source.pdf_object_key is not None
     assert source.byte_size == len(PDF)
     assert source.sha256 and source.state == "uploaded"
+    assert document is not None and document.state == "pdf_ready"
     assert len(client.object_store._objects) == 1  # PDF stored privately
     # Resolved the page first, then the PDF.
     assert fetcher.calls[0].endswith("/en")

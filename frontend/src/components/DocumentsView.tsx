@@ -20,7 +20,17 @@ const ACTIVE_STATES = new Set([
   "processing",
   "pending_fetch",
   "reprocessing",
+  "pdf_ready",
+  "text_ready",
   "deleting",
+]);
+
+const OPENABLE_STATES = new Set([
+  "pdf_ready",
+  "text_ready",
+  "ready",
+  "ready_with_warnings",
+  "text_only",
 ]);
 
 function formatDate(iso: string | null): string {
@@ -73,7 +83,7 @@ function PatentRow({
   onRemove,
   onJobComplete,
 }: PatentRowProps) {
-  const canOpen = doc.state === "ready" || doc.state === "text_only";
+  const canOpen = OPENABLE_STATES.has(doc.state);
   const [menuOpen, setMenuOpen] = useState(false);
   const showTitleAfterNumber =
     doc.patent_number !== null &&
