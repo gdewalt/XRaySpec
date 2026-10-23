@@ -2230,9 +2230,9 @@ button.secondary:hover:not(:disabled) {
   height: 38px;
   border: 0;
   border-radius: 11px;
-  background: var(--accent);
+  background: #000;
   color: #fff;
-  box-shadow: 0 4px 12px rgba(36,86,211,.2);
+  box-shadow: 0 4px 12px rgba(0,0,0,.2);
 }
 .brand-mark::before, .brand-mark::after, .brand-mark span { display: none; }
 .brand-copy { align-items: flex-start; flex-direction: column; gap: .05rem; line-height: 1.2; }
@@ -3398,7 +3398,8 @@ button:active:not(:disabled) { transform: translateY(1px); }
   box-shadow: 0 1px 0 rgba(255,255,255,.025);
 }
 :root[data-theme="dark"] .brand-mark {
-  color: var(--accent-text);
+  color: #fff;
+  background: #000;
   box-shadow: 0 5px 16px rgba(0,0,0,.3);
 }
 :root[data-theme="dark"] .header-context,

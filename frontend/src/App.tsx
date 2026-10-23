@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from "reac
 
 import { getToken, initializeAuth, subscribe } from "./auth/session";
 import { AccountMenu } from "./components/AccountMenu";
+import { BrandIcon } from "./components/BrandIcon";
 import { DocumentsView } from "./components/DocumentsView";
 import { Icon } from "./components/Icon";
 import { Login } from "./components/Login";
@@ -73,7 +74,7 @@ export function App() {
             onClick={token ? back : undefined}
             aria-label={token ? "Open patent library" : "X-Ray Spec"}
           >
-            <span className="brand-mark" aria-hidden="true"><Icon name="scan" size={22} /></span>
+            <span className="brand-mark" aria-hidden="true"><BrandIcon size={24} /></span>
             <span className="brand-copy">
               <strong>X-Ray Spec</strong>
               <small>Improved patent workspace</small>
