@@ -3495,6 +3495,43 @@ button:active:not(:disabled) { transform: translateY(1px); }
   min-height: 34px;
   padding: 0;
 }
+.pdf-zoom-controls {
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.pdf-zoom-controls > .icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.pdf-zoom-controls > .icon-button:hover:not(:disabled) {
+  background: var(--surface-subtle);
+}
+.pdf-zoom-controls > .icon-button:disabled {
+  opacity: .4;
+}
+.pdf-zoom-level {
+  min-width: 3.5rem;
+  padding: 0 .35rem;
+  border-right: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  color: var(--text);
+  font-size: .75rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  line-height: 36px;
+  text-align: center;
+}
 .pdf-annotation-bar {
   position: relative;
   z-index: 5;

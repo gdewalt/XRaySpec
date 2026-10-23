@@ -52,6 +52,15 @@ const PDF_MARK_COLORS = [
   { label: "Black", value: "#1f2937" },
 ] as const;
 
+const PDF_SCALE_MIN = 0.5;
+const PDF_SCALE_MAX = 3;
+const PDF_SCALE_STEP = 0.15;
+
+export function adjustedPdfScale(scale: number, direction: -1 | 1): number {
+  const next = Math.round((scale + direction * PDF_SCALE_STEP) * 100) / 100;
+  return Math.max(PDF_SCALE_MIN, Math.min(PDF_SCALE_MAX, next));
+}
+
 function rotatePoint([x, y]: Point, rotation: number): Point {
   return rotation === 90
     ? [1 - y, x]
@@ -909,24 +918,31 @@ export function PdfPane({
           <span className="pdf-pageno">
             Page {page} of {pageCount || "…"}
           </span>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => setScale((value) => Math.max(0.5, value - 0.15))}
-            aria-label="Zoom out"
-            title="Zoom out"
-          >
-            <Icon name="zoom-out" size={17} />
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => setScale((value) => Math.min(3, value + 0.15))}
-            aria-label="Zoom in"
-            title="Zoom in"
-          >
-            <Icon name="zoom-in" size={17} />
-          </button>
+          <div className="pdf-zoom-controls" role="group" aria-label="PDF magnification">
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => setScale((value) => adjustedPdfScale(value, -1))}
+              disabled={scale <= PDF_SCALE_MIN}
+              aria-label="Decrease PDF magnification"
+              title="Decrease magnification"
+            >
+              <Icon name="zoom-out" size={17} />
+            </button>
+            <output className="pdf-zoom-level" aria-live="polite" aria-label="PDF magnification">
+              {Math.round(scale * 100)}%
+            </output>
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => setScale((value) => adjustedPdfScale(value, 1))}
+              disabled={scale >= PDF_SCALE_MAX}
+              aria-label="Increase PDF magnification"
+              title="Increase magnification"
+            >
+              <Icon name="zoom-in" size={17} />
+            </button>
+          </div>
           <button
             type="button"
             className="icon-button"
