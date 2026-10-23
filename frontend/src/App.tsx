@@ -76,7 +76,7 @@ export function App() {
             <span className="brand-mark" aria-hidden="true"><Icon name="scan" size={22} /></span>
             <span className="brand-copy">
               <strong>X-Ray Spec</strong>
-              <small>Patent evidence workspace</small>
+              <small>Improved patent workspace</small>
             </span>
           </button>
           {token && (

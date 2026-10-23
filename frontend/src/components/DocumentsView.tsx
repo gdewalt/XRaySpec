@@ -489,9 +489,6 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
       <section className="dashboard-intro" aria-labelledby="workspace-h">
         <div className="library-title">
           <h1 id="workspace-h">Patent Library</h1>
-          <button type="button" className="icon-button" onClick={load} aria-label="Refresh patents" title="Refresh patents">
-            <Icon name="refresh" size={17} />
-          </button>
         </div>
         <dl className="library-stats" aria-label="Library summary">
           <div>
