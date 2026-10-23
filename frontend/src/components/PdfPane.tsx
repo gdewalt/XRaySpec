@@ -918,6 +918,19 @@ export function PdfPane({
           <span className="pdf-pageno">
             Page {page} of {pageCount || "…"}
           </span>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => setRotation((value) => (value + 90) % 360)}
+            title="Rotate 90°"
+            aria-label="Rotate PDF 90 degrees"
+          >
+            <Icon name="rotate-cw" size={17} />
+          </button>
+        </div>
+      </div>
+      <div className="pdf-annotation-bar">
+        <div className="pdf-annotation-heading">
           <div className="pdf-zoom-controls" role="group" aria-label="PDF magnification">
             <button
               type="button"
@@ -943,19 +956,8 @@ export function PdfPane({
               <Icon name="zoom-in" size={17} />
             </button>
           </div>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => setRotation((value) => (value + 90) % 360)}
-            title="Rotate 90°"
-            aria-label="Rotate PDF 90 degrees"
-          >
-            <Icon name="rotate-cw" size={17} />
-          </button>
+          <span className="pdf-annotation-title">Annotations</span>
         </div>
-      </div>
-      <div className="pdf-annotation-bar">
-        <span className="pdf-annotation-title">Annotations</span>
         <div className="pdf-annotation-tools" role="toolbar" aria-label="PDF annotation tools">
           {PDF_TOOLS.map((item) => (
             <button

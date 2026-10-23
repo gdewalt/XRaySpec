@@ -3547,6 +3547,12 @@ button:active:not(:disabled) { transform: translateY(1px); }
   background: var(--surface);
   box-shadow: 0 1px 3px rgba(23,32,51,.04);
 }
+.pdf-annotation-heading {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: .45rem;
+}
 .pdf-annotation-title {
   flex: 0 0 auto;
   padding: .5rem .2rem .4rem .25rem;
