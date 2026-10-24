@@ -666,6 +666,8 @@ mark.search-hit {
 .outline {
   flex: 0 0 15rem;
   max-height: calc(100vh - 210px);
+  min-width: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -686,6 +688,7 @@ mark.search-hit {
   padding: 0.3rem 0.45rem;
   text-align: left;
   width: 100%;
+  min-width: 0;
   font-weight: 500;
 }
 .outline-item:hover {
@@ -705,9 +708,10 @@ mark.search-hit {
   letter-spacing: 0.01em;
 }
 .outline-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .outline-ref {
   color: var(--muted);
@@ -812,6 +816,11 @@ mark.search-hit {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   cursor: pointer;
+}
+.outline-section-toggle > span:last-child {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .outline-section-toggle:hover {
   background: var(--surface-subtle);
