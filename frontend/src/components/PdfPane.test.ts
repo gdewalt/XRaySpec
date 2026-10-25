@@ -1,6 +1,21 @@
 import { describe, expect, it } from "vitest";
 
-import { adjustedPdfScale } from "./PdfPane";
+import type { EntryDto } from "../api/types";
+import { adjustedPdfScale, lineHighlightGeometry, simplifyDrawingPoints } from "./PdfPane";
+
+function entry(ordinal: number, text: string, box: number[]): EntryDto {
+  return {
+    entry_id: `entry_${ordinal}`,
+    ordinal,
+    page_index: 0,
+    locator: { kind: "grant", column: 1, printed_line: ordinal + 1 },
+    box,
+    source_text: text,
+    display_text: text,
+    text_confidence: "high",
+    reference_confidence: "high",
+  };
+}
 
 describe("PDF magnification", () => {
   it("moves one step in either direction", () => {
@@ -11,5 +26,36 @@ describe("PDF magnification", () => {
   it("stays inside the supported scale range", () => {
     expect(adjustedPdfScale(0.5, -1)).toBe(0.5);
     expect(adjustedPdfScale(3, 1)).toBe(3);
+  });
+});
+
+describe("PDF annotation geometry", () => {
+  it("anchors a partial highlight to text offsets and snapped line geometry", () => {
+    const result = lineHighlightGeometry(
+      [0.26, 0.15],
+      [0.74, 0.15],
+      [entry(0, "abcdefghij", [0.1, 0.1, 0.9, 0.2])],
+    );
+
+    expect(result.textRanges).toEqual([
+      { entry_id: "entry_0", start: 2, end: 8, quote: "cdefgh" },
+    ]);
+    expect(result.rects[0][0]).toBeCloseTo(0.26);
+    expect(result.rects[0][2]).toBeCloseTo(0.74);
+  });
+
+  it("keeps endpoints while reducing dense freehand paths", () => {
+    const points: [number, number][] = [
+      [0.1, 0.1],
+      [0.1001, 0.1001],
+      [0.2, 0.2],
+      [0.2001, 0.2001],
+      [0.3, 0.3],
+    ];
+    expect(simplifyDrawingPoints(points, 0.01)).toEqual([
+      [0.1, 0.1],
+      [0.2, 0.2],
+      [0.3, 0.3],
+    ]);
   });
 });

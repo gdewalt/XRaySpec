@@ -79,8 +79,9 @@ export interface PdfAnnotationCreate {
   note?: string | null;
 }
 
-export interface PdfNoteUpdate {
+export interface PdfAnnotationUpdate {
   geometry?: Record<string, unknown>;
+  color?: string;
   note?: string;
 }
 

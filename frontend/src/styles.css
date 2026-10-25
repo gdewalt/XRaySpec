@@ -2913,6 +2913,20 @@ mark.search-hit { background: #ffdf8a; color: #422600; }
   outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent);
   outline-offset: 2px;
 }
+.pdf-style-control {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: .3rem;
+  min-height: 34px;
+  padding-inline: .3rem;
+  color: var(--muted);
+}
+.pdf-style-control input[type="range"] {
+  width: 72px;
+  min-height: 28px;
+  accent-color: var(--accent);
+}
 .pdf-annotation-layer {
   position: absolute;
   z-index: 3;
@@ -2927,12 +2941,12 @@ mark.search-hit { background: #ffdf8a; color: #422600; }
   touch-action: none;
   cursor: crosshair;
 }
-.pdf-annotation-layer.tool-delete { cursor: not-allowed; }
-.pdf-annotation-layer.tool-select .pdf-note-mark,
-.pdf-annotation-layer.tool-select .pdf-bookmark-mark,
-.pdf-annotation-layer.tool-delete .pdf-saved-annotation {
+.pdf-annotation-layer.tool-select .pdf-saved-annotation {
   pointer-events: auto;
   cursor: pointer;
+}
+.pdf-saved-annotation.selected {
+  filter: drop-shadow(0 0 2px var(--accent)) drop-shadow(0 0 4px var(--accent));
 }
 .pdf-highlight-mark {
   opacity: .36;
@@ -3008,10 +3022,11 @@ mark.search-hit { background: #ffdf8a; color: #422600; }
 .pdf-sticky-note textarea {
   display: block;
   width: 100%;
-  min-height: 112px;
-  max-height: 260px;
+  height: calc(100% - 36px);
+  min-height: 0;
+  max-height: none;
   padding: .65rem;
-  resize: vertical;
+  resize: none;
   border: 0;
   border-radius: 0;
   background: #fff9c9;
@@ -3025,6 +3040,25 @@ mark.search-hit { background: #ffdf8a; color: #422600; }
 .pdf-sticky-note textarea:focus {
   outline: 0;
   background: #fffbe0;
+}
+.pdf-sticky-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 22px;
+  height: 22px;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+.pdf-sticky-resize::after {
+  content: "";
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid rgba(51, 40, 0, .55);
+  border-bottom: 2px solid rgba(51, 40, 0, .55);
 }
 
 @media (max-width: 760px) {
@@ -3701,11 +3735,21 @@ button:active:not(:disabled) { transform: translateY(1px); }
   background: color-mix(in srgb, var(--pdf-highlight-color, #ffe066) 52%, transparent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--pdf-highlight-color, #ffe066) 52%, transparent);
 }
+.pdf-inline-highlight {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--pdf-highlight-color, #ffe066) 52%, transparent);
+  color: inherit;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--pdf-highlight-color, #ffe066) 34%, transparent);
+}
 :root[data-theme="dark"] .account-popover { background: var(--surface-raised); }
 :root[data-theme="dark"] .spec-line.pdf-text-highlight .line-text {
   color: #f8fafc;
   background: color-mix(in srgb, var(--pdf-highlight-color, #ffe066) 45%, transparent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--pdf-highlight-color, #ffe066) 45%, transparent);
+}
+:root[data-theme="dark"] .pdf-inline-highlight {
+  color: #f8fafc;
+  background: color-mix(in srgb, var(--pdf-highlight-color, #ffe066) 45%, transparent);
 }
 @media (max-width: 760px) {
   .viewer-document-panes { flex-direction: column; gap: .75rem; }

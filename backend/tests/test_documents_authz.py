@@ -230,6 +230,36 @@ async def test_pdf_annotation_persistence_and_authorization(client, make_token, 
         f"/api/v1/documents/{doc_id}/pdf-annotations", headers=auth(owner)
     )
     assert [annotation["id"] for annotation in listed.json()] == [annotation_id]
+
+    updated = await client.patch(
+        f"/api/v1/pdf-annotations/{annotation_id}",
+        headers=auth(owner),
+        json={
+            "color": "#67e8f9",
+            "geometry": {
+                "version": 2,
+                "x0": 0.1,
+                "y0": 0.2,
+                "x1": 0.6,
+                "y1": 0.25,
+                "rects": [[0.1, 0.2, 0.6, 0.25]],
+                "opacity": 0.5,
+                "text_ranges": [
+                    {"entry_id": "line_1", "start": 1, "end": 4, "quote": "abc"}
+                ],
+            },
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["color"] == "#67e8f9"
+    assert updated.json()["geometry"]["text_ranges"][0]["quote"] == "abc"
+
+    invalid = await client.patch(
+        f"/api/v1/pdf-annotations/{annotation_id}",
+        headers=auth(owner),
+        json={"geometry": {"x0": -1, "y0": 0.2, "x1": 0.6, "y1": 0.25}},
+    )
+    assert invalid.status_code == 422
     assert (
         await client.delete(
             f"/api/v1/pdf-annotations/{annotation_id}", headers=auth(owner)

@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Response, status
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from ...config import get_settings
@@ -35,7 +36,7 @@ from ...schemas.bookmarks import BookmarkCreate, BookmarkRead
 from ...schemas.documents import DocumentCreate, DocumentList, DocumentRead
 from ...schemas.jobs import JobRead
 from ...schemas.overrides import OverrideRead, OverrideUpsert
-from ...schemas.pdf_annotations import PdfAnnotationCreate, PdfAnnotationRead, PdfNoteUpdate
+from ...schemas.pdf_annotations import PdfAnnotationCreate, PdfAnnotationRead, PdfAnnotationUpdate
 from ...services.audit import record_audit
 from ...services.deletion import purge_document
 from ...services.publication import find_reusable_artifact
@@ -531,8 +532,8 @@ async def delete_pdf_annotation(annotation_id: str, user: CurrentUser, session: 
 
 
 @router.patch("/pdf-annotations/{annotation_id}", response_model=PdfAnnotationRead)
-async def update_pdf_note(
-    annotation_id: str, body: PdfNoteUpdate, user: CurrentUser, session: DbSession
+async def update_pdf_annotation(
+    annotation_id: str, body: PdfAnnotationUpdate, user: CurrentUser, session: DbSession
 ) -> PdfAnnotationRead:
     annotation = await session.scalar(
         select(PdfAnnotation).where(
@@ -541,10 +542,24 @@ async def update_pdf_note(
     )
     if annotation is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "PDF annotation not found")
-    if annotation.kind != "note":
-        raise HTTPException(status.HTTP_409_CONFLICT, "Only PDF notes can be edited")
+    geometry = body.geometry if body.geometry is not None else annotation.geometry
+    try:
+        PdfAnnotationCreate(
+            kind=annotation.kind,
+            page_index=annotation.page_index,
+            geometry=geometry,
+            color=body.color if body.color is not None else annotation.color,
+            note=body.note if body.note is not None else annotation.note,
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=exc.errors(include_context=False),
+        ) from exc
     if body.geometry is not None:
         annotation.geometry = body.geometry
+    if body.color is not None:
+        annotation.color = body.color
     if body.note is not None:
         annotation.note = body.note
     await session.commit()

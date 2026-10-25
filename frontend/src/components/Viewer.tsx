@@ -57,7 +57,7 @@ import {
   joinEntryText,
   normalizeCopiedText,
 } from "../spec/text";
-import { PdfPane } from "./PdfPane";
+import { PdfPane, type PdfTextHighlightRange } from "./PdfPane";
 import { Icon, type IconName } from "./Icon";
 import { JobProgress } from "./JobProgress";
 
@@ -110,6 +110,7 @@ type Mark = {
   title: string;
   mention?: NumeralMentionDto;
   figure?: FigureMentionDto;
+  style?: CSSProperties;
 };
 
 function groupByEntry<T extends { entry_id: string }>(items: T[]): Map<string, T[]> {
@@ -178,26 +179,38 @@ function renderText(
 ): ReactNode {
   const text = entry.display_text;
   const nodes: ReactNode[] = [];
-  let pos = 0;
-  let key = 0;
-  for (const m of marks) {
-    if (m.start < pos) continue;
-    if (m.start > pos) nodes.push(...renderPlain(text.slice(pos, m.start), query, `p${key++}`));
-    const mention = m.mention;
-    const figure = m.figure;
+  const boundaries = Array.from(
+    new Set([0, text.length, ...marks.flatMap((mark) => [mark.start, mark.end])]),
+  ).sort((a, b) => a - b);
+  for (let index = 0; index < boundaries.length - 1; index += 1) {
+    const start = boundaries[index];
+    const end = boundaries[index + 1];
+    if (end <= start) continue;
+    const covering = marks.filter((mark) => mark.start <= start && mark.end >= end);
+    const actionable = covering.find((mark) => mark.mention || mark.figure);
+    const highlighted = [...covering].reverse().find((mark) => mark.style);
+    const mention = actionable?.mention;
+    const figure = actionable?.figure;
     const clickable = !!mention || !!figure;
     const activate = () => {
       if (mention) onMentionClick(mention);
       else if (figure) onFigureClick(figure);
     };
+    const content = renderPlain(text.slice(start, end), query, `p${index}`);
+    if (covering.length === 0) {
+      nodes.push(...content);
+      continue;
+    }
+    const primary = actionable ?? highlighted ?? covering[0];
     nodes.push(
       <mark
-        key={`m${key++}`}
-        className={clickable ? `${m.cls} clickable` : m.cls}
-        title={m.title}
+        key={`m${index}`}
+        className={clickable ? `${primary.cls} clickable` : primary.cls}
+        title={primary.title}
+        style={highlighted?.style}
         role={clickable ? "button" : undefined}
         tabIndex={clickable ? 0 : undefined}
-        aria-label={clickable ? m.title : undefined}
+        aria-label={clickable ? primary.title : undefined}
         onClick={
           clickable
             ? (e) => {
@@ -218,12 +231,10 @@ function renderText(
             : undefined
         }
       >
-        {text.slice(m.start, m.end)}
+        {content}
       </mark>,
     );
-    pos = m.end;
   }
-  if (pos < text.length) nodes.push(...renderPlain(text.slice(pos), query, `p${key++}`));
   return nodes;
 }
 
@@ -342,9 +353,9 @@ export function Viewer({ documentId }: { documentId: string }) {
   const [selectionSource, setSelectionSource] = useState<"text" | "pdf">("text");
   const [textSelection, setTextSelection] = useState("");
   const [pdfSelection, setPdfSelection] = useState("");
-  const [pdfTextHighlightColors, setPdfTextHighlightColors] = useState<Map<string, string>>(
-    () => new Map(),
-  );
+  const [pdfTextHighlightColors, setPdfTextHighlightColors] = useState<
+    Map<string, PdfTextHighlightRange[]>
+  >(() => new Map());
   const [splitPercent, setSplitPercent] = useState(
     () => loadViewerPreferences().splitPercent,
   );
@@ -1658,29 +1669,35 @@ export function Viewer({ documentId }: { documentId: string }) {
                 />
               )}
               {entries.map((e) => {
-                const marks = buildMarks(
-                  e,
-                  figsByEntry.get(e.entry_id) ?? [],
-                  numsByEntry.get(e.entry_id) ?? [],
-                  assocByKey,
-                );
+                const pdfHighlightRanges = pdfTextHighlightColors.get(e.entry_id) ?? [];
+                const marks: Mark[] = [
+                  ...buildMarks(
+                    e,
+                    figsByEntry.get(e.entry_id) ?? [],
+                    numsByEntry.get(e.entry_id) ?? [],
+                    assocByKey,
+                  ),
+                  ...pdfHighlightRanges.map((range) => ({
+                    start: Math.max(0, Math.min(e.display_text.length, range.start)),
+                    end: Math.max(0, Math.min(e.display_text.length, range.end)),
+                    cls: "pdf-inline-highlight",
+                    title: "PDF highlight",
+                    style: {
+                      "--pdf-highlight-color": range.color,
+                    } as CSSProperties,
+                  })),
+                ];
                 const sel =
                   selection && e.ordinal >= selection.start && e.ordinal <= selection.end;
                 const noteCount = notesByEntry.get(e.entry_id)?.length ?? 0;
                 const paragraphStart = paragraphStarts.has(e.entry_id);
                 const indentLevel = indentLevels.get(e.entry_id) ?? e.indent_level ?? 0;
-                const pdfHighlightColor = pdfTextHighlightColors.get(e.entry_id);
                 return (
                   <div
                     key={e.entry_id}
                     id={`spec-L${e.ordinal}`}
                     data-ordinal={e.ordinal}
-                    className={`spec-line${sel ? " selected" : ""}${pdfHighlightColor ? " pdf-text-highlight" : ""}${paragraphStart ? " paragraph-start" : ""}`}
-                    style={
-                      pdfHighlightColor
-                        ? ({ "--pdf-highlight-color": pdfHighlightColor } as CSSProperties)
-                        : undefined
-                    }
+                    className={`spec-line${sel ? " selected" : ""}${paragraphStart ? " paragraph-start" : ""}`}
                     role="option"
                     aria-selected={!!sel}
                     onClick={() => {

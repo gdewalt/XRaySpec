@@ -7,7 +7,7 @@ export type IconName =
   | "highlighter" | "link" | "lock" | "log-out" | "message-square" | "moon" | "more-horizontal"
   | "mouse-pointer" | "panel-left" | "pencil" | "plus" | "quote" | "refresh" | "flag"
   | "rotate-cw" | "scan" | "search" | "settings" | "sun" | "text" | "trash" | "upload"
-  | "zoom-in" | "zoom-out";
+  | "undo" | "redo" | "zoom-in" | "zoom-out";
 
 const PATHS: Record<IconName, string[]> = {
   "arrow-left": ["M19 12H5", "m12 19-7-7 7-7"],
@@ -41,6 +41,8 @@ const PATHS: Record<IconName, string[]> = {
   quote: ["M3 21c3 0 7-1 7-8V5H3v8h4c0 3-1 5-4 6", "M14 21c3 0 7-1 7-8V5h-7v8h4c0 3-1 5-4 6"],
   refresh: ["M20 7v5h-5", "M4 17v-5h5", "M18.5 9A7 7 0 0 0 6 6.5L4 9", "M5.5 15A7 7 0 0 0 18 17.5l2-2.5"],
   "rotate-cw": ["M21 12a9 9 0 1 1-2.64-6.36L21 8", "M21 3v5h-5"],
+  undo: ["M9 7 4 12l5 5", "M4 12h9a7 7 0 0 1 7 7"],
+  redo: ["m15 7 5 5-5 5", "M20 12h-9a7 7 0 0 0-7 7"],
   scan: ["M4 8V4h4", "M16 4h4v4", "M20 16v4h-4", "M8 20H4v-4", "M8 12h8"],
   search: ["M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16Z", "m21 21-4.35-4.35"],
   settings: ["M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z", "M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.12 2.12-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.02 1.55V20h-3v-.09a1.7 1.7 0 0 0-1.02-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06-2.12-2.12.06-.06A1.7 1.7 0 0 0 7 14.7a1.7 1.7 0 0 0-1.55-1.02H5.3v-3h.09A1.7 1.7 0 0 0 7 9.66a1.7 1.7 0 0 0-.34-1.88l-.06-.06L8.72 5.6l.06.06A1.7 1.7 0 0 0 10.66 6a1.7 1.7 0 0 0 1.02-1.55V4.3h3v.09A1.7 1.7 0 0 0 15.7 6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.12 2.12-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.55 1.02H21v3h-.09A1.7 1.7 0 0 0 19.4 15Z"],

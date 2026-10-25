@@ -14,7 +14,7 @@ import type {
   JobRead,
   OverrideRead,
   PdfAnnotationCreate,
-  PdfNoteUpdate,
+  PdfAnnotationUpdate,
   PdfAnnotationRead,
   UploadCompleteResponse,
   UploadGrant,
@@ -162,7 +162,7 @@ export const api = {
       `/api/v1/documents/${docId}/pdf-annotations`,
       jsonInit("POST", annotation),
     ),
-  updatePdfNote: (id: string, update: PdfNoteUpdate) =>
+  updatePdfAnnotation: (id: string, update: PdfAnnotationUpdate) =>
     request<PdfAnnotationRead>(
       `/api/v1/pdf-annotations/${id}`,
       jsonInit("PATCH", update),

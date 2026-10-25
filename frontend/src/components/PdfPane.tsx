@@ -7,6 +7,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -19,7 +20,7 @@ import type {
   PdfAnnotationCreate,
   PdfAnnotationKind,
   PdfAnnotationRead,
-  PdfNoteUpdate,
+  PdfAnnotationUpdate,
 } from "../api/types";
 import { getToken } from "../auth/session";
 import { formatSelectionWithCitation, normalizeCopiedText } from "../spec/text";
@@ -27,18 +28,35 @@ import { Icon, type IconName } from "./Icon";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
 
-type PdfTool = "select" | PdfAnnotationKind | "delete";
+type PdfTool = "select" | Exclude<PdfAnnotationKind, "bookmark">;
 type Point = [number, number];
+type TextRange = { entry_id: string; start: number; end: number; quote: string };
+export type PdfTextHighlightRange = { start: number; end: number; color: string };
 type AnnotationDraft =
   | { kind: "highlight"; start: Point; end: Point }
   | { kind: "drawing"; points: Point[] };
+type AnnotationHistory =
+  | {
+      kind: "create";
+      snapshot: PdfAnnotationRead;
+      currentId: string | null;
+    }
+  | {
+      kind: "delete";
+      snapshot: PdfAnnotationRead;
+      currentId: string | null;
+    }
+  | {
+      kind: "update";
+      before: PdfAnnotationRead;
+      after: PdfAnnotationRead;
+    };
 
 const PDF_TOOLS: { id: PdfTool; label: string; icon: IconName }[] = [
   { id: "select", label: "Select text", icon: "mouse-pointer" },
   { id: "note", label: "Add note", icon: "message-square" },
   { id: "highlight", label: "Highlight", icon: "highlighter" },
   { id: "drawing", label: "Draw", icon: "pencil" },
-  { id: "delete", label: "Delete annotation", icon: "trash" },
 ];
 
 const PDF_MARK_COLORS = [
@@ -59,6 +77,21 @@ const PDF_SCALE_STEP = 0.15;
 export function adjustedPdfScale(scale: number, direction: -1 | 1): number {
   const next = Math.round((scale + direction * PDF_SCALE_STEP) * 100) / 100;
   return Math.max(PDF_SCALE_MIN, Math.min(PDF_SCALE_MAX, next));
+}
+
+export function simplifyDrawingPoints(points: Point[], tolerance = 0.0015): Point[] {
+  if (points.length <= 2) return points;
+  const simplified: Point[] = [points[0]];
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const previous = simplified[simplified.length - 1];
+    const point = points[index];
+    if (Math.hypot(point[0] - previous[0], point[1] - previous[1]) >= tolerance) {
+      simplified.push(point);
+    }
+  }
+  const last = points[points.length - 1];
+  if (last !== simplified[simplified.length - 1]) simplified.push(last);
+  return simplified;
 }
 
 function rotatePoint([x, y]: Point, rotation: number): Point {
@@ -110,18 +143,60 @@ function storedHighlightRects(annotation: PdfAnnotationRead): number[][] {
   return box.some((value) => value === null) ? [] : [box as number[]];
 }
 
-function textHighlightColors(annotations: PdfAnnotationRead[]): Map<string, string> {
-  const colors = new Map<string, string>();
+function textHighlightRanges(
+  annotations: PdfAnnotationRead[],
+): Map<string, PdfTextHighlightRange[]> {
+  const highlights = new Map<string, PdfTextHighlightRange[]>();
   for (const annotation of annotations) {
     if (annotation.kind !== "highlight") continue;
-    const raw = annotation.geometry.entry_ids;
-    if (!Array.isArray(raw)) continue;
     const color = annotation.color ?? "#ffe066";
-    for (const value of raw) {
-      if (typeof value === "string") colors.set(value, color);
+    const ranges = annotation.geometry.text_ranges;
+    if (Array.isArray(ranges)) {
+      for (const range of ranges) {
+        if (
+          typeof range === "object" &&
+          range !== null &&
+          typeof range.entry_id === "string" &&
+          typeof range.start === "number" &&
+          typeof range.end === "number"
+        ) {
+          const current = highlights.get(range.entry_id) ?? [];
+          current.push({ start: range.start, end: range.end, color });
+          highlights.set(range.entry_id, current);
+        }
+      }
+      continue;
+    }
+    const entryIds = annotation.geometry.entry_ids;
+    if (!Array.isArray(entryIds)) continue;
+    for (const entryId of entryIds) {
+      if (typeof entryId !== "string") continue;
+      const current = highlights.get(entryId) ?? [];
+      current.push({ start: 0, end: Number.MAX_SAFE_INTEGER, color });
+      highlights.set(entryId, current);
     }
   }
-  return colors;
+  return highlights;
+}
+
+function groupByPage<T extends { page_index: number }>(items: T[]): Map<number, T[]> {
+  const grouped = new Map<number, T[]>();
+  for (const item of items) {
+    const pageItems = grouped.get(item.page_index);
+    if (pageItems) pageItems.push(item);
+    else grouped.set(item.page_index, [item]);
+  }
+  return grouped;
+}
+
+function annotationCreatePayload(annotation: PdfAnnotationRead): PdfAnnotationCreate {
+  return {
+    kind: annotation.kind,
+    page_index: annotation.page_index,
+    geometry: annotation.geometry,
+    color: annotation.color,
+    note: annotation.note,
+  };
 }
 
 function StickyPdfNote({
@@ -132,7 +207,6 @@ function StickyPdfNote({
   tool,
   onActivate,
   onUpdate,
-  onDelete,
 }: {
   annotation: PdfAnnotationRead;
   rotation: number;
@@ -140,12 +214,14 @@ function StickyPdfNote({
   active: boolean;
   tool: PdfTool;
   onActivate: () => void;
-  onUpdate: (annotation: PdfAnnotationRead, update: PdfNoteUpdate) => void;
-  onDelete: (annotation: PdfAnnotationRead) => void;
+  onUpdate: (annotation: PdfAnnotationRead, update: PdfAnnotationUpdate) => void;
 }) {
   const savedX = geometryNumber(annotation, "x") ?? 0;
   const savedY = geometryNumber(annotation, "y") ?? 0;
+  const savedWidth = geometryNumber(annotation, "width") ?? 0.28;
+  const savedHeight = geometryNumber(annotation, "height") ?? 0.2;
   const [position, setPosition] = useState<Point>([savedX, savedY]);
+  const [size, setSize] = useState<Point>([savedWidth, savedHeight]);
   const [draft, setDraft] = useState(annotation.note ?? "");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const saveTimerRef = useRef<number | null>(null);
@@ -154,10 +230,17 @@ function StickyPdfNote({
     offset: Point;
     current: Point;
   } | null>(null);
+  const resizeRef = useRef<{
+    pointerId: number;
+    origin: Point;
+    initial: Point;
+    current: Point;
+  } | null>(null);
   const collapsed = annotation.geometry.collapsed === true;
 
   useEffect(() => setDraft(annotation.note ?? ""), [annotation.note]);
   useEffect(() => setPosition([savedX, savedY]), [savedX, savedY]);
+  useEffect(() => setSize([savedWidth, savedHeight]), [savedWidth, savedHeight]);
   useEffect(() => {
     if (active && !collapsed) textareaRef.current?.focus();
   }, [active, collapsed]);
@@ -180,10 +263,6 @@ function StickyPdfNote({
 
   function beginDrag(event: ReactPointerEvent<HTMLDivElement>) {
     event.stopPropagation();
-    if (tool === "delete") {
-      onDelete(annotation);
-      return;
-    }
     if (tool !== "select") return;
     onActivate();
     const point = pointFromPage(event);
@@ -202,11 +281,54 @@ function StickyPdfNote({
     const point = pointFromPage(event);
     if (!point) return;
     const next: Point = [
-      Math.max(0.01, Math.min(0.78, point[0] - drag.offset[0])),
-      Math.max(0.01, Math.min(collapsed ? 0.95 : 0.82, point[1] - drag.offset[1])),
+      Math.max(0.01, Math.min(0.99 - (collapsed ? 0.12 : size[0]), point[0] - drag.offset[0])),
+      Math.max(0.01, Math.min(0.99 - (collapsed ? 0.05 : size[1]), point[1] - drag.offset[1])),
     ];
     drag.current = next;
     setPosition(next);
+  }
+
+  function beginResize(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const point = pointFromPage(event);
+    if (!point) return;
+    resizeRef.current = {
+      pointerId: event.pointerId,
+      origin: point,
+      initial: size,
+      current: size,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveResize(event: ReactPointerEvent<HTMLDivElement>) {
+    const resize = resizeRef.current;
+    if (!resize || resize.pointerId !== event.pointerId) return;
+    const point = pointFromPage(event);
+    if (!point) return;
+    const next: Point = [
+      Math.max(0.18, Math.min(0.6, resize.initial[0] + point[0] - resize.origin[0])),
+      Math.max(0.12, Math.min(0.6, resize.initial[1] + point[1] - resize.origin[1])),
+    ];
+    resize.current = next;
+    setSize(next);
+  }
+
+  function finishResize(event: ReactPointerEvent<HTMLDivElement>) {
+    const resize = resizeRef.current;
+    if (!resize || resize.pointerId !== event.pointerId) return;
+    resizeRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    onUpdate(annotation, {
+      geometry: {
+        ...annotation.geometry,
+        width: resize.current[0],
+        height: resize.current[1],
+      },
+    });
   }
 
   function finishDrag(event: ReactPointerEvent<HTMLDivElement>) {
@@ -245,12 +367,16 @@ function StickyPdfNote({
   return (
     <section
       className={`pdf-sticky-note${collapsed ? " collapsed" : ""}${active ? " active" : ""}`}
-      style={{ left: `${displayed[0] * 100}%`, top: `${displayed[1] * 100}%` }}
+      style={{
+        left: `${displayed[0] * 100}%`,
+        top: `${displayed[1] * 100}%`,
+        width: collapsed ? undefined : `${size[0] * 100}%`,
+        height: collapsed ? undefined : `${size[1] * 100}%`,
+      }}
       aria-label="PDF note"
       onPointerDown={(event) => {
         event.stopPropagation();
-        if (tool === "delete") onDelete(annotation);
-        else onActivate();
+        onActivate();
       }}
     >
       <div
@@ -279,22 +405,33 @@ function StickyPdfNote({
         </button>
       </div>
       {!collapsed && (
-        <textarea
-          ref={textareaRef}
-          value={draft}
-          onChange={(event) => updateText(event.target.value)}
-          onBlur={flushText}
-          onPointerDown={(event) => event.stopPropagation()}
-          maxLength={4000}
-          placeholder="Type a note…"
-          aria-label="Note text"
-        />
+        <>
+          <textarea
+            ref={textareaRef}
+            value={draft}
+            onChange={(event) => updateText(event.target.value)}
+            onBlur={flushText}
+            onPointerDown={(event) => event.stopPropagation()}
+            maxLength={4000}
+            placeholder="Type a note…"
+            aria-label="Note text"
+          />
+          <div
+            className="pdf-sticky-resize"
+            role="separator"
+            aria-label="Resize note"
+            onPointerDown={beginResize}
+            onPointerMove={moveResize}
+            onPointerUp={finishResize}
+            onPointerCancel={finishResize}
+          />
+        </>
       )}
     </section>
   );
 }
 
-function lineHighlightGeometry(start: Point, end: Point, entries: EntryDto[]) {
+export function lineHighlightGeometry(start: Point, end: Point, entries: EntryDto[]) {
   const fallbackGeometry = () => {
     let x0 = Math.min(start[0], end[0]);
     let x1 = Math.max(start[0], end[0]);
@@ -309,8 +446,8 @@ function lineHighlightGeometry(start: Point, end: Point, entries: EntryDto[]) {
       y1 = Math.min(1, y1 + 0.009);
     }
     return x1 - x0 > 0.002
-      ? { rects: [[x0, y0, x1, y1]], entryIds: [] as string[] }
-      : { rects: [] as number[][], entryIds: [] as string[] };
+      ? { rects: [[x0, y0, x1, y1]], entryIds: [] as string[], textRanges: [] as TextRange[] }
+      : { rects: [] as number[][], entryIds: [] as string[], textRanges: [] as TextRange[] };
   };
   const lines = entries
     .filter((entry) => entry.box?.length === 4)
@@ -351,6 +488,7 @@ function lineHighlightGeometry(start: Point, end: Point, entries: EntryDto[]) {
   const first = forward ? start : end;
   const last = forward ? end : start;
   const selectedLines = lines.slice(firstIndex, lastIndex + 1);
+  const textRanges: TextRange[] = [];
   const rects = selectedLines.flatMap((entry, index) => {
     const box = entry.box;
     if (!box) return [];
@@ -364,12 +502,36 @@ function lineHighlightGeometry(start: Point, end: Point, entries: EntryDto[]) {
     } else if (index === selectedLines.length - 1) {
       right = Math.min(right, last[0]);
     }
+    const text = entry.display_text || entry.source_text;
+    const width = Math.max(0.0001, box[2] - box[0]);
+    const offsetForX = (x: number) =>
+      Math.max(0, Math.min(text.length, Math.round(((x - box[0]) / width) * text.length)));
+    let startOffset = 0;
+    let endOffset = text.length;
+    if (selectedLines.length === 1) {
+      startOffset = offsetForX(left);
+      endOffset = offsetForX(right);
+    } else if (index === 0) {
+      startOffset = offsetForX(left);
+    } else if (index === selectedLines.length - 1) {
+      endOffset = offsetForX(right);
+    }
+    if (endOffset > startOffset) {
+      textRanges.push({
+        entry_id: entry.entry_id,
+        start: startOffset,
+        end: endOffset,
+        quote: text.slice(startOffset, endOffset),
+      });
+    }
+    const snappedLeft = text.length ? box[0] + (startOffset / text.length) * width : left;
+    const snappedRight = text.length ? box[0] + (endOffset / text.length) * width : right;
     const verticalInset = Math.min((box[3] - box[1]) * 0.1, 0.003);
-    return right - left > 0.002
-      ? [[left, box[1] + verticalInset, right, box[3] - verticalInset]]
+    return snappedRight - snappedLeft > 0.002
+      ? [[snappedLeft, box[1] + verticalInset, snappedRight, box[3] - verticalInset]]
       : [];
   });
-  return { rects, entryIds: selectedLines.map((entry) => entry.entry_id) };
+  return { rects, entryIds: selectedLines.map((entry) => entry.entry_id), textRanges };
 }
 
 /** Rotate a normalized [x0,y0,x1,y1] box by 0/90/180/270° to match the viewport. */
@@ -454,6 +616,8 @@ function ContinuousPdfPage({
   annotations,
   tool,
   annotationColor,
+  annotationOpacity,
+  drawingStrokeWidth,
   scale,
   rotation,
   highlightOrdinal,
@@ -462,7 +626,8 @@ function ContinuousPdfPage({
   onSelectCallout,
   onCreateAnnotation,
   onUpdateAnnotation,
-  onDeleteAnnotation,
+  selectedAnnotationId,
+  onSelectAnnotation,
   activeNoteId,
   onActivateNote,
   registerPage,
@@ -476,6 +641,8 @@ function ContinuousPdfPage({
   annotations: PdfAnnotationRead[];
   tool: PdfTool;
   annotationColor: string;
+  annotationOpacity: number;
+  drawingStrokeWidth: number;
   scale: number;
   rotation: number;
   highlightOrdinal: number | null;
@@ -483,8 +650,9 @@ function ContinuousPdfPage({
   onSelectLine: (entry: EntryDto) => void;
   onSelectCallout?: (callout: CalloutDto) => void;
   onCreateAnnotation: (annotation: PdfAnnotationCreate) => void;
-  onUpdateAnnotation: (annotation: PdfAnnotationRead, update: PdfNoteUpdate) => void;
-  onDeleteAnnotation: (annotation: PdfAnnotationRead) => void;
+  onUpdateAnnotation: (annotation: PdfAnnotationRead, update: PdfAnnotationUpdate) => void;
+  selectedAnnotationId: string | null;
+  onSelectAnnotation: (annotationId: string | null) => void;
   activeNoteId: string | null;
   onActivateNote: (annotationId: string) => void;
   registerPage: (page: number, element: HTMLDivElement | null) => void;
@@ -543,7 +711,10 @@ function ContinuousPdfPage({
   }
 
   function handleAnnotationPointerDown(event: ReactPointerEvent<SVGSVGElement>) {
-    if (tool === "select" || tool === "delete") return;
+    if (tool === "select") {
+      onSelectAnnotation(null);
+      return;
+    }
     event.preventDefault();
     const point = pointFromPointer(event);
     if (tool === "note") {
@@ -551,8 +722,11 @@ function ContinuousPdfPage({
         kind: "note",
         page_index: pageNumber - 1,
         geometry: {
+          version: 2,
           x: Math.max(0.01, Math.min(0.78, point[0])),
           y: Math.max(0.01, Math.min(0.82, point[1])),
+          width: 0.28,
+          height: 0.2,
           collapsed: false,
         },
         color: "#facc15",
@@ -588,7 +762,7 @@ function ContinuousPdfPage({
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     if (completedDraft.kind === "highlight") {
-      const { rects, entryIds } = lineHighlightGeometry(
+      const { rects, entryIds, textRanges } = lineHighlightGeometry(
         completedDraft.start,
         completedDraft.end,
         entries,
@@ -601,15 +775,31 @@ function ContinuousPdfPage({
         onCreateAnnotation({
           kind: "highlight",
           page_index: pageNumber - 1,
-          geometry: { x0, y0, x1, y1, rects, entry_ids: entryIds },
+          geometry: {
+            version: 2,
+            x0,
+            y0,
+            x1,
+            y1,
+            rects,
+            entry_ids: entryIds,
+            text_ranges: textRanges,
+            opacity: annotationOpacity,
+          },
           color: annotationColor,
         });
       }
     } else if (completedDraft.points.length > 1) {
+      const points = simplifyDrawingPoints(completedDraft.points);
       onCreateAnnotation({
         kind: "drawing",
         page_index: pageNumber - 1,
-        geometry: { points: completedDraft.points },
+        geometry: {
+          version: 2,
+          points,
+          stroke_width: drawingStrokeWidth,
+          opacity: annotationOpacity,
+        },
         color: annotationColor,
       });
     }
@@ -698,12 +888,9 @@ function ContinuousPdfPage({
           onPointerCancel={() => updateDraft(null)}
         >
           {annotations.filter((annotation) => annotation.kind !== "note").map((annotation) => {
-            const interactive =
-              tool === "delete" ||
-              (tool === "select" && annotation.kind === "bookmark");
+            const interactive = tool === "select";
             const performAction = () => {
-              if (tool === "delete") onDeleteAnnotation(annotation);
-              else if (annotation.note) window.alert(annotation.note);
+              onSelectAnnotation(annotation.id);
             };
             const activate = (event: ReactPointerEvent<SVGElement>) => {
               event.stopPropagation();
@@ -721,7 +908,8 @@ function ContinuousPdfPage({
               return (
                 <g
                   key={annotation.id}
-                  className="pdf-saved-annotation pdf-highlight-mark"
+                  className={`pdf-saved-annotation pdf-highlight-mark${selectedAnnotationId === annotation.id ? " selected" : ""}`}
+                  style={{ opacity: geometryNumber(annotation, "opacity") ?? 0.36 }}
                   onPointerDown={activate}
                   onKeyDown={onAnnotationKeyDown}
                   tabIndex={interactive ? 0 : undefined}
@@ -750,11 +938,12 @@ function ContinuousPdfPage({
               return (
                 <polyline
                   key={annotation.id}
-                  className="pdf-saved-annotation pdf-drawing-mark"
+                  className={`pdf-saved-annotation pdf-drawing-mark${selectedAnnotationId === annotation.id ? " selected" : ""}`}
                   points={points.map((point) => point.join(",")).join(" ")}
                   fill="none"
                   stroke={annotation.color ?? "#2456d3"}
-                  strokeWidth="0.004"
+                  strokeWidth={geometryNumber(annotation, "stroke_width") ?? 0.004}
+                  style={{ opacity: geometryNumber(annotation, "opacity") ?? 0.92 }}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   onPointerDown={activate}
@@ -778,7 +967,7 @@ function ContinuousPdfPage({
                 onKeyDown={onAnnotationKeyDown}
                 tabIndex={interactive ? 0 : undefined}
                 role={interactive ? "button" : undefined}
-                aria-label={`${tool === "delete" ? "Delete" : "Open"} ${annotation.kind}`}
+                aria-label={`Select ${annotation.kind}`}
               >
                 <circle r="0.018" fill={annotation.color ?? "#2456d3"} />
                 <text
@@ -809,6 +998,7 @@ function ContinuousPdfPage({
                       width={x1 - x0}
                       height={y1 - y0}
                       fill={annotationColor}
+              opacity={annotationOpacity}
                     />
                   );
                 })}
@@ -823,7 +1013,8 @@ function ContinuousPdfPage({
                 .join(" ")}
               fill="none"
               stroke={annotationColor}
-              strokeWidth="0.004"
+              strokeWidth={drawingStrokeWidth}
+              style={{ opacity: annotationOpacity }}
               strokeLinecap="round"
               strokeLinejoin="round"
             />
@@ -842,7 +1033,6 @@ function ContinuousPdfPage({
                 tool={tool}
                 onActivate={() => onActivateNote(annotation.id)}
                 onUpdate={onUpdateAnnotation}
-                onDelete={onDeleteAnnotation}
               />
             ))}
         </div>
@@ -887,11 +1077,12 @@ export function PdfPane({
   onSelectCallout?: (callout: CalloutDto) => void;
   onActivate?: () => void;
   onSelectionText?: (text: string) => void;
-  onTextHighlightsChange?: (highlights: Map<string, string>) => void;
+  onTextHighlightsChange?: (highlights: Map<string, PdfTextHighlightRange[]>) => void;
   copyCitation?: string;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef(new Map<number, HTMLDivElement>());
+  const updateQueuesRef = useRef(new Map<string, Promise<void>>());
   const visiblePageRef = useRef(1);
   const scrollFrameRef = useRef<number | null>(null);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
@@ -901,8 +1092,19 @@ export function PdfPane({
   const [tool, setTool] = useState<PdfTool>("select");
   const [highlightColor, setHighlightColor] = useState("#ffe066");
   const [drawingColor, setDrawingColor] = useState("#2456d3");
+  const [annotationOpacity, setAnnotationOpacity] = useState(0.6);
+  const [drawingStrokeWidth, setDrawingStrokeWidth] = useState(0.004);
   const [annotations, setAnnotations] = useState<PdfAnnotationRead[]>([]);
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
+  const [undoStack, setUndoStack] = useState<AnnotationHistory[]>([]);
+  const [redoStack, setRedoStack] = useState<AnnotationHistory[]>([]);
+  const [historyBusy, setHistoryBusy] = useState(false);
+
+  function recordHistory(record: AnnotationHistory) {
+    setUndoStack((items) => [...items.slice(-49), record]);
+    setRedoStack([]);
+  }
 
   useEffect(() => {
     let loadedDocument: PDFDocumentProxy | null = null;
@@ -938,7 +1140,7 @@ export function PdfPane({
       (items) => {
         if (!cancelled) {
           setAnnotations(items);
-          onTextHighlightsChange?.(textHighlightColors(items));
+          onTextHighlightsChange?.(textHighlightRanges(items));
         }
       },
       (reason) => {
@@ -949,6 +1151,10 @@ export function PdfPane({
       cancelled = true;
     };
   }, [documentId, onTextHighlightsChange]);
+
+  useEffect(() => {
+    onTextHighlightsChange?.(textHighlightRanges(annotations));
+  }, [annotations, onTextHighlightsChange]);
 
   // Only explicit page navigation moves the scroll position. During ordinary
   // scrolling, handleScroll updates visiblePageRef before notifying the parent,
@@ -1055,14 +1261,17 @@ export function PdfPane({
     onSelectionText?.(text);
   }
 
-  async function createAnnotation(annotation: PdfAnnotationCreate) {
+  async function createAnnotation(annotation: PdfAnnotationCreate, remember = true) {
     try {
       const created = await api.createPdfAnnotation(documentId, annotation);
       setAnnotations((items) => {
         const next = [...items, created];
-        onTextHighlightsChange?.(textHighlightColors(next));
+        onTextHighlightsChange?.(textHighlightRanges(next));
         return next;
       });
+      if (remember) {
+        recordHistory({ kind: "create", snapshot: created, currentId: created.id });
+      }
       if (annotation.kind === "note") {
         setActiveNoteId(created.id);
         setTool("select");
@@ -1072,67 +1281,218 @@ export function PdfPane({
     }
   }
 
-  async function deleteAnnotation(annotation: PdfAnnotationRead) {
+  async function deleteAnnotation(annotation: PdfAnnotationRead, remember = true) {
     try {
       await api.deletePdfAnnotation(annotation.id);
       if (activeNoteId === annotation.id) setActiveNoteId(null);
+      if (selectedAnnotationId === annotation.id) setSelectedAnnotationId(null);
       setAnnotations((items) => {
         const next = items.filter((item) => item.id !== annotation.id);
-        onTextHighlightsChange?.(textHighlightColors(next));
+        onTextHighlightsChange?.(textHighlightRanges(next));
         return next;
       });
+      if (remember) {
+        recordHistory({ kind: "delete", snapshot: annotation, currentId: null });
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
   }
 
-  async function updateNote(annotation: PdfAnnotationRead, update: PdfNoteUpdate) {
+  async function updateAnnotation(
+    annotation: PdfAnnotationRead,
+    update: PdfAnnotationUpdate,
+    remember = false,
+  ) {
+    const after: PdfAnnotationRead = {
+      ...annotation,
+      note: update.note ?? annotation.note,
+      color: update.color ?? annotation.color,
+      geometry: update.geometry ?? annotation.geometry,
+    };
+    if (remember) recordHistory({ kind: "update", before: annotation, after });
     setAnnotations((items) =>
       items.map((item) =>
         item.id === annotation.id
           ? {
               ...item,
               note: update.note ?? item.note,
+              color: update.color ?? item.color,
               geometry: update.geometry ?? item.geometry,
             }
           : item,
       ),
     );
-    try {
-      const updated = await api.updatePdfNote(annotation.id, update);
-      setAnnotations((items) =>
-        items.map((item) =>
-          item.id === updated.id
-            ? {
+    const previous = updateQueuesRef.current.get(annotation.id) ?? Promise.resolve();
+    const request = previous
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          await api.updatePdfAnnotation(annotation.id, update);
+        } catch (reason) {
+          setAnnotations((items) =>
+            items.map((item) => {
+              if (item.id !== annotation.id) return item;
+              return {
                 ...item,
-                note: update.note !== undefined ? updated.note : item.note,
-                geometry: update.geometry !== undefined ? updated.geometry : item.geometry,
-              }
-            : item,
-        ),
-      );
-    } catch (reason) {
-      setAnnotations((items) =>
-        items.map((item) =>
-          item.id === annotation.id
-            ? {
-                ...item,
-                note: update.note !== undefined ? annotation.note : item.note,
+                note:
+                  update.note !== undefined && item.note === update.note
+                    ? annotation.note
+                    : item.note,
+                color:
+                  update.color !== undefined && item.color === update.color
+                    ? annotation.color
+                    : item.color,
                 geometry:
-                  update.geometry !== undefined ? annotation.geometry : item.geometry,
-              }
-            : item,
-        ),
-      );
+                  update.geometry !== undefined && item.geometry === update.geometry
+                    ? annotation.geometry
+                    : item.geometry,
+              };
+            }),
+          );
+          setError(reason instanceof Error ? reason.message : String(reason));
+        }
+      });
+    updateQueuesRef.current.set(annotation.id, request);
+    await request;
+    if (updateQueuesRef.current.get(annotation.id) === request) {
+      updateQueuesRef.current.delete(annotation.id);
+    }
+  }
+
+  async function applyHistory(record: AnnotationHistory, direction: "undo" | "redo") {
+    if (historyBusy) return;
+    setHistoryBusy(true);
+    try {
+      if (record.kind === "create") {
+        if (direction === "undo" && record.currentId) {
+          await api.deletePdfAnnotation(record.currentId);
+          setAnnotations((items) => items.filter((item) => item.id !== record.currentId));
+          record.currentId = null;
+        } else if (direction === "redo" && !record.currentId) {
+          const restored = await api.createPdfAnnotation(
+            documentId,
+            annotationCreatePayload(record.snapshot),
+          );
+          record.currentId = restored.id;
+          record.snapshot = restored;
+          setAnnotations((items) => [...items, restored]);
+        }
+      } else if (record.kind === "delete") {
+        if (direction === "undo" && !record.currentId) {
+          const restored = await api.createPdfAnnotation(
+            documentId,
+            annotationCreatePayload(record.snapshot),
+          );
+          record.currentId = restored.id;
+          record.snapshot = restored;
+          setAnnotations((items) => [...items, restored]);
+        } else if (direction === "redo" && record.currentId) {
+          await api.deletePdfAnnotation(record.currentId);
+          setAnnotations((items) => items.filter((item) => item.id !== record.currentId));
+          record.currentId = null;
+        }
+      } else {
+        const target = direction === "undo" ? record.before : record.after;
+        const updated = await api.updatePdfAnnotation(target.id, {
+          geometry: target.geometry,
+          color: target.color ?? undefined,
+          note: target.note ?? undefined,
+        });
+        setAnnotations((items) =>
+          items.map((item) => (item.id === updated.id ? updated : item)),
+        );
+      }
+    } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
+      throw reason;
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
+  async function undoAnnotation() {
+    const record = undoStack[undoStack.length - 1];
+    if (!record) return;
+    try {
+      await applyHistory(record, "undo");
+      setUndoStack((items) => items.slice(0, -1));
+      setRedoStack((items) => [...items, record]);
+      setSelectedAnnotationId(null);
+    } catch {
+      // applyHistory surfaces the error without moving the history cursor.
+    }
+  }
+
+  async function redoAnnotation() {
+    const record = redoStack[redoStack.length - 1];
+    if (!record) return;
+    try {
+      await applyHistory(record, "redo");
+      setRedoStack((items) => items.slice(0, -1));
+      setUndoStack((items) => [...items, record]);
+      setSelectedAnnotationId(null);
+    } catch {
+      // applyHistory surfaces the error without moving the history cursor.
     }
   }
 
   const pageCount = pdf?.numPages ?? 0;
+  const entriesByPage = useMemo(() => groupByPage(entries), [entries]);
+  const calloutsByPage = useMemo(() => groupByPage(callouts), [callouts]);
+  const figuresByPage = useMemo(() => groupByPage(figures), [figures]);
+  const annotationsByPage = useMemo(() => groupByPage(annotations), [annotations]);
   const activeMarkColor = tool === "drawing" ? drawingColor : highlightColor;
+  const selectedAnnotation =
+    annotations.find((annotation) => annotation.id === selectedAnnotationId) ?? null;
+  const selectedMark =
+    selectedAnnotation?.kind === "highlight" || selectedAnnotation?.kind === "drawing"
+      ? selectedAnnotation
+      : null;
+  const controlColor = selectedMark?.color ?? activeMarkColor;
+  const controlOpacity = selectedMark
+    ? (geometryNumber(selectedMark, "opacity") ?? (selectedMark.kind === "highlight" ? 0.36 : 0.92))
+    : annotationOpacity;
+  const controlStrokeWidth =
+    selectedMark?.kind === "drawing"
+      ? (geometryNumber(selectedMark, "stroke_width") ?? 0.004)
+      : drawingStrokeWidth;
+
+  function handlePaneKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    if (target.matches("input, textarea, select")) return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+      event.preventDefault();
+      if (event.shiftKey) void redoAnnotation();
+      else void undoAnnotation();
+      return;
+    }
+    if (event.key === "Escape") {
+      setTool("select");
+      setSelectedAnnotationId(null);
+      return;
+    }
+    if ((event.key === "Delete" || event.key === "Backspace") && selectedAnnotation) {
+      event.preventDefault();
+      void deleteAnnotation(selectedAnnotation);
+      return;
+    }
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    const shortcut: Record<string, PdfTool> = {
+      v: "select",
+      h: "highlight",
+      p: "drawing",
+      n: "note",
+    };
+    const next = shortcut[event.key.toLowerCase()];
+    if (next) {
+      event.preventDefault();
+      setTool(next);
+    }
+  }
 
   return (
-    <div className="pdf-pane" onPointerDown={onActivate}>
+    <div className="pdf-pane" onPointerDown={onActivate} onKeyDown={handlePaneKeyDown}>
       <div className="pdf-annotation-bar">
         <div className="pdf-view-controls">
           <span className="pdf-pageno">
@@ -1179,7 +1539,7 @@ export function PdfPane({
             <button
               key={item.id}
               type="button"
-              className={`secondary${tool === item.id ? " active" : ""}${item.id === "delete" ? " danger-icon" : ""}`}
+              className={`secondary${tool === item.id ? " active" : ""}`}
               aria-pressed={tool === item.id}
               aria-label={item.label}
               title={item.label}
@@ -1189,14 +1549,36 @@ export function PdfPane({
               <span className="pdf-tool-label">{item.label}</span>
             </button>
           ))}
-          {(tool === "highlight" || tool === "drawing") && (
+          <button
+            type="button"
+            className="secondary"
+            disabled={undoStack.length === 0 || historyBusy}
+            onClick={() => void undoAnnotation()}
+            aria-label="Undo annotation change"
+            title="Undo annotation change (Ctrl+Z)"
+          >
+            <Icon name="undo" size={16} />
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            disabled={redoStack.length === 0 || historyBusy}
+            onClick={() => void redoAnnotation()}
+            aria-label="Redo annotation change"
+            title="Redo annotation change (Ctrl+Shift+Z)"
+          >
+            <Icon name="redo" size={16} />
+          </button>
+          {(tool === "highlight" || tool === "drawing" || selectedMark) && (
             <label className="pdf-color-control">
-              <span className="pdf-color-swatch" style={{ backgroundColor: activeMarkColor }} aria-hidden="true" />
+              <span className="pdf-color-swatch" style={{ backgroundColor: controlColor }} aria-hidden="true" />
               <select
-                value={activeMarkColor}
-                aria-label={`${tool === "drawing" ? "Drawing" : "Highlight"} color`}
+                value={controlColor}
+                aria-label="Annotation color"
                 onChange={(event) => {
-                  if (tool === "drawing") setDrawingColor(event.target.value);
+                  if (selectedMark) {
+                    void updateAnnotation(selectedMark, { color: event.target.value }, true);
+                  } else if (tool === "drawing") setDrawingColor(event.target.value);
                   else setHighlightColor(event.target.value);
                 }}
               >
@@ -1207,6 +1589,67 @@ export function PdfPane({
                 ))}
               </select>
             </label>
+          )}
+          {(tool === "highlight" || tool === "drawing" || selectedMark) && (
+            <label className="pdf-style-control" title="Annotation opacity">
+              <Icon name="sun" size={14} />
+              <input
+                type="range"
+                min="0.1"
+                max="1"
+                step="0.1"
+                value={controlOpacity}
+                aria-label="Annotation opacity"
+                onChange={(event) => {
+                  const opacity = Number(event.target.value);
+                  if (selectedMark) {
+                    void updateAnnotation(
+                      selectedMark,
+                      { geometry: { ...selectedMark.geometry, opacity } },
+                      true,
+                    );
+                  } else {
+                    setAnnotationOpacity(opacity);
+                  }
+                }}
+              />
+            </label>
+          )}
+          {(tool === "drawing" || selectedMark?.kind === "drawing") && (
+            <label className="pdf-style-control" title="Pen width">
+              <Icon name="pencil" size={14} />
+              <input
+                type="range"
+                min="0.002"
+                max="0.015"
+                step="0.001"
+                value={controlStrokeWidth}
+                aria-label="Drawing stroke width"
+                onChange={(event) => {
+                  const strokeWidth = Number(event.target.value);
+                  if (selectedMark?.kind === "drawing") {
+                    void updateAnnotation(
+                      selectedMark,
+                      { geometry: { ...selectedMark.geometry, stroke_width: strokeWidth } },
+                      true,
+                    );
+                  } else {
+                    setDrawingStrokeWidth(strokeWidth);
+                  }
+                }}
+              />
+            </label>
+          )}
+          {selectedAnnotation && (
+            <button
+              type="button"
+              className="secondary danger-icon"
+              onClick={() => void deleteAnnotation(selectedAnnotation)}
+              aria-label="Delete selected annotation"
+              title="Delete selected annotation"
+            >
+              <Icon name="trash" size={16} />
+            </button>
           )}
         </div>
       </div>
@@ -1233,21 +1676,21 @@ export function PdfPane({
                   key={pageNumber}
                   pdf={pdf}
                   pageNumber={pageNumber}
-                  entries={entries.filter(
-                    (entry) => entry.page_index === index && entry.box?.length === 4,
+                  entries={(entriesByPage.get(index) ?? []).filter(
+                    (entry) => entry.box?.length === 4,
                   )}
-                  callouts={callouts.filter(
-                    (callout) => callout.page_index === index && callout.box?.length === 4,
+                  callouts={(calloutsByPage.get(index) ?? []).filter(
+                    (callout) => callout.box?.length === 4,
                   )}
-                  figures={figures.filter(
-                    (figure) => figure.page_index === index && figure.box?.length === 4,
+                  figures={(figuresByPage.get(index) ?? []).filter(
+                    (figure) => figure.box?.length === 4,
                   )}
                   focusedFigure={focusedFigure}
-                  annotations={annotations.filter(
-                    (annotation) => annotation.page_index === index,
-                  )}
+                  annotations={annotationsByPage.get(index) ?? []}
                   tool={tool}
                   annotationColor={activeMarkColor}
+                  annotationOpacity={annotationOpacity}
+                  drawingStrokeWidth={drawingStrokeWidth}
                   scale={scale}
                   rotation={rotation}
                   highlightOrdinal={highlightOrdinal}
@@ -1255,10 +1698,14 @@ export function PdfPane({
                   onSelectLine={onSelectLine}
                   onSelectCallout={onSelectCallout}
                   onCreateAnnotation={(annotation) => void createAnnotation(annotation)}
-                  onUpdateAnnotation={(annotation, update) => void updateNote(annotation, update)}
-                  onDeleteAnnotation={(annotation) => void deleteAnnotation(annotation)}
+                  onUpdateAnnotation={(annotation, update) => void updateAnnotation(annotation, update)}
+                  selectedAnnotationId={selectedAnnotationId}
+                  onSelectAnnotation={setSelectedAnnotationId}
                   activeNoteId={activeNoteId}
-                  onActivateNote={setActiveNoteId}
+                  onActivateNote={(annotationId) => {
+                    setActiveNoteId(annotationId);
+                    setSelectedAnnotationId(annotationId);
+                  }}
                   registerPage={registerPage}
                 />
               );
