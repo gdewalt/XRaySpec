@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import type { EntryDto } from "../api/types";
-import { adjustedPdfScale, lineHighlightGeometry, simplifyDrawingPoints } from "./PdfPane";
+import type { EntryDto, PdfAnnotationRead } from "../api/types";
+import {
+  adjustedPdfScale,
+  lineHighlightGeometry,
+  removeAnnotationById,
+  simplifyDrawingPoints,
+} from "./PdfPane";
 
 function entry(ordinal: number, text: string, box: number[]): EntryDto {
   return {
@@ -57,5 +62,21 @@ describe("PDF annotation geometry", () => {
       [0.2, 0.2],
       [0.3, 0.3],
     ]);
+  });
+
+  it("removes the captured annotation id from local history state", () => {
+    const annotation = (id: string): PdfAnnotationRead => ({
+      id,
+      document_id: "doc_1",
+      kind: "highlight",
+      page_index: 0,
+      geometry: { x0: 0.1, y0: 0.1, x1: 0.2, y1: 0.2 },
+      color: "#ffe066",
+      note: null,
+      created_at: "2026-10-25T00:00:00Z",
+    });
+
+    expect(removeAnnotationById([annotation("keep"), annotation("remove")], "remove"))
+      .toEqual([annotation("keep")]);
   });
 });
