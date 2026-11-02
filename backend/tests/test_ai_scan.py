@@ -64,6 +64,11 @@ class _TruncatingClient:
 
 
 async def test_text_review_applies_only_close_high_confidence_corrections():
+    progress_events: list[tuple[str, str, int, int]] = []
+
+    async def record_progress(stage, label, completed, total):
+        progress_events.append((stage, label, completed, total))
+
     payload = {
         "entries": [
             {
@@ -91,6 +96,8 @@ async def test_text_review_applies_only_close_high_confidence_corrections():
         _FakeClient(),
         payload,
         Settings(openai_api_key="test", ai_scan_text_chunk_chars=20_000),
+        on_progress=record_progress,
+        total_units=2,
     )
     assert payload["entries"][0]["display_text"].startswith(
         "A Driver Software Interface determines"
@@ -100,6 +107,9 @@ async def test_text_review_applies_only_close_high_confidence_corrections():
     assert summary["corrected_lines"] == 1
     assert payload["figure_mentions"][0]["figure_ids"] == ["6b"]
     assert payload["numeral_mentions"][0]["value"] == "104"
+    assert progress_events == [
+        ("ai_scan_text", "Reviewing patent text (1/1)", 1, 2),
+    ]
 
 
 def test_ai_boxes_and_associations_are_validated():

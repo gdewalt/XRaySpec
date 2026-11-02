@@ -22,6 +22,7 @@ import httpx
 from ..config import Settings
 
 UsageCallback = Callable[[dict[str, int]], Awaitable[None]]
+ProgressCallback = Callable[[str, str, int, int], Awaitable[None]]
 
 _FIGURE_RE = re.compile(r"\bfig(?:ure)?s?\.?\s*([0-9]{1,3}[a-z]?)", re.IGNORECASE)
 _FIGURE_ID_RE = re.compile(r"^([0-9]{1,3})([a-z]?)$", re.IGNORECASE)
@@ -285,7 +286,13 @@ async def _review_text_batch(
 
 
 async def review_text(
-    client: ResponsesClient, payload: dict[str, Any], settings: Settings
+    client: ResponsesClient,
+    payload: dict[str, Any],
+    settings: Settings,
+    *,
+    on_progress: ProgressCallback | None = None,
+    progress_offset: int = 0,
+    total_units: int = 1,
 ) -> dict[str, int]:
     entries = payload.get("entries") or []
     by_id = {str(entry.get("entry_id")): entry for entry in entries if isinstance(entry, dict)}
@@ -293,7 +300,8 @@ async def review_text(
     skipped_text_batches = 0
     figure_mentions: list[dict[str, Any]] = []
     numeral_mentions: list[dict[str, Any]] = []
-    for chunk in _chunks(entries, settings.ai_scan_text_chunk_chars):
+    chunks = _chunks(entries, settings.ai_scan_text_chunk_chars)
+    for chunk_index, chunk in enumerate(chunks, start=1):
         results, skipped = await _review_text_batch(client, chunk)
         skipped_text_batches += skipped
         for result in results:
@@ -303,6 +311,13 @@ async def review_text(
                 figure_mentions=figure_mentions,
                 numeral_mentions=numeral_mentions,
                 settings=settings,
+            )
+        if on_progress is not None:
+            await on_progress(
+                "ai_scan_text",
+                f"Reviewing patent text ({chunk_index}/{len(chunks)})",
+                progress_offset + chunk_index,
+                total_units,
             )
     if figure_mentions:
         existing = payload.get("figure_mentions") or []
@@ -419,6 +434,10 @@ async def review_drawings(
     payload: dict[str, Any],
     pdf_bytes: bytes,
     settings: Settings,
+    *,
+    on_progress: ProgressCallback | None = None,
+    progress_offset: int = 0,
+    total_units: int = 1,
 ) -> dict[str, int | bool]:
     import pypdfium2 as pdfium
 
@@ -438,7 +457,7 @@ async def review_drawings(
     skipped_drawing_pages = 0
     pdf = pdfium.PdfDocument(pdf_bytes)
     try:
-        for page_index in pages:
+        for drawing_index, page_index in enumerate(pages, start=1):
             try:
                 result = await client.structured(
                     name="patent_drawing_review",
@@ -472,6 +491,13 @@ async def review_drawings(
                 )
             except StructuredResponseIncomplete:
                 skipped_drawing_pages += 1
+                if on_progress is not None:
+                    await on_progress(
+                        "ai_scan_drawings",
+                        f"Reviewing drawing pages ({drawing_index}/{len(pages)})",
+                        progress_offset + drawing_index,
+                        total_units,
+                    )
                 continue
             for item in result.get("figures", []):
                 fid = _figure_id(item.get("figure_id"))
@@ -506,6 +532,13 @@ async def review_drawings(
                             "method": "ai_vision",
                         }
                     )
+            if on_progress is not None:
+                await on_progress(
+                    "ai_scan_drawings",
+                    f"Reviewing drawing pages ({drawing_index}/{len(pages)})",
+                    progress_offset + drawing_index,
+                    total_units,
+                )
     finally:
         pdf.close()
 
@@ -563,14 +596,40 @@ async def scan_artifact(
     pdf_bytes: bytes,
     settings: Settings,
     on_usage: UsageCallback,
+    on_progress: ProgressCallback | None = None,
 ) -> tuple[dict[str, Any], dict[str, int | bool]]:
     payload = json.loads(gzip.decompress(artifact_blob))
     if not isinstance(payload, dict) or not isinstance(payload.get("entries"), list):
         raise ValueError("Active artifact has an invalid payload")
     reviewed = copy.deepcopy(payload)
     client = ResponsesClient(settings, on_usage)
-    text_summary = await review_text(client, reviewed, settings)
-    drawing_summary = await review_drawings(client, reviewed, pdf_bytes, settings)
+    text_units = len(_chunks(reviewed.get("entries") or [], settings.ai_scan_text_chunk_chars))
+    drawing_pages, _ = _drawing_pages(reviewed, settings.ai_scan_max_drawing_pages)
+    drawing_units = len(drawing_pages)
+    total_units = max(1, text_units + drawing_units + 1)
+    if on_progress is not None:
+        await on_progress(
+            "ai_scan_text",
+            f"Reviewing patent text (0/{text_units})",
+            0,
+            total_units,
+        )
+    text_summary = await review_text(
+        client,
+        reviewed,
+        settings,
+        on_progress=on_progress,
+        total_units=total_units,
+    )
+    drawing_summary = await review_drawings(
+        client,
+        reviewed,
+        pdf_bytes,
+        settings,
+        on_progress=on_progress,
+        progress_offset=text_units,
+        total_units=total_units,
+    )
     summary: dict[str, int | bool] = {**text_summary, **drawing_summary}
     quality = reviewed.setdefault("quality", {})
     quality["ai_scan"] = {"model": settings.openai_model, **summary}

@@ -286,10 +286,9 @@ async def start_ai_scan(document_id: str, user: CurrentUser, session: DbSession)
         status="queued",
         stage="ai_scan_queued",
         stage_label="Queued AI review",
-        unit="steps",
         completed_units=0,
-        total_units=3,
-        indeterminate=False,
+        total_units=None,
+        indeterminate=True,
     )
     session.add(job)
     await session.flush()

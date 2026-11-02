@@ -352,6 +352,8 @@ async def ai_scan_processor(ctx: JobContext, job: ExtractionJob) -> None:
     )
 
     usage_totals = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "requests": 0}
+    progress_completed = 0
+    progress_total = 1
 
     async def record_usage(usage: dict[str, int]) -> None:
         usage_totals["requests"] += 1
@@ -369,12 +371,28 @@ async def ai_scan_processor(ctx: JobContext, job: ExtractionJob) -> None:
             )
             await session.commit()
 
+    async def record_progress(
+        stage: str, stage_label: str, completed_units: int, total_units: int
+    ) -> None:
+        nonlocal progress_completed, progress_total
+        progress_completed = completed_units
+        progress_total = total_units
+        await ctx.heartbeat(
+            stage=stage,
+            stage_label=stage_label,
+            completed_units=completed_units,
+            total_units=total_units,
+            unit="items",
+            indeterminate=False,
+        )
+
     scan_task = asyncio.create_task(
         scan_artifact(
             artifact_blob=artifact_blob,
             pdf_bytes=pdf_bytes,
             settings=settings,
             on_usage=record_usage,
+            on_progress=record_progress,
         )
     )
     while not scan_task.done():
@@ -385,7 +403,10 @@ async def ai_scan_processor(ctx: JobContext, job: ExtractionJob) -> None:
     await ctx.heartbeat(
         stage="ai_scan_publishing",
         stage_label="Publishing AI-reviewed patent",
-        completed_units=2,
+        completed_units=progress_completed,
+        total_units=progress_total,
+        unit="items",
+        indeterminate=False,
     )
     async with ctx.sessionmaker() as session:
         await publish_artifact_payload(
@@ -409,7 +430,10 @@ async def ai_scan_processor(ctx: JobContext, job: ExtractionJob) -> None:
     await ctx.heartbeat(
         stage="ai_scan_complete",
         stage_label="AI review complete",
-        completed_units=3,
+        completed_units=progress_total,
+        total_units=progress_total,
+        unit="items",
+        indeterminate=False,
     )
 
 
