@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import select
 
 from app.config import get_settings
-from app.db.models import User
+from app.db.models import AuditEvent, User
 from app.services.credentials import CredentialEncryptionError, decrypt_credential
 
 
@@ -18,6 +18,15 @@ async def test_uspto_api_key_is_encrypted_and_never_returned(client, make_token,
     assert account.json() == {
         "email": "owner@example.com",
         "uspto_api_key_configured": False,
+        "ai_scan_available": False,
+        "ai_usage": {
+            "requests": 0,
+            "scans": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "last_used_at": None,
+        },
     }
 
     secret_value = "uspto-personal-api-key-12345"
@@ -46,6 +55,47 @@ async def test_uspto_api_key_is_encrypted_and_never_returned(client, make_token,
     assert removed.status_code == 204
     account = await client.get("/api/v1/account", headers=headers)
     assert account.json()["uspto_api_key_configured"] is False
+
+
+async def test_ai_usage_is_aggregated_for_the_current_account(client, make_token, auth):
+    headers = auth(make_token("usage-owner", "usage@example.com"))
+    await client.get("/api/v1/account", headers=headers)
+    async with client.sessionmaker() as session:
+        user = (await session.execute(select(User))).scalar_one()
+        session.add_all(
+            [
+                AuditEvent(
+                    actor_user_id=user.id,
+                    action="ai.scan.usage",
+                    resource_class="user_document",
+                    details={"input_tokens": 120, "output_tokens": 30, "total_tokens": 150},
+                ),
+                AuditEvent(
+                    actor_user_id=user.id,
+                    action="ai.scan.usage",
+                    resource_class="user_document",
+                    details={"input_tokens": 80, "output_tokens": 20, "total_tokens": 100},
+                ),
+                AuditEvent(
+                    actor_user_id=user.id,
+                    action="ai.scan.complete",
+                    resource_class="user_document",
+                    details={"requests": 2, "total_tokens": 250},
+                ),
+            ]
+        )
+        await session.commit()
+
+    response = await client.get("/api/v1/account", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["ai_usage"] | {"last_used_at": None} == {
+        "requests": 2,
+        "scans": 1,
+        "input_tokens": 200,
+        "output_tokens": 50,
+        "total_tokens": 250,
+        "last_used_at": None,
+    }
 
 
 def test_credential_cipher_rejects_wrong_key():

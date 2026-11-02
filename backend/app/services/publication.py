@@ -191,3 +191,38 @@ async def publish_artifact(
 
     await session.commit()
     return artifact_id
+
+
+async def publish_artifact_payload(
+    session: AsyncSession,
+    store: ObjectStore,
+    *,
+    document_id: str,
+    source_id: str,
+    owner_id: str,
+    payload: dict,
+) -> str:
+    """Publish a validated serialized artifact derived from an active artifact.
+
+    Post-processing services use this path so unknown forward-compatible fields
+    survive a review pass. The prior active artifact remains a rollback version.
+    """
+    schema_version = int(payload.get("schema_version", 1))
+    disposition = str(payload.get("disposition", "complete_with_warnings"))
+    if disposition not in _DISPOSITION_TO_STATE:
+        disposition = "complete_with_warnings"
+    artifact_id = new_id("art")
+    key = f"artifacts/{owner_id}/{artifact_id}.json.gz"
+    blob = gzip.compress(json.dumps(payload).encode("utf-8"))
+    await store.write(key, blob, content_type="application/gzip")
+    await _activate_artifact(
+        session,
+        artifact_id=artifact_id,
+        key=key,
+        document_id=document_id,
+        source_id=source_id,
+        schema_version=schema_version,
+        disposition=disposition,
+    )
+    await session.commit()
+    return artifact_id

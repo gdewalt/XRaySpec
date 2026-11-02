@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Response, status
+from sqlalchemy import select
 
 from ...config import get_settings
-from ...schemas.account import AccountRead, UsptoApiKeyUpdate
+from ...db.models import AuditEvent
+from ...schemas.account import AccountRead, AiUsageRead, UsptoApiKeyUpdate
 from ...services.audit import record_audit
 from ...services.credentials import CredentialEncryptionError, encrypt_credential
 from ..deps import CurrentUser, DbSession
@@ -13,12 +15,45 @@ from ..deps import CurrentUser, DbSession
 router = APIRouter(tags=["account"])
 
 
-@router.get("/account", response_model=AccountRead)
-async def get_account(user: CurrentUser) -> AccountRead:
+async def _account_read(user, session) -> AccountRead:
+    events = list(
+        await session.scalars(
+            select(AuditEvent)
+            .where(
+                AuditEvent.actor_user_id == user.id,
+                AuditEvent.action.in_(("ai.scan.usage", "ai.scan.complete")),
+            )
+            .order_by(AuditEvent.created_at.desc())
+        )
+    )
+    usage_events = [event for event in events if event.action == "ai.scan.usage"]
+    scan_events = [event for event in events if event.action == "ai.scan.complete"]
+    usage = AiUsageRead(
+        requests=len(usage_events),
+        scans=len(scan_events),
+        input_tokens=sum(
+            int((event.details or {}).get("input_tokens", 0)) for event in usage_events
+        ),
+        output_tokens=sum(
+            int((event.details or {}).get("output_tokens", 0)) for event in usage_events
+        ),
+        total_tokens=sum(
+            int((event.details or {}).get("total_tokens", 0)) for event in usage_events
+        ),
+        last_used_at=usage_events[0].created_at if usage_events else None,
+    )
+    settings = get_settings()
     return AccountRead(
         email=user.email,
         uspto_api_key_configured=bool(user.uspto_api_key_encrypted),
+        ai_scan_available=settings.ai_scan_enabled and bool(settings.openai_api_key),
+        ai_usage=usage,
     )
+
+
+@router.get("/account", response_model=AccountRead)
+async def get_account(user: CurrentUser, session: DbSession) -> AccountRead:
+    return await _account_read(user, session)
 
 
 @router.put("/account/uspto-api-key", response_model=AccountRead)
@@ -42,7 +77,7 @@ async def set_uspto_api_key(
         resource_id=user.id,
     )
     await session.commit()
-    return AccountRead(email=user.email, uspto_api_key_configured=True)
+    return await _account_read(user, session)
 
 
 @router.delete("/account/uspto-api-key", status_code=status.HTTP_204_NO_CONTENT)

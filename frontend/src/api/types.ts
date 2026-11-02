@@ -21,6 +21,15 @@ export interface DocumentList {
 export interface AccountRead {
   email: string | null;
   uspto_api_key_configured: boolean;
+  ai_scan_available: boolean;
+  ai_usage: {
+    requests: number;
+    scans: number;
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    last_used_at: string | null;
+  };
 }
 
 export interface WorkspaceRead {

@@ -69,6 +69,14 @@ class Settings(BaseSettings):
     enrichment_enabled: bool = True
     default_retention_days: int = 90
 
+    # Optional post-import AI review. The credential is instance-scoped and is
+    # never returned by an API; usage is attributed to the requesting account.
+    ai_scan_enabled: bool = True
+    openai_api_key: str = Field(default="", repr=False)
+    openai_model: str = "gpt-5-mini"
+    ai_scan_text_chunk_chars: int = 14_000
+    ai_scan_max_drawing_pages: int = 48
+
     # When set, FastAPI serves the built React app at the same origin as the API.
     frontend_dist_dir: str = ""
 

@@ -386,6 +386,7 @@ export function Viewer({ documentId }: { documentId: string }) {
   const [citeStyle, setCiteStyle] = useState<CiteStyle>(loadStyle);
   const [citeSettingsOpen, setCiteSettingsOpen] = useState(false);
   const [citeBarExpanded, setCiteBarExpanded] = useState(false);
+  const [aiScanActive, setAiScanActive] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const panesRef = useRef<HTMLDivElement>(null);
   const specRef = useRef<HTMLElement>(null);
@@ -449,6 +450,18 @@ export function Viewer({ documentId }: { documentId: string }) {
           setAssertedClaims(asserted);
           setAnnotations(an);
           setOverrides(ov);
+        }
+        try {
+          const latestJob = await api.getDocumentJob(documentId);
+          if (
+            !cancelled &&
+            latestJob.stage?.startsWith("ai_scan") &&
+            (latestJob.status === "queued" || latestJob.status === "running")
+          ) {
+            setAiScanActive(true);
+          }
+        } catch {
+          // A document can legitimately have no current job.
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -1086,6 +1099,42 @@ export function Viewer({ documentId }: { documentId: string }) {
     }
   }, [doc]);
 
+  const refreshAiReviewedArtifact = useCallback(async () => {
+    setAiScanActive(false);
+    try {
+      const latestJob = await api.getDocumentJob(documentId);
+      if (latestJob.status === "failed") {
+        setError("The AI review failed. The previous patent artifact is still active.");
+        return;
+      }
+      const next = await api.getDocument(documentId);
+      setDoc(next);
+      if (next.active_artifact_id && next.active_artifact_id !== artifactIdRef.current) {
+        const nextArtifact = await api.getArtifactEntries(next.active_artifact_id);
+        artifactIdRef.current = next.active_artifact_id;
+        setArtifact(nextArtifact);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [documentId]);
+
+  const startAiScan = useCallback(async () => {
+    if (!doc || !artifact || aiScanActive) return;
+    const approved = window.confirm(
+      "Run an AI review? Patent text and drawing-page images will be sent to the configured AI provider. Usage will be recorded to your account. The current artifact remains available as a rollback version.",
+    );
+    if (!approved) return;
+    setError(null);
+    setAiScanActive(true);
+    try {
+      await api.startAiScan(doc.id);
+    } catch (err) {
+      setAiScanActive(false);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [aiScanActive, artifact, doc]);
+
   return (
     <div className="viewer">
       <div className="viewer-bar">
@@ -1232,6 +1281,19 @@ export function Viewer({ documentId }: { documentId: string }) {
           </>
         )}
 
+        {doc && artifact && (
+          <button
+            type="button"
+            className="icon-button ai-scan-button"
+            disabled={aiScanActive || !doc || !["ready", "ready_with_warnings"].includes(doc.state)}
+            onClick={() => void startAiScan()}
+            aria-label={aiScanActive ? "AI review in progress" : "Run AI cleanup scan"}
+            title={aiScanActive ? "AI review in progress" : "AI cleanup scan"}
+          >
+            <Icon name="scan" size={17} />
+          </button>
+        )}
+
         {doc && (artifact || doc.state === "pdf_ready") && (
           <div className="export-menu">
             <button
@@ -1270,6 +1332,14 @@ export function Viewer({ documentId }: { documentId: string }) {
         <p className="status err" role="alert">
           {error}
         </p>
+      )}
+
+      {aiScanActive && (
+        <div className="quality-banner processing-banner ai-scan-banner" role="status">
+          <strong>AI patent review</strong>
+          <span> — Cleaning text and reviewing figure and callout links.</span>
+          <JobProgress documentId={documentId} onComplete={() => void refreshAiReviewedArtifact()} />
+        </div>
       )}
 
       {!artifact && !error && doc?.state !== "pdf_ready" && (

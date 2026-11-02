@@ -15,7 +15,7 @@ import hashlib
 from dataclasses import dataclass, replace
 
 from ..config import get_settings
-from ..db.models import ExtractionJob, SourceDocument, User, UserDocument
+from ..db.models import ExtractionArtifact, ExtractionJob, SourceDocument, User, UserDocument
 from ..enrichment.google_text import ProviderText, extract_claim_numbers, extract_provider_text
 from ..extraction.artifact import Artifact, PatentFrontMatter
 from ..extraction.config import ExtractionConfig
@@ -25,10 +25,13 @@ from ..fetch.google_patents import extract_pdf_url, patent_page_url
 from ..fetch.guard import check_url
 from ..fetch.ppubs import PpubsClient, PpubsDocument
 from ..patents import PatentParseError, parse_patent_identifier
+from ..services.ai_scan import scan_artifact
+from ..services.audit import record_audit
 from ..services.credentials import CredentialEncryptionError, decrypt_credential
 from ..services.publication import (
     find_reusable_artifact,
     publish_artifact,
+    publish_artifact_payload,
     publish_reused_artifact,
 )
 from .engine import JobContext
@@ -155,6 +158,10 @@ async def extraction_processor(
     """Full pipeline: fetch the source if needed, run the native extraction core,
     align it to the provider's clean text, and atomically publish the immutable
     artifact (DESIGN.md §9.2, §12, §13)."""
+    if (job.stage or "").startswith("ai_scan"):
+        await ai_scan_processor(ctx, job)
+        return
+
     provider_seed: ProviderFetchSeed | None = None
     if await _needs_fetch(ctx, job):
         provider_seed = await fetch_source(ctx, job, fetcher=fetcher)
@@ -300,6 +307,110 @@ async def extraction_processor(
             owner_id=owner_id,
             artifact=artifact,
         )
+
+
+async def ai_scan_processor(ctx: JobContext, job: ExtractionJob) -> None:
+    """Review an existing artifact and publish a separately versioned result."""
+    settings = get_settings()
+    if not settings.ai_scan_enabled or not settings.openai_api_key:
+        raise RuntimeError("AI scanning is not configured")
+    if job.document_id is None:
+        raise RuntimeError("AI scan has no document")
+
+    async with ctx.sessionmaker() as session:
+        document = await session.get(UserDocument, job.document_id)
+        artifact = (
+            await session.get(ExtractionArtifact, document.active_artifact_id)
+            if document and document.active_artifact_id
+            else None
+        )
+        source = await session.get(SourceDocument, document.source_id) if document else None
+        if (
+            document is None
+            or artifact is None
+            or not artifact.manifest_object_key
+            or source is None
+            or not source.pdf_object_key
+        ):
+            raise RuntimeError("AI scan requires a published artifact and source PDF")
+        artifact_key = artifact.manifest_object_key
+        pdf_key = source.pdf_object_key
+        source_id = source.id
+        owner_id = document.owner_id
+
+    await ctx.heartbeat(
+        stage="ai_scan_text",
+        stage_label="Reviewing patent text",
+        completed_units=0,
+        total_units=3,
+        unit="steps",
+        indeterminate=False,
+    )
+    artifact_blob, pdf_bytes = await asyncio.gather(
+        ctx.store.read(artifact_key, limit=settings.max_upload_bytes),
+        ctx.store.read(pdf_key, limit=settings.max_upload_bytes),
+    )
+
+    usage_totals = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "requests": 0}
+
+    async def record_usage(usage: dict[str, int]) -> None:
+        usage_totals["requests"] += 1
+        for key in ("input_tokens", "output_tokens", "total_tokens"):
+            usage_totals[key] += int(usage.get(key, 0))
+        async with ctx.sessionmaker() as session:
+            record_audit(
+                session,
+                actor_user_id=owner_id,
+                action="ai.scan.usage",
+                resource_class="user_document",
+                resource_id=document.id,
+                correlation_id=job.id,
+                details={"model": settings.openai_model, **usage},
+            )
+            await session.commit()
+
+    scan_task = asyncio.create_task(
+        scan_artifact(
+            artifact_blob=artifact_blob,
+            pdf_bytes=pdf_bytes,
+            settings=settings,
+            on_usage=record_usage,
+        )
+    )
+    while not scan_task.done():
+        done, _ = await asyncio.wait({scan_task}, timeout=10)
+        if not done:
+            await ctx.heartbeat()
+    reviewed, summary = await scan_task
+    await ctx.heartbeat(
+        stage="ai_scan_publishing",
+        stage_label="Publishing AI-reviewed patent",
+        completed_units=2,
+    )
+    async with ctx.sessionmaker() as session:
+        await publish_artifact_payload(
+            session,
+            ctx.store,
+            document_id=document.id,
+            source_id=source_id,
+            owner_id=owner_id,
+            payload=reviewed,
+        )
+        record_audit(
+            session,
+            actor_user_id=owner_id,
+            action="ai.scan.complete",
+            resource_class="user_document",
+            resource_id=document.id,
+            correlation_id=job.id,
+            details={"model": settings.openai_model, **usage_totals, **summary},
+        )
+        await session.commit()
+    await ctx.heartbeat(
+        stage="ai_scan_complete",
+        stage_label="AI review complete",
+        completed_units=3,
+    )
 
 
 async def _fetch_provider_pages(

@@ -16,11 +16,11 @@ export function AccountMenu() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open || account) return;
+    if (!open) return;
     void api.getAccount().then(setAccount, (reason) => {
       setError(reason instanceof Error ? reason.message : String(reason));
     });
-  }, [account, open]);
+  }, [open]);
 
   async function changePassword(event: FormEvent) {
     event.preventDefault();
@@ -162,6 +162,21 @@ export function AccountMenu() {
               )}
             </div>
           </form>
+          <section className="account-form account-ai-usage" aria-label="AI scan usage">
+            <h3>AI scan usage</h3>
+            {account?.ai_scan_available ? (
+              <>
+                <p>Usage is tracked to this account. Requests are sent with provider storage disabled.</p>
+                <dl>
+                  <div><dt>Completed scans</dt><dd>{account.ai_usage.scans.toLocaleString()}</dd></div>
+                  <div><dt>API requests</dt><dd>{account.ai_usage.requests.toLocaleString()}</dd></div>
+                  <div><dt>Total tokens</dt><dd>{account.ai_usage.total_tokens.toLocaleString()}</dd></div>
+                </dl>
+              </>
+            ) : (
+              <p>AI scanning is not configured for this deployment.</p>
+            )}
+          </section>
           {message && <p className="status ok" role="status">{message}</p>}
           {error && <p className="status err" role="alert">{error}</p>}
           <button type="button" className="account-sign-out" onClick={() => void signOut()}>

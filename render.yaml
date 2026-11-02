@@ -48,6 +48,8 @@ services:
         sync: false
       - key: XRAY_ALLOWED_EMAILS
         sync: false
+      - key: XRAY_OPENAI_API_KEY
+        sync: false
 
   - type: worker
     name: xray-spec-worker
@@ -73,4 +75,6 @@ services:
       - key: XRAY_CREDENTIAL_ENCRYPTION_KEY
         sync: false
       - key: XRAY_ALLOWED_EMAILS
+        sync: false
+      - key: XRAY_OPENAI_API_KEY
         sync: false

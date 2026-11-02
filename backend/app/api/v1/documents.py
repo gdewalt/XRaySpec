@@ -22,6 +22,7 @@ from ...db.models import (
     Annotation,
     AssertedClaim,
     Bookmark,
+    ExtractionArtifact,
     ExtractionJob,
     PdfAnnotation,
     ReferenceLinkOverride,
@@ -248,6 +249,61 @@ async def get_document_job(document_id: str, user: CurrentUser, session: DbSessi
     )
     if job is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No job for this document")
+    return JobRead.model_validate(job)
+
+
+@router.post("/documents/{document_id}/ai-scan", response_model=JobRead, status_code=202)
+async def start_ai_scan(document_id: str, user: CurrentUser, session: DbSession) -> JobRead:
+    """Queue an optional AI review of an already-published patent artifact."""
+    settings = get_settings()
+    if not settings.ai_scan_enabled or not settings.openai_api_key:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "AI scanning is not configured for this deployment",
+        )
+    doc = await _owned_document(session, user, document_id)
+    if doc.state not in ("ready", "ready_with_warnings"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Import must finish before an AI scan")
+    if not doc.active_artifact_id:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Import must finish before an AI scan")
+    artifact = await session.get(ExtractionArtifact, doc.active_artifact_id)
+    if artifact is None or artifact.ready_at is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "The active artifact is not ready")
+    running = await session.scalar(
+        select(ExtractionJob).where(
+            ExtractionJob.document_id == doc.id,
+            ExtractionJob.owner_id == user.id,
+            ExtractionJob.status.in_(("queued", "running")),
+            ExtractionJob.stage.like("ai_scan%"),
+        )
+    )
+    if running is not None:
+        return JobRead.model_validate(running)
+
+    job = ExtractionJob(
+        owner_id=user.id,
+        document_id=doc.id,
+        status="queued",
+        stage="ai_scan_queued",
+        stage_label="Queued AI review",
+        unit="steps",
+        completed_units=0,
+        total_units=3,
+        indeterminate=False,
+    )
+    session.add(job)
+    await session.flush()
+    record_audit(
+        session,
+        actor_user_id=user.id,
+        action="ai.scan.request",
+        resource_class="user_document",
+        resource_id=doc.id,
+        correlation_id=job.id,
+        details={"model": settings.openai_model},
+    )
+    await session.commit()
+    await session.refresh(job)
     return JobRead.model_validate(job)
 
 

@@ -124,6 +124,9 @@ export const api = {
 
   getDocumentJob: (id: string) => request<JobRead>(`/api/v1/documents/${id}/job`),
 
+  startAiScan: (id: string) =>
+    request<JobRead>(`/api/v1/documents/${id}/ai-scan`, { method: "POST" }),
+
   listBookmarks: (docId: string) =>
     request<BookmarkRead[]>(`/api/v1/documents/${docId}/bookmarks`),
   createBookmark: (docId: string, entry_id: string, label?: string | null) =>

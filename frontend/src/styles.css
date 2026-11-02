@@ -3562,6 +3562,11 @@ button:active:not(:disabled) { transform: translateY(1px); }
 .account-form input { min-width: 0; width: 100%; }
 .account-form button { justify-self: start; }
 .account-form-actions { display: flex; gap: .4rem; }
+.account-ai-usage dl { display: grid; gap: .4rem; margin: 0; }
+.account-ai-usage dl div { display: flex; justify-content: space-between; gap: 1rem; }
+.account-ai-usage dt { color: var(--muted); font-size: .74rem; }
+.account-ai-usage dd { margin: 0; font-size: .76rem; font-variant-numeric: tabular-nums; }
+.ai-scan-button:disabled { cursor: progress; }
 .account-sign-out {
   display: flex;
   align-items: center;
