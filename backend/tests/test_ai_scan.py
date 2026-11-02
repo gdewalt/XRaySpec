@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 from app.config import Settings
-from app.services.ai_scan import _rebuild_associations, _safe_box, review_text
+from app.services.ai_scan import (
+    StructuredResponseIncomplete,
+    _rebuild_associations,
+    _review_text_batch,
+    _safe_box,
+    review_text,
+)
 
 
 class _FakeClient:
@@ -43,6 +49,18 @@ class _FakeClient:
                 }
             ],
         }
+
+
+class _TruncatingClient:
+    def __init__(self, *, always: bool = False):
+        self.calls = 0
+        self.always = always
+
+    async def structured(self, **_kwargs):
+        self.calls += 1
+        if self.always or self.calls == 1:
+            raise StructuredResponseIncomplete("truncated")
+        return {"corrections": [], "figure_mentions": [], "callout_mentions": []}
 
 
 async def test_text_review_applies_only_close_high_confidence_corrections():
@@ -98,3 +116,26 @@ def test_ai_boxes_and_associations_are_validated():
     _rebuild_associations(payload)
     assert payload["mention_associations"][0]["status"] == "verified"
     assert payload["mention_associations"][0]["selected_callout_ids"] == ["ai:2:104:0"]
+
+
+async def test_truncated_text_batch_is_bisected_without_failing_scan():
+    client = _TruncatingClient()
+    results, skipped = await _review_text_batch(
+        client,
+        [
+            {"entry_id": "line-1", "text": "first"},
+            {"entry_id": "line-2", "text": "second"},
+        ],
+    )
+    assert client.calls == 3
+    assert len(results) == 2
+    assert skipped == 0
+
+
+async def test_single_truncated_line_keeps_original_and_is_counted():
+    results, skipped = await _review_text_batch(
+        _TruncatingClient(always=True),
+        [{"entry_id": "line-1", "text": "original"}],
+    )
+    assert results == []
+    assert skipped == 1

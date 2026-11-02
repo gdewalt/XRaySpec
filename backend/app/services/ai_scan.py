@@ -28,6 +28,10 @@ _FIGURE_ID_RE = re.compile(r"^([0-9]{1,3})([a-z]?)$", re.IGNORECASE)
 _CALLOUT_RE = re.compile(r"^[0-9]{1,5}[A-Za-z]?$", re.ASCII)
 
 
+class StructuredResponseIncomplete(Exception):
+    """The provider returned a charged response without a complete JSON object."""
+
+
 def _figure_id(value: object) -> str | None:
     match = _FIGURE_ID_RE.fullmatch(str(value).strip().replace(" ", ""))
     if not match:
@@ -62,11 +66,12 @@ class ResponsesClient:
         schema: dict[str, Any],
         content: list[dict[str, Any]],
         instructions: str,
+        max_output_tokens: int = 8_000,
     ) -> dict[str, Any]:
         body = {
             "model": self.settings.openai_model,
             "store": False,
-            "max_output_tokens": 8_000,
+            "max_output_tokens": max_output_tokens,
             "instructions": instructions,
             "input": [{"role": "user", "content": content}],
             "text": {
@@ -96,9 +101,17 @@ class ResponsesClient:
             "total_tokens": int(usage.get("total_tokens", 0) or 0),
         }
         await self.on_usage(normalized_usage)
-        parsed = json.loads(_response_text(payload))
+        try:
+            text = _response_text(payload)
+            parsed = json.loads(text)
+        except (ValueError, json.JSONDecodeError) as exc:
+            status = str(payload.get("status") or "unknown")
+            reason = str((payload.get("incomplete_details") or {}).get("reason") or "unknown")
+            raise StructuredResponseIncomplete(
+                f"structured response was incomplete (status={status}, reason={reason})"
+            ) from exc
         if not isinstance(parsed, dict):
-            raise ValueError("AI structured output must be an object")
+            raise StructuredResponseIncomplete("AI structured output was not an object")
         return parsed
 
 
@@ -227,27 +240,25 @@ def _span(text: str, raw: str) -> list[int] | None:
     return [start, start + len(raw)] if start >= 0 else None
 
 
-async def review_text(
-    client: ResponsesClient, payload: dict[str, Any], settings: Settings
-) -> dict[str, int]:
-    entries = payload.get("entries") or []
-    by_id = {str(entry.get("entry_id")): entry for entry in entries if isinstance(entry, dict)}
-    corrections = 0
-    figure_mentions: list[dict[str, Any]] = []
-    numeral_mentions: list[dict[str, Any]] = []
-    for chunk in _chunks(entries, settings.ai_scan_text_chunk_chars):
+_TEXT_REVIEW_INSTRUCTIONS = (
+    "You review patent OCR with extreme fidelity. Correct only obvious OCR corruption, "
+    "duplicated word fragments, and broken characters. Never paraphrase, summarize, "
+    "modernize, or change legal meaning. Return only genuinely needed corrections. "
+    "Identify explicit FIG./FIGURE references and clear component reference "
+    "numerals in prose; do not treat years, claim numbers, citations, quantities, "
+    "or line numbers as callouts. Confidence is 0 to 1."
+)
+
+
+async def _review_text_batch(
+    client: ResponsesClient, chunk: list[dict[str, Any]], *, _depth: int = 0
+) -> tuple[list[dict[str, Any]], int]:
+    """Retry a truncated text response by bisecting only the affected batch."""
+    try:
         result = await client.structured(
             name="patent_text_review",
             schema=_TEXT_SCHEMA,
-            instructions=(
-                "You review patent OCR with extreme fidelity. Correct only obvious OCR corruption, "
-                "duplicated word fragments, and broken characters. Never paraphrase, summarize, "
-                "modernize, or change legal meaning. Return only genuinely needed corrections. "
-                "Identify explicit FIG./FIGURE references and clear component reference "
-                "numerals in prose; do not treat years, claim numbers, citations, quantities, "
-                "or line numbers as "
-                "callouts. Confidence is 0 to 1."
-            ),
+            instructions=_TEXT_REVIEW_INSTRUCTIONS,
             content=[
                 {
                     "type": "input_text",
@@ -256,55 +267,43 @@ async def review_text(
                 }
             ],
         )
-        for item in result.get("corrections", []):
-            entry = by_id.get(str(item.get("entry_id")))
-            corrected = str(item.get("corrected_text", "")).strip()
-            confidence = float(item.get("confidence", 0) or 0)
-            if not entry or confidence < 0.8 or not corrected or len(corrected) > 8_000:
-                continue
-            original = str(entry.get("display_text") or entry.get("source_text") or "")
-            ratio = SequenceMatcher(None, original, corrected).ratio()
-            if ratio < 0.72 or corrected == original:
-                continue
-            entry["display_text"] = corrected
-            provenance = entry.setdefault("provenance", {})
-            provenance["alignment_method"] = "ai_cleanup"
-            provenance["alignment_score"] = round(confidence, 4)
-            provenance["provider"] = settings.openai_model
-            corrections += 1
-        for item in result.get("figure_mentions", []):
-            if float(item.get("confidence", 0) or 0) < 0.7:
-                continue
-            entry = by_id.get(str(item.get("entry_id")))
-            raw = str(item.get("raw_text", "")).strip()
-            text = str(entry.get("display_text", "")) if entry else ""
-            span = _span(text, raw)
-            ids = [fid for value in item.get("figure_ids", []) if (fid := _figure_id(value))]
-            if entry and span and ids:
-                figure_mentions.append(
-                    {
-                        "entry_id": entry["entry_id"],
-                        "raw_text": raw,
-                        "span": span,
-                        "figure_ids": ids,
-                    }
-                )
-        for item in result.get("callout_mentions", []):
-            if float(item.get("confidence", 0) or 0) < 0.82:
-                continue
-            entry = by_id.get(str(item.get("entry_id")))
-            value = str(item.get("value", "")).strip().upper()
-            text = str(entry.get("display_text", "")) if entry else ""
-            match = re.search(rf"(?<![A-Za-z0-9]){re.escape(value)}(?![A-Za-z0-9])", text)
-            if entry and match and _CALLOUT_RE.fullmatch(value):
-                numeral_mentions.append(
-                    {
-                        "entry_id": entry["entry_id"],
-                        "value": value,
-                        "component_label": str(item.get("component_label", "")).strip() or None,
-                        "span": [match.start(), match.end()],
-                    }
-                )
+        return [result], 0
+    except StructuredResponseIncomplete:
+        if len(chunk) <= 1 or _depth >= 3:
+            # One pathological line must not discard successful review work for
+            # the rest of the patent. Bound retries so a provider-side problem
+            # cannot create an unexpectedly large bill.
+            return [], len(chunk)
+        middle = len(chunk) // 2
+        left, left_skipped = await _review_text_batch(
+            client, chunk[:middle], _depth=_depth + 1
+        )
+        right, right_skipped = await _review_text_batch(
+            client, chunk[middle:], _depth=_depth + 1
+        )
+        return left + right, left_skipped + right_skipped
+
+
+async def review_text(
+    client: ResponsesClient, payload: dict[str, Any], settings: Settings
+) -> dict[str, int]:
+    entries = payload.get("entries") or []
+    by_id = {str(entry.get("entry_id")): entry for entry in entries if isinstance(entry, dict)}
+    corrections = 0
+    skipped_text_batches = 0
+    figure_mentions: list[dict[str, Any]] = []
+    numeral_mentions: list[dict[str, Any]] = []
+    for chunk in _chunks(entries, settings.ai_scan_text_chunk_chars):
+        results, skipped = await _review_text_batch(client, chunk)
+        skipped_text_batches += skipped
+        for result in results:
+            corrections += _apply_text_review_result(
+                result,
+                by_id=by_id,
+                figure_mentions=figure_mentions,
+                numeral_mentions=numeral_mentions,
+                settings=settings,
+            )
     if figure_mentions:
         existing = payload.get("figure_mentions") or []
         keyed = {(x.get("entry_id"), tuple(x.get("span", []))): x for x in existing}
@@ -321,7 +320,69 @@ async def review_text(
         "corrected_lines": corrections,
         "figure_mentions": len(figure_mentions),
         "callout_mentions": len(numeral_mentions),
+        "skipped_text_batches": skipped_text_batches,
     }
+
+
+def _apply_text_review_result(
+    result: dict[str, Any],
+    *,
+    by_id: dict[str, dict[str, Any]],
+    figure_mentions: list[dict[str, Any]],
+    numeral_mentions: list[dict[str, Any]],
+    settings: Settings,
+) -> int:
+    corrections = 0
+    for item in result.get("corrections", []):
+        entry = by_id.get(str(item.get("entry_id")))
+        corrected = str(item.get("corrected_text", "")).strip()
+        confidence = float(item.get("confidence", 0) or 0)
+        if not entry or confidence < 0.8 or not corrected or len(corrected) > 8_000:
+            continue
+        original = str(entry.get("display_text") or entry.get("source_text") or "")
+        ratio = SequenceMatcher(None, original, corrected).ratio()
+        if ratio < 0.72 or corrected == original:
+            continue
+        entry["display_text"] = corrected
+        provenance = entry.setdefault("provenance", {})
+        provenance["alignment_method"] = "ai_cleanup"
+        provenance["alignment_score"] = round(confidence, 4)
+        provenance["provider"] = settings.openai_model
+        corrections += 1
+    for item in result.get("figure_mentions", []):
+        if float(item.get("confidence", 0) or 0) < 0.7:
+            continue
+        entry = by_id.get(str(item.get("entry_id")))
+        raw = str(item.get("raw_text", "")).strip()
+        text = str(entry.get("display_text", "")) if entry else ""
+        span = _span(text, raw)
+        ids = [fid for value in item.get("figure_ids", []) if (fid := _figure_id(value))]
+        if entry and span and ids:
+            figure_mentions.append(
+                {
+                    "entry_id": entry["entry_id"],
+                    "raw_text": raw,
+                    "span": span,
+                    "figure_ids": ids,
+                }
+            )
+    for item in result.get("callout_mentions", []):
+        if float(item.get("confidence", 0) or 0) < 0.82:
+            continue
+        entry = by_id.get(str(item.get("entry_id")))
+        value = str(item.get("value", "")).strip().upper()
+        text = str(entry.get("display_text", "")) if entry else ""
+        match = re.search(rf"(?<![A-Za-z0-9]){re.escape(value)}(?![A-Za-z0-9])", text)
+        if entry and match and _CALLOUT_RE.fullmatch(value):
+            numeral_mentions.append(
+                {
+                    "entry_id": entry["entry_id"],
+                    "value": value,
+                    "component_label": str(item.get("component_label", "")).strip() or None,
+                    "span": [match.start(), match.end()],
+                }
+            )
+    return corrections
 
 
 def _drawing_pages(payload: dict[str, Any], max_pages: int) -> tuple[list[int], bool]:
@@ -374,37 +435,44 @@ async def review_drawings(
 
     figures: list[dict[str, Any]] = []
     callouts: list[dict[str, Any]] = []
+    skipped_drawing_pages = 0
     pdf = pdfium.PdfDocument(pdf_bytes)
     try:
         for page_index in pages:
-            result = await client.structured(
-                name="patent_drawing_review",
-                schema=_DRAWING_SCHEMA,
-                instructions=(
-                    "Inspect one US patent drawing sheet. Ignore every header, including patent "
-                    "numbers and 'Sheet X of Y'. Locate only visibly printed FIG/FIGURE labels and "
-                    "unambiguous component reference-number callouts in or immediately around the "
-                    "drawings. Subfigures such as 14a and 14b are distinct. Do not infer a hidden "
-                    "label. Boxes use [x0,y0,x1,y1] coordinates normalized from 0 to 1000. "
-                    "Confidence is 0 to 1. Associate a callout with a figure only when "
-                    "visually clear."
-                ),
-                content=[
-                    {
-                        "type": "input_text",
-                        "text": (
-                            f"PDF page index: {page_index}. Figure IDs referenced by the "
-                            "specification: "
-                            f"{', '.join(sorted(expected)) or 'unknown'}."
-                        ),
-                    },
-                    {
-                        "type": "input_image",
-                        "image_url": _page_image(pdf, page_index),
-                        "detail": "high",
-                    },
-                ],
-            )
+            try:
+                result = await client.structured(
+                    name="patent_drawing_review",
+                    schema=_DRAWING_SCHEMA,
+                    max_output_tokens=16_000,
+                    instructions=(
+                        "Inspect one US patent drawing sheet. Ignore every header, including "
+                        "patent numbers and 'Sheet X of Y'. Locate only visibly printed "
+                        "FIG/FIGURE labels "
+                        "and unambiguous component reference-number callouts in or immediately "
+                        "around the drawings. Subfigures such as 14a and 14b are distinct. Do not "
+                        "infer a hidden label. Boxes use [x0,y0,x1,y1] coordinates normalized from "
+                        "0 to 1000. Confidence is 0 to 1. Associate a callout with a figure only "
+                        "when visually clear."
+                    ),
+                    content=[
+                        {
+                            "type": "input_text",
+                            "text": (
+                                f"PDF page index: {page_index}. Figure IDs referenced by the "
+                                "specification: "
+                                f"{', '.join(sorted(expected)) or 'unknown'}."
+                            ),
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": _page_image(pdf, page_index),
+                            "detail": "high",
+                        },
+                    ],
+                )
+            except StructuredResponseIncomplete:
+                skipped_drawing_pages += 1
+                continue
             for item in result.get("figures", []):
                 fid = _figure_id(item.get("figure_id"))
                 box = _safe_box(item.get("box"))
@@ -460,7 +528,12 @@ async def review_drawings(
             keyed[(item["page_index"], item["value"], tuple(item["box"]))] = item
         payload["callout_occurrences"] = list(keyed.values())
     _rebuild_associations(payload)
-    return {"figures": len(figures), "drawing_callouts": len(callouts), "pages_capped": capped}
+    return {
+        "figures": len(figures),
+        "drawing_callouts": len(callouts),
+        "pages_capped": capped,
+        "skipped_drawing_pages": skipped_drawing_pages,
+    }
 
 
 def _rebuild_associations(payload: dict[str, Any]) -> None:
@@ -504,5 +577,13 @@ async def scan_artifact(
     if drawing_summary["pages_capped"]:
         reviewed.setdefault("warnings", []).append(
             "AI drawing review reached the configured page limit"
+        )
+    skipped_text = int(text_summary.get("skipped_text_batches", 0))
+    skipped_drawings = int(drawing_summary.get("skipped_drawing_pages", 0))
+    if skipped_text or skipped_drawings:
+        reviewed.setdefault("warnings", []).append(
+            "AI review retained original data for "
+            f"{skipped_text} text lines and {skipped_drawings} drawing pages "
+            "with incomplete responses"
         )
     return reviewed, summary

@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     ai_scan_enabled: bool = True
     openai_api_key: str = Field(default="", repr=False)
     openai_model: str = "gpt-5-mini"
-    ai_scan_text_chunk_chars: int = 14_000
+    ai_scan_text_chunk_chars: int = 7_000
     ai_scan_max_drawing_pages: int = 48
 
     # When set, FastAPI serves the built React app at the same origin as the API.
