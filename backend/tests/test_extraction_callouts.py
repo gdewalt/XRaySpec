@@ -317,6 +317,34 @@ def test_page_order_penalizes_an_unsupported_figure_outlier():
     assert all(figure.detection_score == 1.0 for figure in filtered)
 
 
+def test_crowded_callout_as_figure_cluster_is_removed_from_drawing_sheet():
+    figures = [
+        FigureOccurrence("14I", 33, (0.1, 0.1, 0.2, 0.2), confidence=92.0),
+        *[
+            FigureOccurrence(
+                figure_id,
+                33,
+                (0.1 + index * 0.03, 0.4, 0.12 + index * 0.03, 0.43),
+                confidence=96.0,
+                method="fuzzy_prefix",
+            )
+            for index, figure_id in enumerate(
+                ("55", "65", "66", "84", "86", "94", "96", "105", "106", "108")
+            )
+        ],
+        # A lone unsupported label on another sheet is retained because the
+        # specification extraction may simply have missed that reference.
+        FigureOccurrence("15", 34, (0.1, 0.2, 0.2, 0.3), confidence=96.0),
+    ]
+
+    filtered = filter_figure_occurrences(figures, {"14I"})
+
+    assert {(item.figure_id, item.page_index) for item in filtered} == {
+        ("14I", 33),
+        ("15", 34),
+    }
+
+
 def test_missing_sheet_is_inferred_only_when_neighbors_and_specification_agree():
     detected = [
         FigureOccurrence(

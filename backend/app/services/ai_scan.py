@@ -20,11 +20,12 @@ from typing import Any
 import httpx
 
 from ..config import Settings
+from ..extraction.figures import _FIG_REF as _PATENT_FIGURE_REF
+from ..extraction.figures import _expand_figure_expr
 
 UsageCallback = Callable[[dict[str, int]], Awaitable[None]]
 ProgressCallback = Callable[[str, str, int, int], Awaitable[None]]
 
-_FIGURE_RE = re.compile(r"\bfig(?:ure)?s?\.?\s*([0-9]{1,3}[a-z]?)", re.IGNORECASE)
 _FIGURE_ID_RE = re.compile(r"^([0-9]{1,3})([a-z]?)$", re.IGNORECASE)
 _CALLOUT_RE = re.compile(r"^[0-9]{1,5}[A-Za-z]?$", re.ASCII)
 
@@ -38,6 +39,43 @@ def _figure_id(value: object) -> str | None:
     if not match:
         return None
     return f"{int(match.group(1))}{match.group(2).lower()}"
+
+
+def _figure_ids_in_text(value: object) -> list[str]:
+    """Return only figure IDs visibly introduced by FIG/FIGURE text.
+
+    Model-proposed identifiers are deliberately not trusted here.  Reference
+    numerals on a busy drawing (55, 105, and so on) otherwise tend to leak into
+    the text-review output and then become false drawing-review targets.
+    """
+    text = str(value or "")
+    ids: list[str] = []
+    for match in _PATENT_FIGURE_REF.finditer(text):
+        for value in _expand_figure_expr(match.group(1)):
+            if (figure_id := _figure_id(value)) and figure_id not in ids:
+                ids.append(figure_id)
+    return ids
+
+
+def _prune_crowded_unsupported_figures(
+    occurrences: list[dict[str, Any]], expected: set[str]
+) -> list[dict[str, Any]]:
+    """Discard clustered callout-as-caption errors while preserving lone labels."""
+    unsupported_by_page: dict[int, set[str]] = {}
+    for occurrence in occurrences:
+        fid = _figure_id(occurrence.get("figure_id"))
+        page_index = int(occurrence.get("page_index", -1))
+        if fid and fid not in expected:
+            unsupported_by_page.setdefault(page_index, set()).add(fid)
+    crowded_pages = {
+        page_index for page_index, ids in unsupported_by_page.items() if len(ids) >= 3
+    }
+    return [
+        occurrence
+        for occurrence in occurrences
+        if int(occurrence.get("page_index", -1)) not in crowded_pages
+        or _figure_id(occurrence.get("figure_id")) in expected
+    ]
 
 
 def _response_text(response: dict[str, Any]) -> str:
@@ -371,7 +409,10 @@ def _apply_text_review_result(
         raw = str(item.get("raw_text", "")).strip()
         text = str(entry.get("display_text", "")) if entry else ""
         span = _span(text, raw)
-        ids = [fid for value in item.get("figure_ids", []) if (fid := _figure_id(value))]
+        # Derive identifiers from the quoted phrase itself.  The model's
+        # separate ``figure_ids`` array is advisory and can hallucinate drawing
+        # callout numerals that do not occur after a FIG/FIGURE prefix.
+        ids = _figure_ids_in_text(raw)
         if entry and span and ids:
             figure_mentions.append(
                 {
@@ -443,14 +484,35 @@ async def review_drawings(
 
     pages, capped = _drawing_pages(payload, settings.ai_scan_max_drawing_pages)
     expected: set[str] = set()
+    entries_by_id = {
+        str(entry.get("entry_id")): entry
+        for entry in payload.get("entries", [])
+        if isinstance(entry, dict)
+    }
+    validated_mentions: list[dict[str, Any]] = []
     for mention in payload.get("figure_mentions", []):
-        expected.update(
-            fid for value in mention.get("figure_ids", []) if (fid := _figure_id(value))
-        )
+        entry = entries_by_id.get(str(mention.get("entry_id")))
+        raw = str(mention.get("raw_text", "")).strip()
+        text = str(entry.get("display_text") or entry.get("source_text") or "") if entry else ""
+        ids = _figure_ids_in_text(raw)
+        span = _span(text, raw)
+        if ids and span:
+            validated_mentions.append({**mention, "figure_ids": ids, "span": span})
+            expected.update(ids)
+    payload["figure_mentions"] = validated_mentions
     for entry in payload.get("entries", []):
-        for match in _FIGURE_RE.finditer(str(entry.get("display_text", ""))):
-            if fid := _figure_id(match.group(1)):
-                expected.add(fid)
+        expected.update(
+            _figure_ids_in_text(entry.get("display_text") or entry.get("source_text") or "")
+        )
+
+    # Retain an isolated drawing-only label because text extraction can miss a
+    # real reference.  A cluster of three or more unsupported "figures" on one
+    # sheet, however, is the characteristic failure mode where component
+    # callouts are mistaken for captions.  Remove that cluster before AI vision
+    # can reinforce it.
+    payload["figure_occurrences"] = _prune_crowded_unsupported_figures(
+        payload.get("figure_occurrences", []), expected
+    )
 
     figures: list[dict[str, Any]] = []
     callouts: list[dict[str, Any]] = []

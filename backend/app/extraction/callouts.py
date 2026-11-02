@@ -828,6 +828,33 @@ def filter_figure_occurrences(
             current.detection_score or 0.0
         ):
             strongest[key] = candidate
+
+    # Dense drawing sheets contain many component callouts. Sparse OCR can
+    # occasionally attach a damaged FIG-like prefix to several of those
+    # numerals and produce a cluster of convincing but nonexistent captions
+    # (for example 55, 65, 105, and 145 on one sheet). When specification
+    # references are available, three or more distinct unsupported IDs on the
+    # same page are evidence of this page-level failure. Preserve isolated
+    # drawing-only captions because specification OCR can still miss one.
+    if expected:
+        supported_ids = set(expected.values())
+        unsupported_by_page: dict[int, set[str]] = {}
+        for occurrence in strongest.values():
+            if occurrence.figure_id not in supported_ids:
+                unsupported_by_page.setdefault(occurrence.page_index, set()).add(
+                    occurrence.figure_id
+                )
+        crowded_pages = {
+            page_index
+            for page_index, ids in unsupported_by_page.items()
+            if len(ids) >= 3
+        }
+        strongest = {
+            key: occurrence
+            for key, occurrence in strongest.items()
+            if occurrence.page_index not in crowded_pages
+            or occurrence.figure_id in supported_ids
+        }
     ordered = sorted(strongest.values(), key=lambda item: (item.page_index, item.figure_id))
 
     # A tiny first-sheet caption is a common one-off OCR error (``FIGURE 1``

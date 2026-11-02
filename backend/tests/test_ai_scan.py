@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.config import Settings
 from app.services.ai_scan import (
     StructuredResponseIncomplete,
+    _prune_crowded_unsupported_figures,
     _rebuild_associations,
     _review_text_batch,
     _safe_box,
@@ -109,6 +110,66 @@ async def test_text_review_applies_only_close_high_confidence_corrections():
     assert payload["numeral_mentions"][0]["value"] == "104"
     assert progress_events == [
         ("ai_scan_text", "Reviewing patent text (1/1)", 1, 2),
+    ]
+
+
+class _HallucinatedFigureClient:
+    async def structured(self, **_kwargs):
+        return {
+            "corrections": [],
+            "figure_mentions": [
+                {
+                    "entry_id": "line-1",
+                    "raw_text": "55",
+                    "figure_ids": ["55"],
+                    "confidence": 0.99,
+                },
+                {
+                    "entry_id": "line-1",
+                    "raw_text": "FIG. 6b",
+                    "figure_ids": ["66"],
+                    "confidence": 0.99,
+                },
+            ],
+            "callout_mentions": [],
+        }
+
+
+async def test_text_review_requires_visible_figure_prefix_and_derives_id_from_phrase():
+    payload = {
+        "entries": [
+            {
+                "entry_id": "line-1",
+                "display_text": "Element 55 is shown in FIG. 6b.",
+                "source_text": "Element 55 is shown in FIG. 6b.",
+                "provenance": {},
+            }
+        ],
+        "figure_mentions": [],
+        "numeral_mentions": [],
+    }
+
+    await review_text(
+        _HallucinatedFigureClient(),
+        payload,
+        Settings(openai_api_key="test", ai_scan_text_chunk_chars=20_000),
+    )
+
+    assert [mention["figure_ids"] for mention in payload["figure_mentions"]] == [["6b"]]
+
+
+def test_crowded_unsupported_figure_cluster_is_removed_from_one_drawing_page():
+    occurrences = [
+        {"figure_id": figure_id, "page_index": 33}
+        for figure_id in ("14i", "55", "65", "66", "84", "105", "145")
+    ]
+    occurrences.append({"figure_id": "15", "page_index": 34})
+
+    kept = _prune_crowded_unsupported_figures(occurrences, {"14i"})
+
+    assert kept == [
+        {"figure_id": "14i", "page_index": 33},
+        {"figure_id": "15", "page_index": 34},
     ]
 
 
