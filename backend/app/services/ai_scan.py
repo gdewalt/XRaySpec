@@ -28,6 +28,7 @@ ProgressCallback = Callable[[str, str, int, int], Awaitable[None]]
 
 _FIGURE_ID_RE = re.compile(r"^([0-9]{1,3})([a-z]?)$", re.IGNORECASE)
 _CALLOUT_RE = re.compile(r"^[0-9]{1,5}[A-Za-z]?$", re.ASCII)
+_TEXT_TOKEN_RE = re.compile(r"[A-Za-z0-9]+(?:[/\-'’][A-Za-z0-9]+)*")
 
 
 class StructuredResponseIncomplete(Exception):
@@ -76,6 +77,24 @@ def _prune_crowded_unsupported_figures(
         if int(occurrence.get("page_index", -1)) not in crowded_pages
         or _figure_id(occurrence.get("figure_id")) in expected
     ]
+
+
+def _is_conservative_text_correction(original: str, corrected: str) -> bool:
+    """Reject AI edits that expand a line beyond a small repair allowance.
+
+    The review is a cleanup pass, not a text-generation pass. It may restore a
+    clipped word or punctuation, but it must not append a second rendering of
+    the source sentence. Similarity alone is insufficient because a duplicated
+    short suffix can still score well against a long patent line.
+    """
+    original_tokens = _TEXT_TOKEN_RE.findall(original)
+    corrected_tokens = _TEXT_TOKEN_RE.findall(corrected)
+    token_allowance = max(2, len(original_tokens) * 8 // 100)
+    character_allowance = max(12, len(original) * 10 // 100)
+    return (
+        len(corrected_tokens) <= len(original_tokens) + token_allowance
+        and len(corrected) <= len(original) + character_allowance
+    )
 
 
 def _response_text(response: dict[str, Any]) -> str:
@@ -394,7 +413,11 @@ def _apply_text_review_result(
             continue
         original = str(entry.get("display_text") or entry.get("source_text") or "")
         ratio = SequenceMatcher(None, original, corrected).ratio()
-        if ratio < 0.72 or corrected == original:
+        if (
+            ratio < 0.72
+            or corrected == original
+            or not _is_conservative_text_correction(original, corrected)
+        ):
             continue
         entry["display_text"] = corrected
         provenance = entry.setdefault("provenance", {})

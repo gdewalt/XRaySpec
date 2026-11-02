@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from difflib import SequenceMatcher
+
 from app.config import Settings
 from app.services.ai_scan import (
     StructuredResponseIncomplete,
+    _is_conservative_text_correction,
     _prune_crowded_unsupported_figures,
     _rebuild_associations,
     _review_text_batch,
@@ -111,6 +114,29 @@ async def test_text_review_applies_only_close_high_confidence_corrections():
     assert progress_events == [
         ("ai_scan_text", "Reviewing patent text (1/1)", 1, 2),
     ]
+
+
+def test_ai_cleanup_rejects_appended_alternate_rendering_of_patent_line():
+    original = (
+        "processes of the invention also enable the fabricator to reduce the "
+        "cross-section, thus limiting the effect of wind resistance and "
+        "lightening the racquet."
+    )
+    expanded = f"{original} and lightning the racquet."
+
+    assert SequenceMatcher(None, original, expanded).ratio() >= 0.72
+    assert _is_conservative_text_correction(original, expanded) is False
+
+
+def test_ai_cleanup_allows_small_word_repairs_and_duplicate_removal():
+    assert _is_conservative_text_correction(
+        "A Driver Software Interface ace determines the route.",
+        "A Driver Software Interface determines the route.",
+    )
+    assert _is_conservative_text_correction(
+        "the teh racquet is light",
+        "the racquet is light",
+    )
 
 
 class _HallucinatedFigureClient:
