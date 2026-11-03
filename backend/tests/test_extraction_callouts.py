@@ -329,7 +329,24 @@ def test_crowded_callout_as_figure_cluster_is_removed_from_drawing_sheet():
                 method="fuzzy_prefix",
             )
             for index, figure_id in enumerate(
-                ("55", "65", "66", "84", "86", "94", "96", "105", "106", "108")
+                (
+                    "55",
+                    "65",
+                    "66",
+                    "84",
+                    "86",
+                    "94",
+                    "96",
+                    "105",
+                    "106",
+                    "108",
+                    "114",
+                    "115",
+                    "118",
+                    "125",
+                    "126",
+                    "145",
+                )
             )
         ],
         # A lone unsupported label on another sheet is retained because the

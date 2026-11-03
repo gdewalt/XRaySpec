@@ -22,9 +22,10 @@ OcrPolicy = Literal["auto", "force", "disabled"]
 @dataclass(frozen=True, slots=True)
 class ExtractionConfig:
     # Engine identity
-    # 0.23 invalidates artifacts/checkpoints created before reliable spaced and
-    # low-confidence subfigure caption handling (notably US 7,840,427).
-    version: str = "0.23.0"
+    # 0.24 invalidates artifacts/checkpoints created before clustered drawing
+    # callouts were rejected as false FIG captions (notably sheet 32 of
+    # US 7,840,427, which contains many numeric table values).
+    version: str = "0.24.0"
 
     # OCR
     ocr_policy: OcrPolicy = "auto"
