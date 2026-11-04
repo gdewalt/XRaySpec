@@ -13,6 +13,7 @@ and the restricted-egress fetch processor land in later slices behind the same
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -91,8 +92,12 @@ class JobContext:
         trip without weakening lease fencing or cancellation checks.
         """
         job = await session.get(ExtractionJob, self.job_id)
-        if job is None or job.fencing_token != self.fencing_token or job.status != "running":
-            raise JobPreempted()
+        if job is None:
+            raise JobPreempted("job no longer exists")
+        if job.fencing_token != self.fencing_token:
+            raise JobPreempted("job was reclaimed by another worker")
+        if job.status != "running":
+            raise JobPreempted(f"job is no longer running (status={job.status})")
         if job.cancel_requested:
             raise JobCancelled()
 
@@ -123,6 +128,42 @@ class JobContext:
 
 
 Processor = Callable[[JobContext, ExtractionJob], Awaitable[None]]
+
+
+async def _maintain_lease(ctx: JobContext) -> None:
+    """Renew a running job's lease independently of processor progress.
+
+    Processor heartbeats remain useful for durable progress and cancellation,
+    but expensive PDF parsing, OCR, provider requests, and object-store calls can
+    each run longer than the queue lease.  Keeping ownership alive in a separate
+    task prevents another worker from reclaiming a healthy in-flight job during
+    one of those otherwise silent intervals.
+    """
+    interval = max(0.05, min(10.0, ctx.lease_seconds / 3))
+    while True:
+        await asyncio.sleep(interval)
+        await ctx.heartbeat()
+
+
+async def _run_with_lease_maintenance(
+    ctx: JobContext, processor: Processor, job: ExtractionJob
+) -> None:
+    processor_task = asyncio.create_task(processor(ctx, job))
+    lease_task = asyncio.create_task(_maintain_lease(ctx))
+    try:
+        done, _ = await asyncio.wait(
+            {processor_task, lease_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if lease_task in done:
+            # Surface cancellation, preemption, or a renewal failure immediately
+            # instead of allowing stale work to continue toward publication.
+            processor_task.cancel()
+            await asyncio.gather(processor_task, return_exceptions=True)
+            await lease_task
+        await processor_task
+    finally:
+        lease_task.cancel()
+        await asyncio.gather(lease_task, return_exceptions=True)
 
 
 async def _finish(
@@ -179,13 +220,13 @@ async def process_one(
         lease_seconds=lease_seconds,
     )
     try:
-        await processor(ctx, job)
+        await _run_with_lease_maintenance(ctx, processor, job)
     except JobCancelled:
         await _finish(ctx, "cancelled")
         logger.info("cancelled extraction job job_id=%s document_id=%s", job.id, job.document_id)
         return True
-    except JobPreempted:
-        logger.warning("lost lease for extraction job job_id=%s", job.id)
+    except JobPreempted as exc:
+        logger.warning("lost lease for extraction job job_id=%s reason=%s", job.id, exc)
         return True  # another worker owns it now
     except Exception:
         logger.exception(

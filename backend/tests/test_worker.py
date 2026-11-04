@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -134,3 +135,41 @@ async def test_stale_worker_cannot_heartbeat(client):
 
     with pytest.raises(JobPreempted):
         await stale.heartbeat(stage="processing")
+
+
+async def test_process_one_renews_lease_during_silent_processing(client, monkeypatch):
+    job_id, _ = await _seed(client)
+    started = asyncio.Event()
+    renewed = asyncio.Event()
+    original_heartbeat = JobContext.heartbeat
+
+    async def observed_heartbeat(self, **kwargs):
+        await original_heartbeat(self, **kwargs)
+        renewed.set()
+
+    monkeypatch.setattr(JobContext, "heartbeat", observed_heartbeat)
+
+    async def slow_processor(ctx, job):
+        started.set()
+        # Deliberately do no processor heartbeats for several lease periods.
+        await asyncio.sleep(0.35)
+
+    processing = asyncio.create_task(
+        process_one(
+            client.sessionmaker,
+            client.object_store,
+            slow_processor,
+            worker_id="w1",
+            lease_seconds=0.15,
+        )
+    )
+    await started.wait()
+    await asyncio.wait_for(renewed.wait(), timeout=0.3)
+
+    # The processor itself has reported no progress, but the independent lease
+    # maintainer has renewed ownership, so a second worker cannot claim it.
+    async with client.sessionmaker() as session:
+        assert await claim_next_job(session, worker_id="w2", lease_seconds=0.15) is None
+
+    assert await processing is True
+    assert (await _get_job(client, job_id)).status == "succeeded"
