@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from app.extraction.artifact import (
     CalloutOccurrence,
     Entry,
@@ -21,6 +24,7 @@ from app.extraction.callouts import (
     has_drawing_sheet_header,
     infer_missing_figure_occurrences,
     is_drawing_page,
+    reconcile_figure_reference_ids,
     specification_callout_values,
 )
 from app.extraction.locator import GrantLocator
@@ -360,6 +364,33 @@ def test_crowded_callout_as_figure_cluster_is_removed_from_drawing_sheet():
         ("14I", 33),
         ("15", 34),
     }
+
+
+def test_us7840427_ppubs_ocr_resolves_complete_native_figure_manifest():
+    """Regression from the real PPUBS raster OCR, without provider/AI help."""
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "us7840427_figures.json").read_text()
+    )
+    occurrences = [
+        FigureOccurrence(
+            figure_id,
+            page_index,
+            (0.1, 0.2, 0.3, 0.24),
+            confidence=None,
+            method="sparse_ocr",
+        )
+        for figure_id, page_index in fixture["drawing_ocr_occurrences"]
+    ]
+
+    reconciled = reconcile_figure_reference_ids(
+        fixture["specification_ocr_ids"], occurrences
+    )
+    filtered = filter_figure_occurrences(occurrences, reconciled)
+    completed = infer_missing_figure_occurrences(
+        filtered, fixture["drawing_sheet_pages"], reconciled
+    )
+
+    assert {item.figure_id for item in completed} == set(fixture["expected_figure_ids"])
 
 
 def test_missing_sheet_is_inferred_only_when_neighbors_and_specification_agree():

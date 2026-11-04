@@ -464,6 +464,83 @@ def _figure_order_key(figure_id: str) -> tuple[int, int] | None:
     return int(match.group(1)), suffix
 
 
+def reconcile_figure_reference_ids(
+    expected_ids: Iterable[str], occurrences: Iterable[FigureOccurrence]
+) -> set[str]:
+    """Reconcile specification OCR references with drawing-caption evidence.
+
+    A lower-case subfigure suffix is easily read as a digit in specification
+    columns (``5b`` -> ``55``/``56``, ``11b`` -> ``114``/``118``).  A cluster
+    of these values can otherwise become an authoritative-looking expected set
+    and cause sequence inference to invent figures on the final drawing sheets.
+
+    Reconciliation is structural rather than patent-specific:
+
+    * require at least three numeric IDs that are one digit longer than a known
+      subfigure-family base before treating the pattern as systematic damage;
+    * accept a spatially detected lettered caption only when it extends an
+      existing family by at most one letter; and
+    * fill only internal letter gaps bounded by that family (A, C -> B).
+
+    Isolated numeric IDs remain untouched, preserving legitimate high-numbered
+    figures in patents that also happen to use subfigures.
+    """
+    expected = {
+        re.sub(r"\s+", "", value).upper()
+        for value in expected_ids
+        if _figure_order_key(value) is not None
+    }
+    raw = {
+        re.sub(r"\s+", "", occurrence.figure_id).upper()
+        for occurrence in occurrences
+        if _figure_order_key(occurrence.figure_id) is not None
+    }
+    family_letters: dict[int, set[int]] = {}
+    for value in expected | raw:
+        key = _figure_order_key(value)
+        if key is not None and key[1] > 0:
+            family_letters.setdefault(key[0], set()).add(key[1])
+
+    family_bases = sorted(family_letters, key=lambda base: len(str(base)), reverse=True)
+    suspicious_numeric: set[str] = set()
+    for value in expected:
+        if not value.isdigit():
+            continue
+        for base in family_bases:
+            prefix = str(base)
+            if value.startswith(prefix) and len(value) == len(prefix) + 1:
+                suspicious_numeric.add(value)
+                break
+    if len(suspicious_numeric) >= 3:
+        expected.difference_update(suspicious_numeric)
+
+    # Use actual caption geometry to extend a family conservatively. A wildly
+    # distant OCR letter (for example 14T after 14H) is not accepted.
+    expected_families: dict[int, set[int]] = {}
+    for value in expected:
+        key = _figure_order_key(value)
+        if key is not None and key[1] > 0:
+            expected_families.setdefault(key[0], set()).add(key[1])
+    for value in raw:
+        key = _figure_order_key(value)
+        if key is None or key[1] == 0 or key[0] not in expected_families:
+            continue
+        letters = expected_families[key[0]]
+        if key[1] <= max(letters) + 1:
+            expected.add(value)
+            letters.add(key[1])
+
+    # Consecutive subfigure families are common; infer only gaps enclosed by a
+    # detected/referenced upper bound. This recovers B from A,C without ever
+    # extrapolating an unbounded tail of subfigures.
+    for base, letters in expected_families.items():
+        if 1 not in letters or len(letters) < 2:
+            continue
+        for suffix in range(1, max(letters) + 1):
+            expected.add(f"{base}{chr(ord('A') + suffix - 1)}")
+    return expected
+
+
 def _sequence_score_figures(
     occurrences: list[FigureOccurrence],
 ) -> list[FigureOccurrence]:

@@ -30,6 +30,7 @@ from .callouts import (
     has_drawing_sheet_header,
     infer_missing_figure_occurrences,
     is_drawing_page,
+    reconcile_figure_reference_ids,
     specification_callout_evidence,
 )
 from .config import ExtractionConfig
@@ -344,6 +345,9 @@ def extract_from_pages(
         for mention in figure_mentions
         for figure_id in mention.figure_ids
     }
+    expected_figure_ids = reconcile_figure_reference_ids(
+        expected_figure_ids, figure_occurrences or []
+    )
     drawing_figures = filter_figure_occurrences(
         figure_occurrences or [], expected_figure_ids
     )
