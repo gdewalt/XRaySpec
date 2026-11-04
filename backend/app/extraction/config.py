@@ -22,9 +22,9 @@ OcrPolicy = Literal["auto", "force", "disabled"]
 @dataclass(frozen=True, slots=True)
 class ExtractionConfig:
     # Engine identity
-    # 0.25 invalidates artifacts/checkpoints created before specification-side
-    # subfigure suffix corruption was reconciled with drawing-caption evidence.
-    version: str = "0.25.0"
+    # 0.26 invalidates artifacts/checkpoints created before malformed drawing
+    # suffixes were prevented from suppressing legitimate multi-digit figures.
+    version: str = "0.26.0"
 
     # OCR
     ocr_policy: OcrPolicy = "auto"

@@ -393,6 +393,59 @@ def test_us7840427_ppubs_ocr_resolves_complete_native_figure_manifest():
     assert {item.figure_id for item in completed} == set(fixture["expected_figure_ids"])
 
 
+def test_us11806584_ocr_resolves_all_figures_without_false_suffix_family():
+    """Regression from the real drawing OCR, including ``60``/``6O`` ambiguity."""
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "us11806584_figures.json").read_text()
+    )
+    occurrences = []
+    per_page: dict[int, int] = {}
+    overlap_groups = {
+        (7, "3"): "8",
+        (9, "20"): "10",
+        (16, "20A"): "20",
+        (18, "32C"): "32",
+        (19, "39Y"): "39",
+        (19, "40L"): "40",
+        (20, "42J"): "42",
+        (21, "4"): "54",
+        (21, "2"): "56L",
+        (23, "6O"): "60",
+        (23, "7"): "57A",
+        (23, "64"): "61",
+    }
+    positions: dict[tuple[int, str], int] = {}
+    for figure_id, page_index, confidence in fixture["drawing_ocr_occurrences"]:
+        group = overlap_groups.get((page_index, figure_id), figure_id)
+        position_key = (page_index, group)
+        if position_key not in positions:
+            positions[position_key] = per_page.get(page_index, 0)
+            per_page[page_index] = positions[position_key] + 1
+        position = positions[position_key]
+        y0 = 0.1 + position * 0.035
+        occurrences.append(
+            FigureOccurrence(
+                figure_id,
+                page_index,
+                (0.1, y0, 0.2, y0 + 0.02),
+                confidence=confidence,
+                method="sparse_ocr",
+            )
+        )
+
+    expected = set(fixture["expected_figure_ids"])
+    reconciled = reconcile_figure_reference_ids(expected, occurrences)
+    filtered = filter_figure_occurrences(occurrences, reconciled)
+    completed = infer_missing_figure_occurrences(
+        filtered, fixture["drawing_sheet_pages"], reconciled
+    )
+
+    assert {item.figure_id for item in completed} == expected
+    assert {
+        item.figure_id: item.page_index + 1 for item in completed
+    } == fixture["expected_page_numbers"]
+
+
 def test_missing_sheet_is_inferred_only_when_neighbors_and_specification_agree():
     detected = [
         FigureOccurrence(

@@ -496,7 +496,11 @@ def reconcile_figure_reference_ids(
         if _figure_order_key(occurrence.figure_id) is not None
     }
     family_letters: dict[int, set[int]] = {}
-    for value in expected | raw:
+    # Only specification references may establish a subfigure family. Drawing
+    # OCR is the noisy evidence being reconciled: allowing a token such as
+    # ``6O`` (Figure 60 with zero read as letter O) to create a family for base
+    # 6 would incorrectly classify legitimate Figures 60-69 as suffix damage.
+    for value in expected:
         key = _figure_order_key(value)
         if key is not None and key[1] > 0:
             family_letters.setdefault(key[0], set()).add(key[1])
