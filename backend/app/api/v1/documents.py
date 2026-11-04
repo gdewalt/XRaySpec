@@ -11,6 +11,7 @@ ingestion pipeline (§11) and full deletion workflow (§9.4) land in later slice
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Response, status
@@ -41,6 +42,11 @@ from ...schemas.pdf_annotations import PdfAnnotationCreate, PdfAnnotationRead, P
 from ...services.audit import record_audit
 from ...services.deletion import purge_document
 from ...services.publication import find_reusable_artifact
+from ...services.thumbnails import (
+    THUMBNAIL_MAX_BYTES,
+    render_pdf_thumbnail,
+    thumbnail_object_key,
+)
 from ..deps import CurrentUser, DbSession, Storage
 
 router = APIRouter(tags=["documents"])
@@ -233,6 +239,37 @@ async def get_source_pdf(
         content=data,
         media_type="application/pdf",
         headers={"Content-Disposition": "inline", "Cache-Control": "private, max-age=300"},
+    )
+
+
+@router.get("/documents/{document_id}/thumbnail.png")
+async def get_document_thumbnail(
+    document_id: str, user: CurrentUser, session: DbSession, store: Storage
+) -> Response:
+    """Serve a cached first-page preview while keeping the PDF and cache private."""
+    doc = await _owned_document(session, user, document_id)
+    source = await session.get(SourceDocument, doc.source_id)
+    if source is None or not source.pdf_object_key:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No source PDF for this document")
+
+    key = thumbnail_object_key(source)
+    try:
+        thumbnail = await store.read(key, limit=THUMBNAIL_MAX_BYTES)
+    except FileNotFoundError:
+        pdf = await store.read(source.pdf_object_key, limit=get_settings().max_upload_bytes)
+        try:
+            thumbnail = await asyncio.to_thread(render_pdf_thumbnail, pdf)
+        except Exception as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "The PDF preview could not be generated",
+            ) from exc
+        await store.write(key, thumbnail, content_type="image/png")
+
+    return Response(
+        content=thumbnail,
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=86400"},
     )
 
 

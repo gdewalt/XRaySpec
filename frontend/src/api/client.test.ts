@@ -37,4 +37,16 @@ describe("API error handling", () => {
       expect.objectContaining({ headers: expect.any(Headers) }),
     );
   });
+
+  it("downloads a document thumbnail with the authenticated API client", async () => {
+    const thumbnail = new Blob(["png-bytes"], { type: "image/png" });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(thumbnail, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.getDocumentThumbnail("doc_1")).resolves.toEqual(thumbnail);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/documents/doc_1/thumbnail.png",
+      expect.objectContaining({ headers: expect.any(Headers) }),
+    );
+  });
 });

@@ -50,6 +50,38 @@ function StateBadge({ state }: { state: string }) {
   );
 }
 
+function PatentThumbnail({ doc }: { doc: DocumentRead }) {
+  const [source, setSource] = useState<string | null>(null);
+  const canPreview = OPENABLE_STATES.has(doc.state);
+
+  useEffect(() => {
+    setSource(null);
+    if (!canPreview) return;
+
+    let current = true;
+    let objectUrl: string | null = null;
+    void api.getDocumentThumbnail(doc.id).then((blob) => {
+      if (!current) return;
+      objectUrl = URL.createObjectURL(blob);
+      setSource(objectUrl);
+    }).catch(() => {
+      // A malformed or not-yet-available PDF keeps the familiar icon fallback.
+    });
+    return () => {
+      current = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [canPreview, doc.id]);
+
+  return (
+    <span className={`document-icon${source ? " has-thumbnail" : ""}`} aria-hidden="true">
+      {source
+        ? <img src={source} alt="" draggable={false} />
+        : <Icon name="file-text" size={21} />}
+    </span>
+  );
+}
+
 interface PatentRowProps {
   doc: DocumentRead;
   workspaces: WorkspaceRead[];
@@ -99,7 +131,7 @@ function PatentRow({
         disabled={!canOpen}
         aria-label={(canOpen ? "Open " : "View status for ") + doc.title}
       >
-        <span className="document-icon" aria-hidden="true"><Icon name="file-text" size={21} /></span>
+        <PatentThumbnail doc={doc} />
         <span className="document-copy">
           <strong className="document-heading">
             <span>{doc.patent_number ?? doc.title}</span>

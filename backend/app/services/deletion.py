@@ -28,6 +28,7 @@ from ..db.models import (
     UserDocument,
 )
 from ..storage.base import ObjectStore
+from .thumbnails import thumbnail_object_key
 
 
 async def _delete_blob(store: ObjectStore, object_key: str | None) -> None:
@@ -72,6 +73,7 @@ async def purge_document(session: AsyncSession, store: ObjectStore, doc: UserDoc
             # operation retryable if storage fails partway through.
             for artifact in artifacts:
                 await _delete_blob(store, artifact.manifest_object_key)
+            await _delete_blob(store, thumbnail_object_key(source))
             await _delete_blob(store, source.pdf_object_key)
 
     # PostgreSQL enforces both user_documents.active_artifact_id -> artifacts and

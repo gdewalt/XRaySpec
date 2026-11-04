@@ -121,6 +121,8 @@ export const api = {
   getDocument: (id: string) => request<DocumentRead>(`/api/v1/documents/${id}`),
 
   getSourcePdf: (id: string) => requestBlob(`/api/v1/documents/${id}/source.pdf`),
+  getDocumentThumbnail: (id: string) =>
+    requestBlob(`/api/v1/documents/${id}/thumbnail.png`),
 
   getDocumentJob: (id: string) => request<JobRead>(`/api/v1/documents/${id}/job`),
 
