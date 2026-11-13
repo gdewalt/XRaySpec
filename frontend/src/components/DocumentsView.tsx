@@ -4,13 +4,16 @@ import {
   type FormEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
 import { ApiError, api } from "../api/client";
 import type { DocumentRead, WorkspaceRead } from "../api/types";
-import { setToken } from "../auth/session";
+import { getToken, setToken } from "../auth/session";
 import { Icon } from "./Icon";
 import { IngestPanel } from "./IngestPanel";
 import { JobProgress } from "./JobProgress";
@@ -32,6 +35,69 @@ const OPENABLE_STATES = new Set([
   "ready_with_warnings",
   "text_only",
 ]);
+
+const COLLAPSED_WORKSPACES_KEY = "xray.library.collapsed-workspaces.v1";
+
+function accountPreferenceKey(): string {
+  const token = getToken();
+  if (!token) return `${COLLAPSED_WORKSPACES_KEY}:anonymous`;
+  try {
+    const encoded = token.split(".")[1];
+    const normalized = encoded.replace(/-/g, "+").replace(/_/g, "/");
+    const payload = JSON.parse(atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=")));
+    if (typeof payload.sub === "string" && payload.sub) {
+      return `${COLLAPSED_WORKSPACES_KEY}:${payload.sub}`;
+    }
+  } catch {
+    // Local development tokens are not always JWTs; keep a stable fallback.
+  }
+  return `${COLLAPSED_WORKSPACES_KEY}:current`;
+}
+
+function loadCollapsedWorkspaces(): Set<string> {
+  try {
+    const value = JSON.parse(localStorage.getItem(accountPreferenceKey()) ?? "[]");
+    return new Set(Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+type DocumentMenuPlacement = {
+  left: number;
+  top?: number;
+  bottom?: number;
+  width: number;
+  maxHeight: number;
+};
+
+export function documentMenuPlacement(
+  anchor: Pick<DOMRect, "top" | "right" | "bottom">,
+  viewportWidth: number,
+  viewportHeight: number,
+  menuHeight = 320,
+): DocumentMenuPlacement {
+  const edge = 8;
+  const gap = 6;
+  const width = Math.max(180, Math.min(240, viewportWidth - edge * 2));
+  const left = Math.max(edge, Math.min(anchor.right - width, viewportWidth - width - edge));
+  const below = Math.max(0, viewportHeight - anchor.bottom - gap - edge);
+  const above = Math.max(0, anchor.top - gap - edge);
+  if (below >= Math.min(menuHeight, 240) || below >= above) {
+    return {
+      left,
+      top: anchor.bottom + gap,
+      width,
+      maxHeight: Math.max(48, below),
+    };
+  }
+  return {
+    left,
+    bottom: viewportHeight - anchor.top + gap,
+    width,
+    maxHeight: Math.max(48, above),
+  };
+}
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
@@ -117,10 +183,52 @@ function PatentRow({
 }: PatentRowProps) {
   const canOpen = OPENABLE_STATES.has(doc.state);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPlacement, setMenuPlacement] = useState<DocumentMenuPlacement | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const menuPopoverRef = useRef<HTMLDivElement>(null);
   const showTitleAfterNumber =
     doc.patent_number !== null &&
     doc.title.replace(/[^a-z0-9]/gi, "").toLowerCase() !==
       doc.patent_number.replace(/[^a-z0-9]/gi, "").toLowerCase();
+
+  const positionMenu = useCallback(() => {
+    const anchor = menuButtonRef.current?.getBoundingClientRect();
+    if (!anchor) return;
+    setMenuPlacement(documentMenuPlacement(
+      anchor,
+      window.innerWidth,
+      window.innerHeight,
+      menuPopoverRef.current?.offsetHeight ?? 320,
+    ));
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!menuOpen) {
+      setMenuPlacement(null);
+      return;
+    }
+    positionMenu();
+  }, [menuOpen, positionMenu]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (
+        !menuButtonRef.current?.contains(target) &&
+        !menuPopoverRef.current?.contains(target)
+      ) setMenuOpen(false);
+    };
+    const reposition = () => positionMenu();
+    document.addEventListener("pointerdown", closeOutside, true);
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside, true);
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
+  }, [menuOpen, positionMenu]);
 
   return (
     <article className={`document-row${dragging ? " dragging" : ""}`}>
@@ -175,9 +283,6 @@ function PatentRow({
         </button>
         <div
           className="document-menu"
-          onBlur={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setMenuOpen(false);
-          }}
           onKeyDown={(event) => {
             if (event.key === "Escape") {
               event.stopPropagation();
@@ -186,6 +291,7 @@ function PatentRow({
           }}
         >
           <button
+            ref={menuButtonRef}
             type="button"
             className="icon-button menu-button"
             disabled={reloading}
@@ -196,12 +302,21 @@ function PatentRow({
           >
             <Icon name="more-horizontal" size={19} />
           </button>
-          {menuOpen && (
+          {menuOpen && createPortal(
             <div
+              ref={menuPopoverRef}
               id={"document-actions-" + doc.id}
               className="document-menu-popover"
               role="group"
               aria-label={"Actions for " + doc.title}
+              style={menuPlacement ?? { visibility: "hidden" }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.stopPropagation();
+                  setMenuOpen(false);
+                  menuButtonRef.current?.focus();
+                }
+              }}
             >
               <button
                 type="button"
@@ -272,7 +387,8 @@ function PatentRow({
                 <Icon name="trash" size={16} />
                 Delete patent
               </button>
-            </div>
+            </div>,
+            document.body,
           )}
         </div>
       </div>
@@ -283,7 +399,7 @@ function PatentRow({
 export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void }) {
   const [docs, setDocs] = useState<DocumentRead[] | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceRead[]>([]);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsedWorkspaces);
   const [workspaceName, setWorkspaceName] = useState("");
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [workspaceMenuId, setWorkspaceMenuId] = useState<string | null>(null);
@@ -317,6 +433,14 @@ export function DocumentsView({ onOpen }: { onOpen: (documentId: string) => void
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(accountPreferenceKey(), JSON.stringify([...collapsed]));
+    } catch {
+      // The library remains usable if browser storage is unavailable.
+    }
+  }, [collapsed]);
 
   const active = !!docs?.some((doc) => ACTIVE_STATES.has(doc.state));
   useEffect(() => {

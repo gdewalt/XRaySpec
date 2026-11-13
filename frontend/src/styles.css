@@ -1522,22 +1522,15 @@ mark.mention.clickable:hover {
   background: var(--surface-subtle);
 }
 .document-menu-popover {
-  position: absolute;
-  z-index: 12;
-  top: calc(100% + 0.35rem);
-  right: 0;
-  width: min(240px, calc(100vw - 2rem));
+  position: fixed;
+  z-index: 1000;
   padding: 0.45rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface-raised);
   box-shadow: var(--shadow-lg);
-}
-/* The panel clips its rounded contents. Flip menus on the final rows upward so
-   the complete action surface remains visible inside the library panel. */
-.document-row:nth-last-child(-n + 2) .document-menu-popover {
-  top: auto;
-  bottom: calc(100% + 0.35rem);
 }
 .document-menu-move {
   display: grid;
