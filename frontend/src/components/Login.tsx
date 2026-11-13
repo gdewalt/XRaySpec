@@ -68,8 +68,7 @@ export function Login() {
   return (
     <div className="login-layout">
       <section className="login-story" aria-labelledby="login-story-h">
-        <div className="login-kicker"><Icon name="scan" size={17} /> Evidence-first patent review</div>
-        <h1 id="login-story-h">Read the specification.<br />Verify the source.</h1>
+        <h1 id="login-story-h">A Better Way To Read Patents.</h1>
         <p>
           Move between extracted text, precise citations, and the original patent drawings
           without losing context.

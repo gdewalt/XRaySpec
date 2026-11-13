@@ -255,7 +255,6 @@ export function IngestPanel({ onChanged }: { onChanged: () => void }) {
       <div className="panel-heading-copy">
         <span className="panel-heading-icon" aria-hidden="true"><Icon name="plus" size={20} /></span>
         <div>
-          <p className="eyebrow">Add evidence</p>
           <h2 id="ingest-h">Add a patent</h2>
           <p>Start with a public identifier, source PDF, or portable save.</p>
         </div>
