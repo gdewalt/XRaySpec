@@ -31,7 +31,12 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
 type PdfTool = "select" | Exclude<PdfAnnotationKind, "bookmark">;
 type Point = [number, number];
 type TextRange = { entry_id: string; start: number; end: number; quote: string };
-export type PdfTextHighlightRange = { start: number; end: number; color: string };
+export type PdfTextHighlightRange = {
+  start: number;
+  end: number;
+  color: string;
+  opacity?: number;
+};
 type AnnotationDraft =
   | { kind: "highlight"; start: Point; end: Point }
   | { kind: "drawing"; points: Point[] };
@@ -59,7 +64,7 @@ const PDF_TOOLS: { id: PdfTool; label: string; icon: IconName }[] = [
   { id: "drawing", label: "Draw", icon: "pencil" },
 ];
 
-const PDF_MARK_COLORS = [
+export const PDF_MARK_COLORS = [
   { label: "Yellow", value: "#ffe066" },
   { label: "Lime", value: "#a3e635" },
   { label: "Cyan", value: "#67e8f9" },
@@ -150,13 +155,14 @@ function storedHighlightRects(annotation: PdfAnnotationRead): number[][] {
   return box.some((value) => value === null) ? [] : [box as number[]];
 }
 
-function textHighlightRanges(
+export function pdfTextHighlightRanges(
   annotations: PdfAnnotationRead[],
 ): Map<string, PdfTextHighlightRange[]> {
   const highlights = new Map<string, PdfTextHighlightRange[]>();
   for (const annotation of annotations) {
     if (annotation.kind !== "highlight") continue;
     const color = annotation.color ?? "#ffe066";
+    const opacity = geometryNumber(annotation, "opacity") ?? 0.52;
     const ranges = annotation.geometry.text_ranges;
     if (Array.isArray(ranges)) {
       for (const range of ranges) {
@@ -168,7 +174,7 @@ function textHighlightRanges(
           typeof range.end === "number"
         ) {
           const current = highlights.get(range.entry_id) ?? [];
-          current.push({ start: range.start, end: range.end, color });
+          current.push({ start: range.start, end: range.end, color, opacity });
           highlights.set(range.entry_id, current);
         }
       }
@@ -179,7 +185,7 @@ function textHighlightRanges(
     for (const entryId of entryIds) {
       if (typeof entryId !== "string") continue;
       const current = highlights.get(entryId) ?? [];
-      current.push({ start: 0, end: Number.MAX_SAFE_INTEGER, color });
+      current.push({ start: 0, end: Number.MAX_SAFE_INTEGER, color, opacity });
       highlights.set(entryId, current);
     }
   }
@@ -1074,6 +1080,7 @@ export function PdfPane({
   onActivate,
   onSelectionText,
   onTextHighlightsChange,
+  annotationRefreshKey = 0,
   copyCitation,
 }: {
   documentId: string;
@@ -1091,6 +1098,7 @@ export function PdfPane({
   onActivate?: () => void;
   onSelectionText?: (text: string) => void;
   onTextHighlightsChange?: (highlights: Map<string, PdfTextHighlightRange[]>) => void;
+  annotationRefreshKey?: number;
   copyCitation?: string;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1153,7 +1161,7 @@ export function PdfPane({
       (items) => {
         if (!cancelled) {
           setAnnotations(items);
-          onTextHighlightsChange?.(textHighlightRanges(items));
+          onTextHighlightsChange?.(pdfTextHighlightRanges(items));
         }
       },
       (reason) => {
@@ -1163,10 +1171,10 @@ export function PdfPane({
     return () => {
       cancelled = true;
     };
-  }, [documentId, onTextHighlightsChange]);
+  }, [annotationRefreshKey, documentId, onTextHighlightsChange]);
 
   useEffect(() => {
-    onTextHighlightsChange?.(textHighlightRanges(annotations));
+    onTextHighlightsChange?.(pdfTextHighlightRanges(annotations));
   }, [annotations, onTextHighlightsChange]);
 
   // Only explicit page navigation moves the scroll position. During ordinary
@@ -1279,7 +1287,7 @@ export function PdfPane({
       const created = await api.createPdfAnnotation(documentId, annotation);
       setAnnotations((items) => {
         const next = [...items, created];
-        onTextHighlightsChange?.(textHighlightRanges(next));
+        onTextHighlightsChange?.(pdfTextHighlightRanges(next));
         return next;
       });
       if (remember) {
@@ -1303,7 +1311,7 @@ export function PdfPane({
       if (selectedAnnotationId === annotation.id) setSelectedAnnotationId(null);
       setAnnotations((items) => {
         const next = removeAnnotationById(items, annotation.id);
-        onTextHighlightsChange?.(textHighlightRanges(next));
+        onTextHighlightsChange?.(pdfTextHighlightRanges(next));
         return next;
       });
       if (remember) {

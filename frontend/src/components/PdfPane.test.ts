@@ -4,6 +4,7 @@ import type { EntryDto, PdfAnnotationRead } from "../api/types";
 import {
   adjustedPdfScale,
   lineHighlightGeometry,
+  pdfTextHighlightRanges,
   removeAnnotationById,
   simplifyDrawingPoints,
 } from "./PdfPane";
@@ -35,6 +36,26 @@ describe("PDF magnification", () => {
 });
 
 describe("PDF annotation geometry", () => {
+  it("preserves highlight color and opacity when mapping annotations to text", () => {
+    const annotation: PdfAnnotationRead = {
+      id: "annotation_1",
+      document_id: "doc_1",
+      page_index: 0,
+      kind: "highlight",
+      color: "#4dabf7",
+      geometry: {
+        opacity: 0.35,
+        text_ranges: [{ entry_id: "entry_1", start: 3, end: 8, quote: "light" }],
+      },
+      note: null,
+      created_at: "2026-01-01T00:00:00Z",
+    };
+
+    expect(pdfTextHighlightRanges([annotation]).get("entry_1")).toEqual([
+      { start: 3, end: 8, color: "#4dabf7", opacity: 0.35 },
+    ]);
+  });
+
   it("anchors a partial highlight to text offsets and snapped line geometry", () => {
     const result = lineHighlightGeometry(
       [0.26, 0.15],

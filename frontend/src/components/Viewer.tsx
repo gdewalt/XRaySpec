@@ -25,6 +25,7 @@ import type {
   NumeralMentionDto,
   OverrideRead,
   PatentFrontMatterDto,
+  PdfAnnotationCreate,
 } from "../api/types";
 import {
   type CiteStyle,
@@ -57,12 +58,28 @@ import {
   joinEntryText,
   normalizeCopiedText,
 } from "../spec/text";
-import { PdfPane, type PdfTextHighlightRange } from "./PdfPane";
+import {
+  PDF_MARK_COLORS,
+  PdfPane,
+  pdfTextHighlightRanges,
+  type PdfTextHighlightRange,
+} from "./PdfPane";
 import { Icon, type IconName } from "./Icon";
 import { JobProgress } from "./JobProgress";
 
 type Layout = "text" | "pdf" | "split" | "details";
 type Selection = { start: number; end: number } | null;
+type TextHighlightRange = {
+  entry_id: string;
+  start: number;
+  end: number;
+  quote: string;
+};
+type TextHighlightPage = {
+  pageIndex: number;
+  rects: number[][];
+  ranges: TextHighlightRange[];
+};
 type OutlineSectionKey = "figures" | "specification" | "bookmarks" | "notes" | "claims";
 const VIEWER_PREFERENCES_KEY = "xray.viewer.preferences.v1";
 // Keep the dormant callout code and artifact fields available for a later,
@@ -121,6 +138,56 @@ function groupByEntry<T extends { entry_id: string }>(items: T[]): Map<string, T
     else map.set(item.entry_id, [item]);
   }
   return map;
+}
+
+function textOffsetWithin(
+  root: Node,
+  container: Node,
+  offset: number,
+): number | null {
+  if (root !== container && !root.contains(container)) return null;
+  const prefix = document.createRange();
+  prefix.selectNodeContents(root);
+  try {
+    prefix.setEnd(container, offset);
+    return prefix.toString().length;
+  } catch {
+    return null;
+  }
+}
+
+export function textHighlightPages(
+  selections: { entry: EntryDto; start: number; end: number }[],
+): TextHighlightPage[] {
+  const pages = new Map<number, TextHighlightPage>();
+  for (const { entry, start, end } of selections) {
+    if (!entry.box || entry.box.length !== 4 || end <= start) continue;
+    const text = entry.display_text || entry.source_text;
+    if (!text.length) continue;
+    const [lineX0, lineY0, lineX1, lineY1] = entry.box;
+    const safeStart = Math.max(0, Math.min(text.length, start));
+    const safeEnd = Math.max(safeStart, Math.min(text.length, end));
+    if (safeEnd <= safeStart) continue;
+    const width = lineX1 - lineX0;
+    const x0 = lineX0 + (safeStart / text.length) * width;
+    const x1 = lineX0 + (safeEnd / text.length) * width;
+    const verticalInset = Math.min((lineY1 - lineY0) * 0.1, 0.003);
+    if (x1 - x0 <= 0.002) continue;
+    const page = pages.get(entry.page_index) ?? {
+      pageIndex: entry.page_index,
+      rects: [],
+      ranges: [],
+    };
+    page.rects.push([x0, lineY0 + verticalInset, x1, lineY1 - verticalInset]);
+    page.ranges.push({
+      entry_id: entry.entry_id,
+      start: safeStart,
+      end: safeEnd,
+      quote: text.slice(safeStart, safeEnd),
+    });
+    pages.set(entry.page_index, page);
+  }
+  return [...pages.values()];
 }
 
 function buildMarks(
@@ -385,7 +452,10 @@ export function Viewer({ documentId }: { documentId: string }) {
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const [citeStyle, setCiteStyle] = useState<CiteStyle>(loadStyle);
   const [citeSettingsOpen, setCiteSettingsOpen] = useState(false);
-  const [citeBarExpanded, setCiteBarExpanded] = useState(false);
+  const [textHighlightColor, setTextHighlightColor] = useState("#ffe066");
+  const [textHighlightOpacity, setTextHighlightOpacity] = useState(0.6);
+  const [annotationRefreshKey, setAnnotationRefreshKey] = useState(0);
+  const [textHighlightBusy, setTextHighlightBusy] = useState(false);
   const [aiScanActive, setAiScanActive] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const panesRef = useRef<HTMLDivElement>(null);
@@ -394,15 +464,12 @@ export function Viewer({ documentId }: { documentId: string }) {
   const resizeFrameRef = useRef<number | null>(null);
   const resizePercentRef = useRef(splitPercent);
   const artifactIdRef = useRef<string | null>(null);
+  const textHighlightSelectionRef = useRef<TextHighlightPage[]>([]);
 
   useEffect(() => () => {
     if (resizeFrameRef.current !== null) window.cancelAnimationFrame(resizeFrameRef.current);
     document.body.classList.remove("resizing-panes");
   }, []);
-
-  useEffect(() => {
-    setCiteBarExpanded(selection !== null);
-  }, [selection]);
 
   useEffect(() => {
     try {
@@ -437,19 +504,21 @@ export function Viewer({ documentId }: { documentId: string }) {
             setArtifact(a);
           }
         }
-        const [bm, asserted, an, ov] = await Promise.all([
+        const [bm, asserted, an, ov, pdfAnnotations] = await Promise.all([
           api.listBookmarks(documentId),
           api.listAssertedClaims(documentId),
           api.listAnnotations(documentId),
           CALLOUT_IDENTIFICATION_ENABLED
             ? api.listOverrides(documentId)
             : Promise.resolve([] as OverrideRead[]),
+          api.listPdfAnnotations(documentId),
         ]);
         if (!cancelled) {
           setBookmarks(bm);
           setAssertedClaims(asserted);
           setAnnotations(an);
           setOverrides(ov);
+          setPdfTextHighlightColors(pdfTextHighlightRanges(pdfAnnotations));
         }
         try {
           const latestJob = await api.getDocumentJob(documentId);
@@ -1003,9 +1072,105 @@ export function Viewer({ documentId }: { documentId: string }) {
       .filter((line) => range.intersectsNode(line))
       .map((line) => Number(line.dataset.ordinal))
       .filter((ordinal) => !Number.isNaN(ordinal));
+    const textRanges = Array.from(
+      container.querySelectorAll<HTMLElement>(".spec-line"),
+    ).flatMap((line) => {
+      const lineText = line.querySelector<HTMLElement>(".line-text");
+      const ordinal = Number(line.dataset.ordinal);
+      const entry = entries.find((item) => item.ordinal === ordinal);
+      if (!lineText || !entry || !range.intersectsNode(lineText)) return [];
+      const text = entry.display_text || entry.source_text;
+      const indentLength = lineText.querySelector(".line-indent")?.textContent?.length ?? 0;
+      const rangeStart = textOffsetWithin(
+        lineText,
+        range.startContainer,
+        range.startOffset,
+      );
+      const rangeEnd = textOffsetWithin(
+        lineText,
+        range.endContainer,
+        range.endOffset,
+      );
+      const start = rangeStart === null
+        ? 0
+        : Math.max(0, Math.min(text.length, rangeStart - indentLength));
+      const end = rangeEnd === null
+        ? text.length
+        : Math.max(start, Math.min(text.length, rangeEnd - indentLength));
+      return end > start ? [{ entry, start, end }] : [];
+    });
+    textHighlightSelectionRef.current = textHighlightPages(textRanges);
     if (covered.length > 0) selectRange(Math.min(...covered), Math.max(...covered));
     else if (coversFrontMatter) setSelection(null);
-  }, [selectRange]);
+  }, [entries, selectRange]);
+
+  const applyTextHighlight = useCallback(async () => {
+    const pages = textHighlightSelectionRef.current.length
+      ? textHighlightSelectionRef.current
+      : textHighlightPages(
+          selectedEntries.map((entry) => ({
+            entry,
+            start: 0,
+            end: (entry.display_text || entry.source_text).length,
+          })),
+        );
+    if (!pages.length || textHighlightBusy) return;
+    setTextHighlightBusy(true);
+    try {
+      const payloads: PdfAnnotationCreate[] = pages.map((page) => {
+        const x0 = Math.min(...page.rects.map((rect) => rect[0]));
+        const y0 = Math.min(...page.rects.map((rect) => rect[1]));
+        const x1 = Math.max(...page.rects.map((rect) => rect[2]));
+        const y1 = Math.max(...page.rects.map((rect) => rect[3]));
+        return {
+          kind: "highlight",
+          page_index: page.pageIndex,
+          geometry: {
+            version: 2,
+            x0,
+            y0,
+            x1,
+            y1,
+            rects: page.rects,
+            entry_ids: page.ranges.map((range) => range.entry_id),
+            text_ranges: page.ranges,
+            opacity: textHighlightOpacity,
+          },
+          color: textHighlightColor,
+        };
+      });
+      await Promise.all(payloads.map((payload) => api.createPdfAnnotation(documentId, payload)));
+      setPdfTextHighlightColors((current) => {
+        const next = new Map(current);
+        for (const page of pages) {
+          for (const range of page.ranges) {
+            const ranges = next.get(range.entry_id) ?? [];
+            next.set(range.entry_id, [
+              ...ranges,
+              {
+                start: range.start,
+                end: range.end,
+                color: textHighlightColor,
+                opacity: textHighlightOpacity,
+              },
+            ]);
+          }
+        }
+        return next;
+      });
+      setAnnotationRefreshKey((value) => value + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTextHighlightBusy(false);
+    }
+  }, [
+    documentId,
+    selectedEntries,
+    textHighlightBusy,
+    textHighlightColor,
+    textHighlightOpacity,
+  ]);
 
   const handleTextCopy = useCallback((event: ReactClipboardEvent<HTMLElement>) => {
     const nativeSelection = window.getSelection();
@@ -1281,6 +1446,132 @@ export function Viewer({ documentId }: { documentId: string }) {
           </>
         )}
 
+        {artifact && (
+          <div className="viewer-citation-tools" role="toolbar" aria-label="Copy and citation tools">
+            <span
+              className="viewer-citation-ref"
+              title={selectedEntries.length ? citation : "Select patent text to create a citation"}
+            >
+              {selectedEntries.length ? citation : "Copy and cite"}
+            </span>
+            <button
+              type="button"
+              className={`icon-button${citeSettingsOpen ? " active" : ""}`}
+              onClick={() => setCiteSettingsOpen((value) => !value)}
+              title="Citation format"
+              aria-label="Citation format"
+              aria-expanded={citeSettingsOpen}
+            >
+              <Icon name="settings" size={17} />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              disabled={!activeSelectionText}
+              onClick={() => copy("selection", activeSelectionText)}
+              aria-label="Copy selection"
+              title="Copy selection"
+            >
+              <Icon name="copy" size={17} />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              disabled={!citation}
+              onClick={() => copy("cite", citation)}
+              aria-label="Copy citation"
+              title="Copy citation"
+            >
+              <Icon name="quote" size={17} />
+            </button>
+            <button
+              type="button"
+              className="viewer-copy-citation"
+              disabled={!activeSelectionText || !citation}
+              onClick={() => copy("both", formatSelectionWithCitation(activeSelectionText, citation))}
+            >
+              <Icon name="copy" size={16} />
+              <span>Copy + citation</span>
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              disabled={!selection}
+              onClick={() => copy("link", window.location.href)}
+              title="Copy a deep link to this line"
+              aria-label="Copy a deep link to this line"
+            >
+              <Icon name="link" size={17} />
+            </button>
+            {copied && <span className="copied">Copied {copied}</span>}
+            {citeSettingsOpen && (
+              <div className="cite-settings viewer-cite-settings">
+                <label>
+                  Preset
+                  <select
+                    onChange={(event) => {
+                      const preset = CITE_PRESETS.find((item) => item.id === event.target.value);
+                      if (preset) updateStyle(preset.style);
+                    }}
+                  >
+                    {CITE_PRESETS.map((preset) => (
+                      <option key={preset.id} value={preset.id}>{preset.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={citeStyle.includeTitle}
+                    onChange={(event) => updateStyle({ includeTitle: event.target.checked })}
+                  />
+                  Include short patent name
+                </label>
+                <label>
+                  Grant locator
+                  <select
+                    value={citeStyle.grantFormat}
+                    onChange={(event) =>
+                      updateStyle({ grantFormat: event.target.value as CiteStyle["grantFormat"] })
+                    }
+                  >
+                    <option value="colon">3:22</option>
+                    <option value="labels">col. 3, l. 22</option>
+                  </select>
+                </label>
+                <label>
+                  Column
+                  <select
+                    value={citeStyle.columnWord}
+                    disabled={citeStyle.grantFormat === "colon"}
+                    onChange={(event) =>
+                      updateStyle({ columnWord: event.target.value as CiteStyle["columnWord"] })
+                    }
+                  >
+                    <option value="col.">col.</option>
+                    <option value="column">column</option>
+                    <option value="c.">c.</option>
+                  </select>
+                </label>
+                <label>
+                  Line
+                  <select
+                    value={citeStyle.lineWord}
+                    disabled={citeStyle.grantFormat === "colon"}
+                    onChange={(event) =>
+                      updateStyle({ lineWord: event.target.value as CiteStyle["lineWord"] })
+                    }
+                  >
+                    <option value="l.">l. / ll.</option>
+                    <option value="line">line / lines</option>
+                  </select>
+                </label>
+                <span className="cite-preview">{citation || formatRef(selectedEntries, citeStyle)}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         {doc && artifact && (
           <button
             type="button"
@@ -1390,6 +1681,7 @@ export function Viewer({ documentId }: { documentId: string }) {
                 setPdfSelection(text);
               }}
               onTextHighlightsChange={setPdfTextHighlightColors}
+              annotationRefreshKey={annotationRefreshKey}
               copyCitation=""
             />
           </div>
@@ -1716,6 +2008,129 @@ export function Viewer({ documentId }: { documentId: string }) {
             style={{ "--split-percent": `${splitPercent}%` } as CSSProperties}
           >
           {showText && (
+            <div className="text-pane">
+              <div className="text-annotation-bar">
+                <span className="text-annotation-title">Text tools</span>
+                <div className="text-annotation-tools" role="toolbar" aria-label="Text annotation tools">
+                  <button
+                    type="button"
+                    className={`secondary${selectedBookmarked ? " active" : ""}`}
+                    disabled={!selectedStartEntry}
+                    onClick={() => selectedStartEntry && void toggleBookmark(selectedStartEntry)}
+                    title={selectedBookmarked ? "Remove bookmark" : "Bookmark this line"}
+                    aria-label={selectedBookmarked ? "Remove bookmark" : "Bookmark this line"}
+                    aria-pressed={selectedBookmarked}
+                  >
+                    <Icon name="bookmark" size={16} />
+                    <span>Bookmark</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`secondary${noteOpen ? " active" : ""}`}
+                    disabled={!selectedStartEntry}
+                    onClick={() => {
+                      setEditingAnnotationId(null);
+                      setNoteDraft("");
+                      setNoteOpen((value) => !value);
+                    }}
+                    aria-label="Add note"
+                    title="Add note"
+                    aria-pressed={noteOpen}
+                  >
+                    <Icon name="message-square" size={16} />
+                    <span>Add note</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={!selectedEntries.length || textHighlightBusy}
+                    onClick={() => void applyTextHighlight()}
+                    aria-label="Highlight selected text"
+                    title="Highlight selected text"
+                  >
+                    <Icon name="highlighter" size={16} />
+                    <span>{textHighlightBusy ? "Saving…" : "Highlight"}</span>
+                  </button>
+                  <label className="pdf-color-control text-color-control">
+                    <span
+                      className="pdf-color-swatch"
+                      style={{ backgroundColor: textHighlightColor }}
+                      aria-hidden="true"
+                    />
+                    <select
+                      value={textHighlightColor}
+                      aria-label="Text highlight color"
+                      onChange={(event) => setTextHighlightColor(event.target.value)}
+                    >
+                      {PDF_MARK_COLORS.map((color) => (
+                        <option key={color.value} value={color.value}>{color.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="pdf-style-control" title="Text highlight opacity">
+                    <Icon name="sun" size={14} />
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="1"
+                      step="0.1"
+                      value={textHighlightOpacity}
+                      aria-label="Text highlight opacity"
+                      onChange={(event) => setTextHighlightOpacity(Number(event.target.value))}
+                    />
+                  </label>
+                </div>
+              </div>
+              {selectedStartEntry && (notesByEntry.get(selectedStartEntry.entry_id)?.length ?? 0) > 0 && (
+                <ul className="text-tool-notes">
+                  {notesByEntry.get(selectedStartEntry.entry_id)?.map((annotation) => (
+                    <li key={annotation.id}>
+                      <span>{annotation.note}</span>
+                      <button
+                        type="button"
+                        className="link-btn"
+                        onClick={() => beginEditAnnotation(annotation)}
+                        aria-label="Edit note"
+                      >
+                        <Icon name="pencil" size={15} />
+                      </button>
+                      <button
+                        type="button"
+                        className="link-btn"
+                        onClick={() => void removeAnnotation(annotation.id)}
+                        aria-label="Delete note"
+                      >
+                        <Icon name="trash" size={15} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {noteOpen && (
+                <div className="note-editor text-note-editor">
+                  <textarea
+                    value={noteDraft}
+                    onChange={(event) => setNoteDraft(event.target.value)}
+                    placeholder={editingAnnotationId ? "Edit this note…" : "Add a note for this line…"}
+                    rows={2}
+                    autoFocus
+                  />
+                  <button type="button" onClick={() => void saveNote()} disabled={!noteDraft.trim()}>
+                    {editingAnnotationId ? "Save changes" : "Save note"}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => {
+                      setNoteOpen(false);
+                      setNoteDraft("");
+                      setEditingAnnotationId(null);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
             <section
               ref={specRef}
               className="spec"
@@ -1727,6 +2142,7 @@ export function Viewer({ documentId }: { documentId: string }) {
               onPointerDown={() => {
                 setSelectionSource("text");
                 setTextSelection("");
+                textHighlightSelectionRef.current = [];
               }}
               onMouseUp={handleTextMouseUp}
               onCopy={handleTextCopy}
@@ -1754,6 +2170,7 @@ export function Viewer({ documentId }: { documentId: string }) {
                     title: "PDF highlight",
                     style: {
                       "--pdf-highlight-color": range.color,
+                      "--pdf-highlight-strength": `${Math.round((range.opacity ?? 0.52) * 100)}%`,
                     } as CSSProperties,
                   })),
                 ];
@@ -1796,6 +2213,7 @@ export function Viewer({ documentId }: { documentId: string }) {
                 );
               })}
             </section>
+            </div>
           )}
           {showText && showPdf && (
             <div
@@ -1869,6 +2287,7 @@ export function Viewer({ documentId }: { documentId: string }) {
                 setPdfSelection(text);
               }}
               onTextHighlightsChange={setPdfTextHighlightColors}
+              annotationRefreshKey={annotationRefreshKey}
               copyCitation={citation}
             />
           )}
@@ -1922,217 +2341,6 @@ export function Viewer({ documentId }: { documentId: string }) {
         </div>
       )}
 
-      {artifact && (
-        <div
-          className={`cite-bar ${citeBarExpanded ? "expanded" : "collapsed"}`}
-          role="region"
-          aria-label="Copy and cite"
-        >
-          <span className="cite-ref">
-            {selectedEntries.length > 0 ? citation : "Copy and cite"}
-          </span>
-          {citeBarExpanded && selectedEntries.length === 0 && (
-            <span className="cite-empty">Select a line or text to enable citation actions.</span>
-          )}
-          {citeBarExpanded && selectedEntries.length > 0 && (
-            <>
-          {selectedStartEntry && (notesByEntry.get(selectedStartEntry.entry_id)?.length ?? 0) > 0 && (
-            <ul className="cite-notes">
-              {notesByEntry.get(selectedStartEntry.entry_id)?.map((a) => (
-                <li key={a.id}>
-                  <span>{a.note}</span>
-                  <button
-                    type="button"
-                    className="link-btn"
-                    onClick={() => beginEditAnnotation(a)}
-                    aria-label="Edit note"
-                  >
-                    <Icon name="pencil" size={15} />
-                  </button>
-                  <button
-                    type="button"
-                    className="link-btn"
-                    onClick={() => removeAnnotation(a.id)}
-                    aria-label="Delete note"
-                  >
-                    <Icon name="trash" size={15} />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          {citeSettingsOpen && (
-            <div className="cite-settings">
-              <label>
-                Preset
-                <select
-                  onChange={(e) => {
-                    const p = CITE_PRESETS.find((x) => x.id === e.target.value);
-                    if (p) updateStyle(p.style);
-                  }}
-                >
-                  {CITE_PRESETS.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="checkbox">
-                <input
-                  type="checkbox"
-                  checked={citeStyle.includeTitle}
-                  onChange={(e) => updateStyle({ includeTitle: e.target.checked })}
-                />
-                Include short patent name
-              </label>
-              <label>
-                Grant locator
-                <select
-                  value={citeStyle.grantFormat}
-                  onChange={(e) =>
-                    updateStyle({ grantFormat: e.target.value as CiteStyle["grantFormat"] })
-                  }
-                >
-                  <option value="colon">3:22</option>
-                  <option value="labels">col. 3, l. 22</option>
-                </select>
-              </label>
-              <label>
-                Column
-                <select
-                  value={citeStyle.columnWord}
-                  disabled={citeStyle.grantFormat === "colon"}
-                  onChange={(e) => updateStyle({ columnWord: e.target.value as CiteStyle["columnWord"] })}
-                >
-                  <option value="col.">col.</option>
-                  <option value="column">column</option>
-                  <option value="c.">c.</option>
-                </select>
-              </label>
-              <label>
-                Line
-                <select
-                  value={citeStyle.lineWord}
-                  disabled={citeStyle.grantFormat === "colon"}
-                  onChange={(e) => updateStyle({ lineWord: e.target.value as CiteStyle["lineWord"] })}
-                >
-                  <option value="l.">l. / ll.</option>
-                  <option value="line">line / lines</option>
-                </select>
-              </label>
-              <span className="cite-preview">{citation || formatRef(selectedEntries, citeStyle)}</span>
-            </div>
-          )}
-          {noteOpen && (
-            <div className="note-editor">
-              <textarea
-                value={noteDraft}
-                onChange={(e) => setNoteDraft(e.target.value)}
-                placeholder={editingAnnotationId ? "Edit this note…" : "Add a note for this line…"}
-                rows={2}
-                autoFocus
-              />
-              <button type="button" onClick={saveNote} disabled={!noteDraft.trim()}>
-                {editingAnnotationId ? "Save changes" : "Save note"}
-              </button>
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => {
-                  setNoteOpen(false);
-                  setNoteDraft("");
-                  setEditingAnnotationId(null);
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          )}
-          <div className="cite-actions">
-            {selectedStartEntry && (
-              <button
-                type="button"
-                className={`icon-button${selectedBookmarked ? " active" : ""}`}
-                onClick={() => toggleBookmark(selectedStartEntry)}
-                title={selectedBookmarked ? "Remove bookmark" : "Bookmark this line"}
-                aria-label={selectedBookmarked ? "Remove bookmark" : "Bookmark this line"}
-              >
-                <Icon name="bookmark" size={17} />
-              </button>
-            )}
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => {
-                setEditingAnnotationId(null);
-                setNoteDraft("");
-                setNoteOpen((v) => !v);
-              }}
-              disabled={!selectedStartEntry}
-              aria-label="Add note"
-              title="Add note"
-            >
-              <Icon name="message-square" size={17} />
-            </button>
-            <button
-              type="button"
-              className={`icon-button${citeSettingsOpen ? " active" : ""}`}
-              onClick={() => setCiteSettingsOpen((v) => !v)}
-              title="Citation format"
-              aria-label="Citation format"
-            >
-              <Icon name="settings" size={17} />
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => copy("selection", activeSelectionText)}
-              aria-label="Copy selection"
-              title="Copy selection"
-            >
-              <Icon name="copy" size={17} />
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => copy("cite", citation)}
-              aria-label="Copy citation"
-              title="Copy citation"
-            >
-              <Icon name="quote" size={17} />
-            </button>
-            <button
-              type="button"
-              onClick={() => copy("both", formatSelectionWithCitation(activeSelectionText, citation))}
-            >
-              Copy selection + citation
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => copy("link", window.location.href)}
-              title="Copy a deep link to this line"
-              aria-label="Copy a deep link to this line"
-            >
-              <Icon name="link" size={17} />
-            </button>
-            {copied && <span className="copied">Copied {copied}</span>}
-          </div>
-            </>
-          )}
-          <button
-            type="button"
-            className="icon-button cite-bar-toggle"
-            onClick={() => setCiteBarExpanded((current) => !current)}
-            aria-expanded={citeBarExpanded}
-            aria-label={citeBarExpanded ? "Collapse copy and cite panel" : "Expand copy and cite panel"}
-            title={citeBarExpanded ? "Collapse copy and cite panel" : "Expand copy and cite panel"}
-          >
-            <Icon name={citeBarExpanded ? "chevron-down" : "chevron-up"} size={17} />
-          </button>
-        </div>
-      )}
     </div>
   );
 }
